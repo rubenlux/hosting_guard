@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff mypy bandit pytest-cov
+
+      - name: Lint (ruff)
+        run: |
+          ruff check app tests
+
+      - name: Type check (mypy)
+        run: |
+          mypy app
+
+      - name: Run tests with coverage
+        run: |
+          pytest --cov=app --cov-report=xml
+
+      - name: Quality Gate - Coverage
+        run: |
+          python - <<EOF
+          import sys
+          import xml.etree.ElementTree as ET
+          tree = ET.parse("coverage.xml")
+          root = tree.getroot()
+          # line-rate is a value between 0 and 1
+          coverage = float(root.attrib.get("line-rate", 0)) * 100
+          if coverage < 80:
+              print(f"FAILED: Total coverage {coverage:.2f}% is below threshold (80%)")
+              sys.exit(1)
+          print(f"PASSED: Total coverage is {coverage:.2f}%")
+          EOF
+
+      - name: Security scan (bandit)
+        run: |
+          bandit -r app -ll
