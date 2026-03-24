@@ -1,0 +1,25 @@
+services:
+  app:
+    build: .
+    restart: always
+    env_file: .env.production
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app # Mount the root to see SQLite files in the root
+    networks:
+      - hosting_network
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: always
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - hosting_network
+
+networks:
+  hosting_network:
+    driver: bridge

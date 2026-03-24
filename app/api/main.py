@@ -63,8 +63,13 @@ human_repo = HumanActionRepository()
 execution_repo = ExecutionRepository()
 tenant_config_repo = TenantConfigRepository()
 
-# Orquestador con RAG por Tenant y LLM Fake
-ai_orchestrator = AIOrchestrator(knowledge_provider=TenantInMemoryKnowledgeProvider({}), llm=RuleBasedFakeLLM())
+from app.core.llm.factory import get_llm
+
+# Orquestador con RAG por Tenant y LLM dinámico (env var)
+ai_orchestrator = AIOrchestrator(
+    knowledge_provider=TenantInMemoryKnowledgeProvider({}),
+    llm=get_llm()
+)
 
 # Motor de ejecución
 execution_engine = ExecutionEngine()

@@ -1,7 +1,8 @@
-import sqlite3
+import os
 from pathlib import Path
 
-DB_PATH = Path("tenant_configs.sqlite")
+# Carga la ruta desde el entorno (útil para Docker /app/data/)
+DB_PATH = Path(os.getenv("CONFIG_DB_PATH", "tenant_configs.sqlite"))
 
 
 def get_connection():

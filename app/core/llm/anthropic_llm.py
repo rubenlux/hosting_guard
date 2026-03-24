@@ -4,55 +4,55 @@ from typing import Dict, List
 from app.core.ai_interfaces import AdvisoryLLM
 
 try:
-    from openai import OpenAI
+    from anthropic import Anthropic
 except ImportError:
-    OpenAI = None  # type: ignore
+    Anthropic = None  # type: ignore
 
 
-class OpenAIAdvisoryLLM(AdvisoryLLM):
+class AnthropicAdvisoryLLM(AdvisoryLLM):
     """
-    LLM real (OpenAI). Read-only. Con timeout y sin side-effects.
+    LLM real (Anthropic Claude). Read-only.
     """
 
     def __init__(self):
-        if OpenAI is None:
-            raise RuntimeError("OpenAI SDK not installed. Please run 'pip install openai'")
+        if Anthropic is None:
+            raise RuntimeError("Anthropic SDK not installed. Please run 'pip install anthropic'")
 
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv("CLAUDE_API_KEY")
         if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is not set")
+            raise ValueError("CLAUDE_API_KEY environment variable is not set")
 
-        self.client = OpenAI(api_key=api_key)
-        self.model = os.getenv("LLM_MODEL", "gpt-4o-mini")
-        self.timeout = int(os.getenv("LLM_TIMEOUT_SECONDS", "5"))
+        self.client = Anthropic(api_key=api_key)
+        self.model = os.getenv("LLM_MODEL", "claude-3-5-sonnet-20240620")
+        self.timeout = int(os.getenv("LLM_TIMEOUT_SECONDS", "10"))
 
     def generate(self, decision: Dict, context: List[str]) -> str:
         prompt = self._build_prompt(decision, context)
 
-        # Usando la API v1.0+ de OpenAI
-        response = self.client.chat.completions.create(
+        response = self.client.messages.create(
             model=self.model,
+            max_tokens=1024,
             messages=[
                 {
-                    "role": "system",
+                    "role": "user",
                     "content": (
                         "Eres un asesor técnico experto en hosting. Tu objetivo es explicar diagnósticos y "
-                        "riesgos de forma prudente y profesional. NO ejecutes acciones. NO inventes hechos."
+                        "riesgos de forma prudente y profesional. NO ejecutes acciones. NO inventes hechos.\n\n"
+                        f"{prompt}"
                     ),
-                },
-                {"role": "user", "content": prompt},
+                }
             ],
             timeout=self.timeout,
         )
 
-        text = str(response.choices[0].message.content or "").strip()
+        # Anthropic v0.3.0+ API
+        text = response.content[0].text.strip()
         if not text:
             raise RuntimeError("Empty LLM response")
 
         return text
 
     def _build_prompt(self, decision: Dict, context: List[str]) -> str:
-        # Prompt estrictamente factual
         return f"""
 Explica la situación de forma clara y prudente para un cliente.
 

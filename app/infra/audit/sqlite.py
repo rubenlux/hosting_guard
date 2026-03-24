@@ -1,8 +1,9 @@
-# app/infra/audit/sqlite.py
+import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path("audit_events.sqlite")
+# Carga la ruta desde el entorno (útil para Docker /app/data/)
+DB_PATH = Path(os.getenv("AUDIT_DB_PATH", "audit_events.sqlite"))
 
 
 def get_connection():
