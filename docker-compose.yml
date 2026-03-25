@@ -1,22 +1,60 @@
 services:
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: always
+
+    command:
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.le.acme.email=inspyria.cloud@gmail.com"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.le.acme.httpchallenge=true"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./letsencrypt:/letsencrypt"
+
+    networks:
+      - hosting_network
+
   app:
     build: .
+    container_name: hosting_guard
     restart: always
     env_file: .env.production
-    ports:
-      - "8000:8000"
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hg.rule=Host(`api.hostingguard.lat`)"
+      - "traefik.http.routers.hg.entrypoints=websecure"
+      - "traefik.http.routers.hg.tls.certresolver=le"
+      - "traefik.http.services.hg.loadbalancer.server.port=8000"
+
     volumes:
-      - .:/app # Mount the root to see SQLite files in the root
+      - .:/app
+      - ./data:/app/data
+
     networks:
       - hosting_network
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
     restart: always
+
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
     ports:
       - "9090:9090"
+
     networks:
       - hosting_network
 
