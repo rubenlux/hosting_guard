@@ -2,8 +2,11 @@ import sqlite3
 import os
 from pathlib import Path
 
-# Carga la ruta desde el entorno (útil para Docker /app/data/)
-DB_PATH = Path(os.getenv("CONFIG_DB_PATH", "tenant_configs.sqlite"))
+# Carga la ruta desde el entorno
+DB_PATH = Path(os.getenv("CONFIG_DB_PATH", "/app/data/tenant_configs.sqlite"))
+
+# 🔥 ASEGURAR QUE LA CARPETA EXISTA
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_connection():
