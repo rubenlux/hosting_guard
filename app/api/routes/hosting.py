@@ -22,36 +22,40 @@ class CreateHostingRequest(BaseModel):
 
 @router.post("/create-hosting")
 def create_hosting(data: CreateHostingRequest):
-    project_name = data.name.lower().replace(" ", "-")
-    subdomain = f"{project_name}.{DOMAIN}"
-    container_name = f"hg_{project_name}_{uuid.uuid4().hex[:6]}"
+    try:
+        project_name = data.name.lower().replace(" ", "-")
+        subdomain = f"{project_name}.{DOMAIN}"
+        container_name = f"hg_{project_name}_{uuid.uuid4().hex[:6]}"
 
-    plan = PLANS.get(data.plan)
-    if not plan:
-        return {"error": "plan inválido"}
+        plan = PLANS.get(data.plan)
+        if not plan:
+            return {"error": "plan inválido"}
 
-    cpu = plan["cpu"]
-    memory = plan["memory"]
+        image = "nginx:alpine"
 
-    # 🔥 contenedor base (simple nginx por ahora)
-    image = "nginx:alpine"
+        command = [
+            "docker", "run", "-d",
+            "--name", container_name,
+            "--network", "hosting_guard_hosting_network",
+            "-l", "traefik.enable=true",
+            "-l", f"traefik.http.routers.{project_name}.rule=Host(`{subdomain}`)",
+            "-l", f"traefik.http.routers.{project_name}.entrypoints=websecure",
+            "-l", f"traefik.http.routers.{project_name}.tls.certresolver=le",
+            image
+        ]
 
-    command = [
-    "docker", "run", "-d",
-    "--name", container_name,
-    "--network", "hosting_guard_hosting_network",  
-    "-l", f"traefik.enable=true",
-    "-l", f"traefik.http.routers.{request.name}.rule=Host(`{request.name}.hostingguard.lat`)",
-    "-l", f"traefik.http.routers.{request.name}.entrypoints=websecure",
-    "-l", f"traefik.http.routers.{request.name}.tls.certresolver=le",
-    "nginx:alpine"
-]
+        result = subprocess.run(command, capture_output=True, text=True)
 
-    subprocess.run(command)
+        return {
+            "status": "created",
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "url": f"https://{subdomain}",
+            "container": container_name
+        }
 
-    return {
-        "status": "created",
-        "url": f"https://{subdomain}",
-        "container": container_name,
-        "plan": data.plan
-    }
+    except Exception as e:
+        return {
+            "error": "exception",
+            "details": str(e)
+        }
