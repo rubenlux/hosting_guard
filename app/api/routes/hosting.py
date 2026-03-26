@@ -41,9 +41,9 @@ def create_hosting(data: CreateHostingRequest):
     "--name", container_name,
     "--network", "hosting_guard_hosting_network",  
     "-l", f"traefik.enable=true",
-    "-l", f"traefik.http.routers.{name}.rule=Host(`{name}.hostingguard.lat`)",
-    "-l", f"traefik.http.routers.{name}.entrypoints=websecure",
-    "-l", f"traefik.http.routers.{name}.tls.certresolver=le",
+    "-l", f"traefik.http.routers.{request.name}.rule=Host(`{request.name}.hostingguard.lat`)",
+    "-l", f"traefik.http.routers.{request.name}.entrypoints=websecure",
+    "-l", f"traefik.http.routers.{request.name}.tls.certresolver=le",
     "nginx:alpine"
 ]
 
