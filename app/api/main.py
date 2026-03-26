@@ -64,6 +64,7 @@ execution_repo = ExecutionRepository()
 tenant_config_repo = TenantConfigRepository()
 
 from app.core.llm.factory import get_llm
+from app.api.routes.hosting import router as hosting_router
 
 # Orquestador con RAG por Tenant y LLM dinámico (env var)
 ai_orchestrator = AIOrchestrator(
@@ -73,6 +74,9 @@ ai_orchestrator = AIOrchestrator(
 
 # Motor de ejecución
 execution_engine = ExecutionEngine()
+
+# Router hosting
+app.include_router(hosting_router)
 
 
 @app.post("/decision", response_model=DecisionResponse)
