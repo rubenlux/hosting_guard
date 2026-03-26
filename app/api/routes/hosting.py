@@ -34,15 +34,16 @@ def create_hosting(data: CreateHostingRequest):
         image = "nginx:alpine"
 
         command = [
-            "docker", "run", "-d",
-            "--name", container_name,
-            "--network", "hosting_guard_hosting_network",
-            "-l", "traefik.enable=true",
-            "-l", f"traefik.http.routers.{project_name}.rule=Host(`{subdomain}`)",
-            "-l", f"traefik.http.routers.{project_name}.entrypoints=websecure",
-            "-l", f"traefik.http.routers.{project_name}.tls.certresolver=le",
-            image
-        ]
+    "docker", "run", "-d",
+    "--name", container_name,
+    "--network", "hosting_guard_hosting_network",
+    "-l", "traefik.enable=true",
+    "-l", f"traefik.http.routers.{project_name}.rule=Host(`{subdomain}`)",
+    "-l", f"traefik.http.routers.{project_name}.entrypoints=websecure",
+    "-l", f"traefik.http.routers.{project_name}.tls.certresolver=le",
+    "-l", f"traefik.http.services.{project_name}.loadbalancer.server.port=80",
+    image
+]
 
         result = subprocess.run(command, capture_output=True, text=True)
 
