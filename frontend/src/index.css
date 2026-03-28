@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+.glass-card {
+  @apply bg-surface/60 backdrop-blur-xl border border-white/5 shadow-2xl;
+}
+
+.glow-primary {
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
+}
+
+.glow-secondary {
+  box-shadow: 0 0 20px rgba(0, 112, 243, 0.2);
+}
+
+.gradient-text {
+  @apply bg-clip-text text-transparent bg-gradient-to-br from-white via-on-surface to-white/40;
+}
+
+.gradient-primary {
+  @apply bg-gradient-to-br from-primary via-primary/80 to-primary/40;
+}
+
+.gradient-secondary {
+  @apply bg-gradient-to-br from-secondary via-secondary/80 to-secondary/40;
+}

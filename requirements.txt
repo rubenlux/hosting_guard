@@ -1,7 +1,10 @@
-fastapi==0.110.0
+fastapi[all]
 uvicorn[standard]==0.29.0
 pydantic==2.6.4
 python-dotenv==1.0.1
 peewee==3.17.1
 requests==2.31.0
 prometheus-client==0.20.0
+python-jose[cryptography]
+passlib[bcrypt]
+slowapi

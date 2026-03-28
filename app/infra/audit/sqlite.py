@@ -64,5 +64,66 @@ def init_db():
         """
     )
 
+    # Tabla de usuarios
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            hashed_password TEXT NOT NULL,
+            balance REAL DEFAULT 0.0,
+            has_payment_method INTEGER DEFAULT 0,
+            autoscale_enabled INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    # Migración (añadir columnas si no existen)
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0.0")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN has_payment_method INTEGER DEFAULT 0")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN autoscale_enabled INTEGER DEFAULT 1")
+    except:
+        pass
+
+    # Tabla de hostings (proyectos)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hostings (
+            hosting_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            subdomain TEXT NOT NULL,
+            container_name TEXT NOT NULL,
+            plan TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        """
+    )
+
+    # Tabla de eventos del orquestador (Smart Monitoring)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS orchestrator_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            container_name TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+        """
+    )
+
     conn.commit()
     conn.close()

@@ -1,7 +1,13 @@
 import subprocess
-from fastapi import APIRouter
-from pydantic import BaseModel
 import uuid
+from datetime import datetime
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from app.api.security import verify_token
+from app.infra.audit.hosting_repository import HostingRepository
+
+hosting_repo = HostingRepository()
 
 router = APIRouter()
 
@@ -21,36 +27,54 @@ class CreateHostingRequest(BaseModel):
 
 
 @router.post("/create-hosting")
-def create_hosting(data: CreateHostingRequest):
+async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify_token)):
     try:
+        user_id = user.get("user_id")
         project_name = data.name.lower().replace(" ", "-")
         subdomain = f"{project_name}.{DOMAIN}"
-        container_name = f"hg_{project_name}_{uuid.uuid4().hex[:6]}"
+        
+        # 🔥 Multi-tenant: nombre único por usuario
+        container_name = f"user_{user_id}_{project_name}_{uuid.uuid4().hex[:6]}"
 
         plan = PLANS.get(data.plan)
         if not plan:
-            return {"error": "plan inválido"}
+            raise HTTPException(status_code=400, detail="plan inválido")
 
         image = "nginx:alpine"
 
         command = [
-    "docker", "run", "-d",
-    "--name", container_name,
-    "--network", "hosting_guard_hosting_network",
-    "-l", "traefik.enable=true",
-    "-l", f"traefik.http.routers.{project_name}.rule=Host(`{subdomain}`)",
-    "-l", f"traefik.http.routers.{project_name}.entrypoints=websecure",
-    "-l", f"traefik.http.routers.{project_name}.tls.certresolver=le",
-    "-l", f"traefik.http.services.{project_name}.loadbalancer.server.port=80",
-    image
-]
+            "docker", "run", "-d",
+            "--name", container_name,
+            "--network", "hosting_guard_hosting_network",
+            "-l", "traefik.enable=true",
+            "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
+            "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
+            "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
+            "-l", f"traefik.http.services.{container_name}.loadbalancer.server.port=80",
+            image
+        ]
 
         result = subprocess.run(command, capture_output=True, text=True)
 
+        if result.returncode != 0:
+            return {
+                "status": "error",
+                "stderr": result.stderr
+            }
+
+        # 🔥 Persistir en DB
+        hosting_id = hosting_repo.create_hosting(
+            user_id=user_id,
+            name=data.name,
+            subdomain=subdomain,
+            container_name=container_name,
+            plan=data.plan
+        )
+
         return {
             "status": "created",
-            "stdout": result.stdout,
-            "stderr": result.stderr,
+            "hosting_id": hosting_id,
+            "user_id": user_id,
             "url": f"https://{subdomain}",
             "container": container_name
         }
@@ -60,3 +84,158 @@ def create_hosting(data: CreateHostingRequest):
             "error": "exception",
             "details": str(e)
         }
+
+
+@router.get("/list-hostings")
+async def list_hostings(user: dict = Depends(verify_token)):
+    user_id = user.get("user_id")
+    hostings = hosting_repo.get_user_hostings(user_id)
+
+    # Convertir sqlite3.Row a diccionarios si no lo son
+    hostings_list = [dict(h) for h in hostings]
+
+    # Mapeo de estados Docker -> UX
+    status_map = {
+        "running": "active",
+        "exited": "stopped",
+        "restarting": "starting",
+        "paused": "paused",
+        "created": "starting",
+        "removing": "stopped",
+        "dead": "error"
+    }
+
+    for h in hostings_list:
+        try:
+            # Sincronización real con Docker
+            res = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Status}}", h["container_name"]],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+
+            if res.returncode == 0:
+                docker_status = res.stdout.strip()
+                h["status"] = status_map.get(docker_status, "unknown")
+            else:
+                h["status"] = "not_found"
+
+        except Exception:
+            h["status"] = "error"
+
+    return hostings_list
+
+@router.delete("/delete-hosting/{hosting_id}")
+async def delete_hosting(hosting_id: int, user: dict = Depends(verify_token)):
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    # Intentar detener y borrar el contenedor
+    try:
+        container_name = hosting["container_name"]
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+    except Exception as e:
+        print(f"Error deleting container: {e}")
+
+    hosting_repo.delete_hosting(hosting_id, user_id)
+    return {"status": "deleted", "hosting_id": hosting_id}
+
+@router.post("/hostings/{hosting_id}/restart")
+async def restart_hosting(hosting_id: int, user: dict = Depends(verify_token)):
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    subprocess.run(["docker", "restart", hosting["container_name"]], capture_output=True)
+    return {"status": "restarting"}
+
+@router.post("/hostings/{hosting_id}/stop")
+async def stop_hosting(hosting_id: int, user: dict = Depends(verify_token)):
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    subprocess.run(["docker", "stop", hosting["container_name"]], capture_output=True)
+    return {"status": "stopped"}
+
+@router.post("/hostings/{hosting_id}/start")
+async def start_hosting(hosting_id: int, user: dict = Depends(verify_token)):
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    subprocess.run(["docker", "start", hosting["container_name"]], capture_output=True)
+    return {"status": "starting"}
+
+@router.get("/hostings/{hosting_id}/logs")
+async def get_hosting_logs(hosting_id: int, since: Optional[str] = None, user: dict = Depends(verify_token)):
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    command = ["docker", "logs"]
+    if since:
+        # Aseguramos que since sea un string válido para docker
+        command.extend(["--since", since])
+    else:
+        command.extend(["--tail", "50"])
+    
+    command.append(hosting["container_name"])
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=3
+        )
+        logs = result.stdout if result.stdout else result.stderr
+        
+        # Devolvemos también el timestamp actual para el próximo 'since'
+        return {
+            "logs": logs if logs else "",
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+    except Exception as e:
+        return {"logs": f"Error retrieving logs: {str(e)}"}
+
+@router.get("/hostings/{hosting_id}/metrics")
+async def get_hosting_metrics(hosting_id: int, user: dict = Depends(verify_token)):
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    try:
+        result = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}|{{.MemUsage}}", hosting["container_name"]],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode == 0:
+            parts = result.stdout.strip().split("|")
+            if len(parts) >= 2:
+                return {
+                    "cpu": parts[0],
+                    "memory": parts[1]
+                }
+        
+        return {"cpu": "0%", "memory": "0MiB / 0MiB"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.get("/orchestrator/events")
+async def get_orchestrator_events(user: dict = Depends(verify_token)):
+    user_id = user.get("user_id")
+    events = hosting_repo.get_orchestrator_events(user_id)
+    return events

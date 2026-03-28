@@ -2,18 +2,23 @@ import json
 import logging
 import time
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import generate_latest
+from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.config import ENABLE_ACTION_EXECUTION, ENABLE_AI_ADVISORY
 from app.api.rate_limit import limiter
 from app.api.schemas import DecisionRequest, DecisionResponse, HumanActionRequest
+from app.api.security import create_token, create_refresh_token, verify_token, SECRET, ALGO
 from app.api.security_headers import SecurityHeadersMiddleware
 from app.api.tenancy import Tenant
 from app.api.tenant_resolver import resolve_tenant
+from app.infra.audit.user_repository import UserRepository
+from passlib.context import CryptContext
+from pydantic import BaseModel, EmailStr
 from app.core.ai_advisory_engine import generate_advisory
 from app.core.ai_orchestrator import AIOrchestrator
 from app.core.decision_pipeline import run_decision_pipeline
@@ -41,8 +46,95 @@ app = FastAPI(
     version="1.11.0",
 )
 
+# Password hashing context
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+user_repo = UserRepository()
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+@app.get("/")
+def root():
+    return {
+        "service": "HostingGuard API",
+        "status": "ok"
+    }
+
+
+@app.post("/register")
+def register(request: RegisterRequest):
+    hashed_password = pwd_context.hash(request.password)
+    try:
+        user_id = user_repo.create_user(request.email, hashed_password)
+        return {"user_id": user_id, "email": request.email}
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"detail": str(e)})
+
+@app.post("/login")
+def login(request: LoginRequest):
+    user = user_repo.get_user_by_email(request.email)
+    if not user or not pwd_context.verify(request.password, user["hashed_password"]):
+        return JSONResponse(status_code=401, content={"detail": "Invalid credentials"})
+    
+    return {
+        "access_token": create_token({"user_id": user["user_id"], "email": user["email"]}),
+        "refresh_token": create_refresh_token({"user_id": user["user_id"], "email": user["email"]})
+    }
+
+@app.post("/refresh")
+def refresh(refresh_token: str):
+    try:
+        from jose import jwt, JWTError
+        payload = jwt.decode(refresh_token, SECRET, algorithms=[ALGO])
+        if payload.get("type") != "refresh":
+            return JSONResponse(status_code=401, content={"detail": "Invalid token type"})
+        
+        user_id = payload.get("user_id")
+        email = payload.get("email")
+        
+        return {
+            "access_token": create_token({"user_id": user_id, "email": email})
+        }
+    except Exception:
+        return JSONResponse(status_code=401, content={"detail": "Invalid refresh token"})
+
+@app.get("/me")
+def get_me(user: dict = Depends(verify_token)):
+    user_db = user_repo.get_user_by_id(user["user_id"])
+    if not user_db:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    return {
+        "user_id": user["user_id"],
+        "email": user["email"],
+        "balance": user_db.get("balance", 0.0),
+        "has_payment_method": bool(user_db.get("has_payment_method", 0)),
+        "autoscale_enabled": bool(user_db.get("autoscale_enabled", 1)),
+        "status": "authenticated"
+    }
+
 # Middleware de seguridad
 app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS - Permitir frontend
+origins = [
+    "https://hostingguard.lat",
+    "http://localhost:5173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Rate Limiting
 app.state.limiter = limiter

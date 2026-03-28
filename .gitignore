@@ -39,3 +39,9 @@ htmlcov/
 # AWS / Terraform
 .terraform/
 terraform.tfstate*
+
+# Frontend
+node_modules/
+dist/
+.next/
+build/
