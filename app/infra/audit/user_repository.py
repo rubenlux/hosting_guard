@@ -7,13 +7,13 @@ class UserRepository:
     def __init__(self):
         pass
 
-    def create_user(self, email: str, hashed_password: str) -> int:
+    def create_user(self, email: str, password_hash: str) -> int:
         conn = get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO users (email, hashed_password, created_at) VALUES (?, ?, ?)",
-                (email, hashed_password, datetime.utcnow().isoformat())
+                "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
+                (email, password_hash, datetime.utcnow().isoformat())
             )
             user_id = cursor.lastrowid
             conn.commit()

@@ -70,7 +70,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT UNIQUE NOT NULL,
-            hashed_password TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
             balance REAL DEFAULT 0.0,
             has_payment_method INTEGER DEFAULT 0,
             autoscale_enabled INTEGER DEFAULT 1,
