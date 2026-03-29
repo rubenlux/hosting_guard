@@ -18,7 +18,7 @@ from app.api.security_headers import SecurityHeadersMiddleware
 from app.api.tenancy import Tenant
 from app.api.tenant_resolver import resolve_tenant
 from app.infra.audit.user_repository import UserRepository
-from passlib.context import CryptContext
+import bcrypt
 from pydantic import BaseModel, EmailStr
 from app.core.ai_advisory_engine import generate_advisory
 from app.core.ai_orchestrator import AIOrchestrator
@@ -47,8 +47,7 @@ app = FastAPI(
     version="1.11.0",
 )
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Servidores de repositorio de usuarios
 user_repo = UserRepository()
 
 class LoginRequest(BaseModel):
@@ -73,7 +72,11 @@ def register(request: RegisterRequest):
     import hashlib
     # Pre-hash para soportar >72 bytes en bcrypt
     safe_pass = hashlib.sha256(request.password.encode()).hexdigest()
-    hashed_password = pwd_context.hash(safe_pass)
+    # Hashing directo con bcrypt (evitamos bugs de passlib)
+    hashed_password = bcrypt.hashpw(
+        safe_pass.encode(), 
+        bcrypt.gensalt()
+    ).decode()
     try:
         user_id = user_repo.create_user(request.email, hashed_password)
         return {"user_id": user_id, "email": request.email}
@@ -88,7 +91,8 @@ def login(request: LoginRequest):
     # Pre-hash para comparar
     safe_pass = hashlib.sha256(request.password.encode()).hexdigest()
     
-    if not user or not pwd_context.verify(safe_pass, user["password_hash"]):
+    # Verificación directa con bcrypt
+    if not user or not bcrypt.checkpw(safe_pass.encode(), user["password_hash"].encode()):
         return JSONResponse(status_code=401, content={"detail": "Invalid credentials"})
     
     return {
@@ -134,7 +138,9 @@ app.add_middleware(SecurityHeadersMiddleware)
 # CORS - Producción
 origins = [
     "https://hostingguard.lat",
-    "https://www.hostingguard.lat"
+    "https://www.hostingguard.lat",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 
 app.add_middleware(

@@ -17,21 +17,34 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    console.log("🔥 CLICK SUBMIT");
     setLoading(true);
     setError('');
 
     try {
       if (isRegister) {
-        await register(email, password);
+        console.log("🚀 REGISTER START");
+        const res = await register(email, password);
+        console.log("✅ REGISTER OK", res);
       }
 
+      console.log("🔑 LOGIN START");
       const data = await login(email, password);
-      loginAction(data.access_token);
+      console.log("✅ LOGIN OK", data);
 
-      onLoginSuccess();
-      onClose();
+      if (data?.access_token) {
+        loginAction(data.access_token);
+        onLoginSuccess();
+        onClose();
+      } else {
+        throw new Error("No se recibió token del servidor");
+      }
     } catch (err) {
-      setError(err.response?.data?.detail || 'Error al conectar con el servidor');
+      console.log("💥 ERROR REAL:", err);
+      console.log("💥 DETALLE:", err.response?.data);
+      
+      const errorMessage = err.response?.data?.detail || err.message || 'Error desconocido';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -81,6 +94,7 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
           )}
 
           <button
+            type="submit"
             disabled={loading}
             className="w-full bg-green-500 py-3.5 rounded font-black text-black hover:bg-green-400 transition-colors disabled:opacity-50 mt-2"
           >
