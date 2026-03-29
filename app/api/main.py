@@ -122,10 +122,10 @@ def get_me(user: dict = Depends(verify_token)):
 # Middleware de seguridad
 app.add_middleware(SecurityHeadersMiddleware)
 
-# CORS - Permitir frontend
+# CORS - Producción
 origins = [
     "https://hostingguard.lat",
-    "http://localhost:5173",
+    "https://www.hostingguard.lat"
 ]
 
 app.add_middleware(
