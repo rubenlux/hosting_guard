@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import hashlib
 
 from fastapi import Depends, FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -69,7 +70,9 @@ def root():
 
 @app.post("/register")
 def register(request: RegisterRequest):
-    hashed_password = pwd_context.hash(request.password)
+    # Pre-hash para soportar >72 bytes en bcrypt
+    safe_pass = hashlib.sha256(request.password.encode()).hexdigest()
+    hashed_password = pwd_context.hash(safe_pass)
     try:
         user_id = user_repo.create_user(request.email, hashed_password)
         return {"user_id": user_id, "email": request.email}
@@ -79,7 +82,11 @@ def register(request: RegisterRequest):
 @app.post("/login")
 def login(request: LoginRequest):
     user = user_repo.get_user_by_email(request.email)
-    if not user or not pwd_context.verify(request.password, user["hashed_password"]):
+    
+    # Pre-hash para comparar
+    safe_pass = hashlib.sha256(request.password.encode()).hexdigest()
+    
+    if not user or not pwd_context.verify(safe_pass, user["hashed_password"]):
         return JSONResponse(status_code=401, content={"detail": "Invalid credentials"})
     
     return {
