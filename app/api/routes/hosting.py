@@ -57,10 +57,7 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
         result = subprocess.run(command, capture_output=True, text=True)
 
         if result.returncode != 0:
-            return {
-                "status": "error",
-                "stderr": result.stderr
-            }
+            raise HTTPException(status_code=500, detail=f"Docker error: {result.stderr}")
 
         # 🔥 Persistir en DB
         hosting_id = hosting_repo.create_hosting(
@@ -79,11 +76,10 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
             "container": container_name
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return {
-            "error": "exception",
-            "details": str(e)
-        }
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/list-hostings")

@@ -3,6 +3,7 @@ import logging
 import time
 
 
+from typing import Optional
 from fastapi import Depends, FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import generate_latest
@@ -66,34 +67,25 @@ def root():
         "status": "ok"
     }
 
-
 @app.post("/register")
 def register(request: RegisterRequest):
     import hashlib
-    # Pre-hash para soportar >72 bytes en bcrypt
     safe_pass = hashlib.sha256(request.password.encode()).hexdigest()
-    # Hashing directo con bcrypt (evitamos bugs de passlib)
-    hashed_password = bcrypt.hashpw(
-        safe_pass.encode(), 
-        bcrypt.gensalt()
-    ).decode()
+    hashed_password = bcrypt.hashpw(safe_pass.encode(), bcrypt.gensalt()).decode()
     try:
         user_id = user_repo.create_user(request.email, hashed_password)
         return {"user_id": user_id, "email": request.email}
     except ValueError as e:
-        return JSONResponse(status_code=400, content={"detail": str(e)})
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/login")
 def login(request: LoginRequest):
     user = user_repo.get_user_by_email(request.email)
-    
     import hashlib
-    # Pre-hash para comparar
     safe_pass = hashlib.sha256(request.password.encode()).hexdigest()
     
-    # Verificación directa con bcrypt
     if not user or not bcrypt.checkpw(safe_pass.encode(), user["password_hash"].encode()):
-        return JSONResponse(status_code=401, content={"detail": "Invalid credentials"})
+        raise HTTPException(status_code=401, detail="Invalid credentials")
     
     return {
         "access_token": create_token({"user_id": user["user_id"], "email": user["email"]}),
@@ -106,7 +98,7 @@ def refresh(refresh_token: str):
         from jose import jwt, JWTError
         payload = jwt.decode(refresh_token, SECRET, algorithms=[ALGO])
         if payload.get("type") != "refresh":
-            return JSONResponse(status_code=401, content={"detail": "Invalid token type"})
+            raise HTTPException(status_code=401, detail="Invalid token type")
         
         user_id = payload.get("user_id")
         email = payload.get("email")
@@ -114,14 +106,18 @@ def refresh(refresh_token: str):
         return {
             "access_token": create_token({"user_id": user_id, "email": email})
         }
-    except Exception:
-        return JSONResponse(status_code=401, content={"detail": "Invalid refresh token"})
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/me")
 def get_me(user: dict = Depends(verify_token)):
     user_db = user_repo.get_user_by_id(user["user_id"])
     if not user_db:
-        raise HTTPException(status_code=404, detail="User not found")
+        # Si el token es válido pero el usuario no existe (ej: DB borrada),
+        # lanzamos 401 para que el frontend limpie la sesión.
+        raise HTTPException(status_code=401, detail="User session expired or not found")
         
     return {
         "user_id": user["user_id"],
@@ -131,6 +127,50 @@ def get_me(user: dict = Depends(verify_token)):
         "autoscale_enabled": bool(user_db.get("autoscale_enabled", 1)),
         "status": "authenticated"
     }
+
+# --- NUEVAS RUTAS DE PRODUCTO ---
+
+class UserConfigRequest(BaseModel):
+    autoscale_enabled: Optional[bool] = None
+    has_payment_method: Optional[bool] = None
+
+@app.post("/user/config")
+def update_user_config(config: UserConfigRequest, user=Depends(verify_token)):
+    try:
+        if config.autoscale_enabled is not None:
+            user_repo.update_autoscale(user["user_id"], config.autoscale_enabled)
+        if config.has_payment_method is not None:
+            user_repo.update_payment_method(user["user_id"], config.has_payment_method)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class TopupRequest(BaseModel):
+    amount: float
+
+@app.post("/user/topup")
+def topup(data: TopupRequest, user=Depends(verify_token)):
+    try:
+        user_repo.update_balance(user["user_id"], data.amount)
+        user_db = user_repo.get_user_by_id(user["user_id"])
+        
+        if not user_db:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        return {"balance": user_db["balance"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/advisory")
+def get_advisory_mock(user=Depends(verify_token)):
+    # Mock de eventos para el dashboard
+    return [
+        {"message": "Aumento de CPU detectado en 'miapp'", "level": "warning", "time": "Justo ahora"},
+        {"message": "Certificado SSL renovado automáticamente", "level": "success", "time": "Hace 2h"},
+        {"message": "Intento de intrusión bloqueado por IA Guard", "level": "security", "time": "Hace 5h"}
+    ]
 
 # Middleware de seguridad
 app.add_middleware(SecurityHeadersMiddleware)

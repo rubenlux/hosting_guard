@@ -17,33 +17,40 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log("🔥 CLICK SUBMIT");
     setLoading(true);
     setError('');
 
     try {
       if (isRegister) {
-        console.log("🚀 REGISTER START");
-        const res = await register(email, password);
-        console.log("✅ REGISTER OK", res);
+        await register(email, password);
       }
 
-      console.log("🔑 LOGIN START");
       const data = await login(email, password);
-      console.log("✅ LOGIN OK", data);
 
       if (data?.access_token) {
+        localStorage.setItem("access_token", data.access_token);
         loginAction(data.access_token);
         onLoginSuccess();
-        onClose();
+        onClose(); // ✅ SOLO si todo sale bien
       } else {
         throw new Error("No se recibió token del servidor");
       }
     } catch (err) {
-      console.log("💥 ERROR REAL:", err);
-      console.log("💥 DETALLE:", err.response?.data);
+      console.error(err);
       
-      const errorMessage = err.response?.data?.detail || err.message || 'Error desconocido';
+      const detail = err.response?.data?.detail;
+      let errorMessage = "Error al conectar con el servidor";
+
+      if (detail === "Invalid credentials") {
+        errorMessage = "Email o contraseña incorrectos";
+      } else if (detail === "Email already exists") {
+        errorMessage = "El email ya está registrado";
+      } else if (detail) {
+        errorMessage = detail;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
       setError(errorMessage);
     } finally {
       setLoading(false);

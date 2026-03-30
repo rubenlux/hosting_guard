@@ -1,35 +1,45 @@
 import React, { useEffect, useState } from 'react';
-import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents } from '../services/api';
+import api, { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
-import { 
-  Globe, 
-  Cpu, 
-  CheckCircle2, 
-  Loader, 
-  RefreshCw, 
-  ShieldCheck, 
-  Trash2, 
-  Plus, 
-  Activity, 
-  Database, 
-  Zap, 
-  Bell, 
-  CreditCard, 
-  Settings, 
+import {
+  Globe,
+  Cpu,
+  CheckCircle2,
+  Loader,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+  Plus,
+  Activity,
+  Database,
+  Zap,
+  Bell,
+  CreditCard,
+  Settings,
   LifeBuoy,
   Play,
   Square,
   RotateCcw,
-  FileText
+  FileText,
+  Key,
+  Lock,
+  Mail,
+  BarChart3,
+  Headset,
+  ChevronLeft,
+  ChevronRight,
+  Bot
 } from 'lucide-react';
 import '../Dashboard.css';
 import HostingCreationForm from '../components/HostingCreationForm';
 import LogsModal from '../components/LogsModal';
+import { AlertTriangle } from "lucide-react"
 
 const Dashboard = () => {
-  const { user, logoutAction } = useAuth();
+  const { user, logoutAction, setUser } = useAuth();
   const [hostings, setHostings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [selectedHosting, setSelectedHosting] = useState(null);
@@ -38,6 +48,7 @@ const Dashboard = () => {
   const [logsLoading, setLogsLoading] = useState(false);
   const [metrics, setMetrics] = useState({});
   const [events, setEvents] = useState([]);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const getStatusClass = (status) => {
     switch (status) {
@@ -55,7 +66,7 @@ const Dashboard = () => {
     try {
       const data = await listHostings();
       setHostings(data);
-      
+
       // Check for errors to show alerts
       data.forEach(h => {
         if (h.status === 'error') {
@@ -141,10 +152,47 @@ const Dashboard = () => {
     }
   };
 
+  const handleToggleAutoscale = async () => {
+    if (actionLoading) return;
+    const newValue = !user?.autoscale_enabled;
+    setActionLoading(true);
+    try {
+      await api.post("/user/config", { autoscale_enabled: newValue });
+      setUser(prev => ({ ...prev, autoscale_enabled: newValue }));
+    } catch (err) {
+      alert("Error al actualizar config: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleTopup = async () => {
+    if (actionLoading) return;
+    setActionLoading(true);
+    try {
+      // Recarga fija de $10 para la demo
+      const res = await api.post("/user/topup", { amount: 10 });
+      setUser(prev => ({ ...prev, balance: res.data.balance }));
+    } catch (err) {
+      alert("Error al recargar: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRefreshUser = async () => {
+    try {
+      const res = await api.get('/me');
+      setUser(res.data);
+    } catch (err) {
+      console.error("Error refreshing user info:", err);
+    }
+  };
+
   useEffect(() => {
     fetchHostings();
     fetchEvents();
-    
+
     // Polling de métricas cada 10 segundos
     const metricsInterval = setInterval(() => {
       hostings.forEach(h => {
@@ -160,51 +208,108 @@ const Dashboard = () => {
     }, 15000);
 
     return () => {
-        clearInterval(metricsInterval);
-        clearInterval(eventsInterval);
+      clearInterval(metricsInterval);
+      clearInterval(eventsInterval);
     };
   }, [hostings.length]); // Re-run when list changes
 
-  const uptimeData = Array.from({length: 40}, (_, i) => Math.random() > 0.95 ? 'warn' : 'ok');
+  const uptimeData = Array.from({ length: 40 }, (_, i) => Math.random() > 0.95 ? 'warn' : 'ok');
 
   return (
-    <div className="dashboard-container fixed inset-0 z-50 overflow-hidden">
+    <div className={`dashboard-container fixed inset-0 z-50 overflow-hidden ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="logo-dash">
           <div className="logo-icon-dash text-background"><ShieldCheck className="w-5 h-5" /></div>
-          <div>
-            <div className="logo-text-dash">HostingGuard</div>
-            <div className="text-[10px] text-accent font-mono tracking-widest">.LAT</div>
-          </div>
+          {!isSidebarCollapsed && (
+            <div className="flex-1 opacity-fadeIn">
+              <div className="logo-text-dash">HostingGuard</div>
+              <div className="text-[10px] text-accent font-mono tracking-widest">.LAT</div>
+            </div>
+          )}
+          <button 
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            className="sidebar-toggle-btn"
+          >
+            {isSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          </button>
         </div>
 
         <nav className="nav-dash">
-          <div className="nav-label-dash">Principal</div>
-          <div className="nav-item-dash active" onClick={() => setShowCreate(false)}><Activity className="w-4 h-4" /> Dashboard</div>
-          <div className="nav-item-dash" onClick={() => setShowCreate(false)}><Globe className="w-4 h-4" /> Mis Sitios</div>
-          <div className="nav-item-dash"><Zap className="w-4 h-4" /> IA Advisory <span className="ml-auto bg-danger/20 text-danger text-[9px] px-1.5 py-0.5 rounded-full">2</span></div>
+          <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Principal'}</div>
+          <div className="nav-item-dash active" onClick={() => setShowCreate(false)}>
+            <div className="nav-icon-dash icon-green"><Activity size={18} /></div>
+            {!isSidebarCollapsed && <span>Dashboard</span>}
+          </div>
+          <div className="nav-item-dash" onClick={() => setShowCreate(false)}>
+            <div className="nav-icon-dash icon-blue"><Globe size={18} /></div>
+            {!isSidebarCollapsed && <span>Mis Sitios</span>}
+          </div>
+          <div className="nav-item-dash">
+            <div className="nav-icon-dash icon-multi"><BarChart3 size={18} /></div>
+            {!isSidebarCollapsed && <span>Métricas</span>}
+          </div>
+          <div className="nav-item-dash">
+            <div className="nav-icon-dash icon-ia"><Bot size={18} /></div>
+            {!isSidebarCollapsed && <span>IA Advisory</span>}
+            {!isSidebarCollapsed && <span className="ml-auto bg-danger/20 text-danger text-[9px] px-1.5 py-0.5 rounded-full">2</span>}
+          </div>
 
-          <div className="nav-label-dash">Gestión</div>
-          <div className="nav-item-dash"><ShieldCheck className="w-4 h-4" /> SSL</div>
-          <div className="nav-item-dash"><Database className="w-4 h-4" /> Backups</div>
-          
-          <div className="nav-label-dash">Cuenta</div>
-          <div className="nav-item-dash"><CreditCard className="w-4 h-4" /> Facturación</div>
-          <div className="nav-item-dash"><Settings className="w-4 h-4" /> Configuración</div>
+          <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Gestión'}</div>
+          <div className="nav-item-dash">
+            <div className="nav-icon-dash icon-gold"><Key size={18} /></div>
+            {!isSidebarCollapsed && <span>Dominios</span>}
+          </div>
+          <div className="nav-item-dash">
+            <div className="nav-icon-dash icon-purple"><Database size={18} /></div>
+            {!isSidebarCollapsed && <span>Backups</span>}
+          </div>
+          <div className="nav-item-dash">
+            <div className="nav-icon-dash icon-orange"><Lock size={18} /></div>
+            {!isSidebarCollapsed && <span>SSL</span>}
+          </div>
+          <div className="nav-item-dash">
+            <div className="nav-icon-dash icon-blue"><Mail size={18} /></div>
+            {!isSidebarCollapsed && <span>Email</span>}
+          </div>
+
+          <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Cuenta'}</div>
+          <div className="nav-item-dash">
+            <div className="nav-icon-dash icon-blue"><CreditCard size={18} /></div>
+            {!isSidebarCollapsed && <span>Facturación</span>}
+          </div>
+          <div className="nav-item-dash">
+            <div className="nav-icon-dash"><Settings size={18} /></div>
+            {!isSidebarCollapsed && <span>Configuración</span>}
+          </div>
+          <div className="nav-item-dash">
+            <div className="nav-icon-dash"><Headset size={18} /></div>
+            {!isSidebarCollapsed && <span>Soporte</span>}
+          </div>
         </nav>
 
         <div className="p-4 border-t border-white/5 mt-auto">
-          <div className="flex items-center gap-3 p-3 bg-surface2 rounded-xl">
-            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-xs uppercase">
+          <div className={`flex items-center gap-3 p-3 bg-surface2 rounded-xl ${isSidebarCollapsed ? 'justify-center p-2' : ''}`}>
+            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-xs uppercase shrink-0">
               {user?.email?.[0] || 'U'}
             </div>
-            <div className="flex-1 min-width-0">
-              <div className="text-[11px] font-bold text-white truncate">{user?.email}</div>
-              <div className="text-[9px] text-accent font-mono uppercase">Plan Business</div>
-            </div>
-            <button onClick={logoutAction} className="text-muted hover:text-danger"><RefreshCw className="w-3.5 h-3.5" /></button>
+            {!isSidebarCollapsed && (
+              <div className="flex-1 min-w-0 opacity-fadeIn">
+                <div className="text-[11px] font-bold text-white truncate">{user?.email}</div>
+                <div className="text-[9px] text-accent font-mono uppercase">Plan Business</div>
+              </div>
+            )}
+            {!isSidebarCollapsed && (
+              <button onClick={logoutAction} className="text-muted hover:text-danger">
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
+          {isSidebarCollapsed && (
+            <button onClick={logoutAction} className="mt-2 w-full flex justify-center text-muted hover:text-danger">
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </aside>
 
@@ -217,7 +322,7 @@ const Dashboard = () => {
           <div className="hidden md:flex items-center gap-2 bg-accent/5 text-accent px-3 py-1.5 rounded-full border border-accent/10 text-xs font-medium">
             <div className="pulse-dash"></div> Servicios Operativos
           </div>
-          <button 
+          <button
             onClick={() => setShowCreate(!showCreate)}
             className="btn-dash btn-ghost-dash"
           >
@@ -229,7 +334,7 @@ const Dashboard = () => {
         <div className="flex-1 overflow-y-auto p-4 lg:p-10">
           {showCreate ? (
             <div className="max-w-4xl mx-auto">
-                <HostingCreationForm onSuccess={() => { setShowCreate(false); fetchHostings(); }} />
+              <HostingCreationForm onSuccess={() => { setShowCreate(false); fetchHostings(); }} />
             </div>
           ) : (
             <>
@@ -241,7 +346,7 @@ const Dashboard = () => {
                     <span className="text-[11px] text-muted font-mono uppercase tracking-widest">Hace 3 min</span>
                   </div>
                   <div className="text-sm text-gray-400 leading-relaxed">
-                    Detectamos un <strong className="text-white">aumento del 40% en el uso de CPU</strong>. 
+                    Detectamos un <strong className="text-white">aumento del 40% en el uso de CPU</strong>.
                     El patrón coincide con un plugin mal configurado tras la última actualización. Riesgo: <strong className="text-warn">MEDIO</strong>.
                   </div>
                 </div>
@@ -262,7 +367,7 @@ const Dashboard = () => {
                   <div className="text-[10px] text-muted font-mono uppercase mb-4 tracking-widest">CPU Promedio</div>
                   <div className="metric-value-dash">23<span className="text-sm text-muted ml-0.5">%</span></div>
                   <div className="w-full h-1 bg-surface2 mt-4 rounded-full overflow-hidden">
-                    <div className="h-full bg-accent" style={{width: '23%'}}></div>
+                    <div className="h-full bg-accent" style={{ width: '23%' }}></div>
                   </div>
                 </div>
                 <div className="metric-card-dash amber min-w-[200px]">
@@ -302,76 +407,76 @@ const Dashboard = () => {
                           <div className="flex-1">
                             <div className="text-sm font-bold text-white group-hover:text-accent transition-colors">{h.name}</div>
                             <div className="flex items-center gap-2">
-                                <a href={h.url || `https://${h.subdomain}`} target="_blank" rel="noopener" className="text-[11px] text-muted font-mono hover:underline">
-                                  {h.subdomain}
-                                </a>
-                                {metrics[h.hosting_id] && (
-                                  <div className="flex items-center gap-2 text-[10px] bg-white/5 px-2 py-0.5 rounded border border-white/5 font-mono text-muted">
-                                    <span className="flex items-center gap-1"><Cpu className="w-2.5 h-2.5" /> {metrics[h.hosting_id].cpu}</span>
-                                    <span className="flex items-center gap-1"><Database className="w-2.5 h-2.5" /> {metrics[h.hosting_id].memory}</span>
-                                  </div>
-                                )}
+                              <a href={h.url || `https://${h.subdomain}`} target="_blank" rel="noopener" className="text-[11px] text-muted font-mono hover:underline">
+                                {h.subdomain}
+                              </a>
+                              {metrics[h.hosting_id] && (
+                                <div className="flex items-center gap-2 text-[10px] bg-white/5 px-2 py-0.5 rounded border border-white/5 font-mono text-muted">
+                                  <span className="flex items-center gap-1"><Cpu className="w-2.5 h-2.5" /> {metrics[h.hosting_id].cpu}</span>
+                                  <span className="flex items-center gap-1"><Database className="w-2.5 h-2.5" /> {metrics[h.hosting_id].memory}</span>
+                                </div>
+                              )}
                             </div>
                           </div>
-                           <div className="ml-auto flex items-center gap-2">
-                             <div className={`domain-status-dash ${getStatusClass(h.status)}`}>● {h.status}</div>
-                             
-                             <div className="flex items-center gap-1 border-l border-white/5 pl-2 ml-2">
-                               {h.status === 'active' && (
-                                 <>
-                                   <button 
-                                     onClick={() => handleAction(h.hosting_id, stopHosting)} 
-                                     title="Detener"
-                                     className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-danger/20 hover:text-danger flex items-center justify-center transition-all"
-                                   >
-                                     <Square className="w-3.5 h-3.5" />
-                                   </button>
-                                   <button 
-                                     onClick={() => handleAction(h.hosting_id, restartHosting)} 
-                                     title="Reiniciar"
-                                     className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-accent/20 hover:text-accent flex items-center justify-center transition-all"
-                                   >
-                                     <RotateCcw className="w-3.5 h-3.5" />
-                                   </button>
-                                 </>
-                               )}
+                          <div className="ml-auto flex items-center gap-2">
+                            <div className={`domain-status-dash ${getStatusClass(h.status)}`}>● {h.status}</div>
 
-                               {/* Siempre permitir ver logs si el contenedor existe */}
-                               {h.status !== 'not_found' && (
-                                 <button 
-                                   onClick={() => handleOpenLogs(h)} 
-                                   title="Ver Logs"
-                                   className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-accent/20 hover:text-accent flex items-center justify-center transition-all"
-                                 >
-                                   <FileText className="w-3.5 h-3.5" />
-                                 </button>
-                               )}
-                               
-                               {h.status === 'stopped' && (
-                                 <button 
-                                   onClick={() => handleAction(h.hosting_id, startHosting)} 
-                                   title="Iniciar"
-                                   className="w-8 h-8 rounded-lg bg-accent/10 text-accent hover:bg-accent hover:text-background flex items-center justify-center transition-all"
-                                 >
-                                   <Play className="w-3.5 h-3.5" />
-                                 </button>
-                               )}
+                            <div className="flex items-center gap-1 border-l border-white/5 pl-2 ml-2">
+                              {h.status === 'active' && (
+                                <>
+                                  <button
+                                    onClick={() => handleAction(h.hosting_id, stopHosting)}
+                                    title="Detener"
+                                    className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-danger/20 hover:text-danger flex items-center justify-center transition-all"
+                                  >
+                                    <Square className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleAction(h.hosting_id, restartHosting)}
+                                    title="Reiniciar"
+                                    className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-accent/20 hover:text-accent flex items-center justify-center transition-all"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
 
-                               {h.status === 'starting' && (
-                                 <div className="w-8 h-8 flex items-center justify-center">
-                                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-muted" />
-                                 </div>
-                               )}
+                              {/* Siempre permitir ver logs si el contenedor existe */}
+                              {h.status !== 'not_found' && (
+                                <button
+                                  onClick={() => handleOpenLogs(h)}
+                                  title="Ver Logs"
+                                  className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-accent/20 hover:text-accent flex items-center justify-center transition-all"
+                                >
+                                  <FileText className="w-3.5 h-3.5" />
+                                </button>
+                              )}
 
-                               <button 
-                                 onClick={() => handleDelete(h.hosting_id, h.name)}
-                                 title="Eliminar"
-                                 className="w-8 h-8 rounded-lg bg-danger/10 text-danger flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:bg-danger hover:text-white"
-                               >
-                                 <Trash2 className="w-4 h-4" />
-                               </button>
-                             </div>
-                           </div>
+                              {h.status === 'stopped' && (
+                                <button
+                                  onClick={() => handleAction(h.hosting_id, startHosting)}
+                                  title="Iniciar"
+                                  className="w-8 h-8 rounded-lg bg-accent/10 text-accent hover:bg-accent hover:text-background flex items-center justify-center transition-all"
+                                >
+                                  <Play className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              {h.status === 'starting' && (
+                                <div className="w-8 h-8 flex items-center justify-center">
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-muted" />
+                                </div>
+                              )}
+
+                              <button
+                                onClick={() => handleDelete(h.hosting_id, h.name)}
+                                title="Eliminar"
+                                className="w-8 h-8 rounded-lg bg-danger/10 text-danger flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:bg-danger hover:text-white"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -387,19 +492,18 @@ const Dashboard = () => {
                         <div className="text-[11px] text-muted italic p-2">Sin actividad reciente.</div>
                       ) : events.map(event => (
                         <div key={event.event_id} className="flex gap-4 items-start border-l-2 border-white/5 pl-4 ml-1">
-                          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                            event.event_type === 'restart' ? 'bg-danger' : 
-                            event.event_type === 'panic' ? 'bg-warn' : 
-                            'bg-accent'
-                          }`}></div>
+                          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${event.event_type === 'restart' ? 'bg-danger' :
+                              event.event_type === 'panic' ? 'bg-warn' :
+                                'bg-accent'
+                            }`}></div>
                           <div className="space-y-1">
                             <div className="text-xs font-bold text-white flex items-center gap-2">
-                                {event.event_type.toUpperCase()} 
-                                <span className="text-[9px] text-muted font-normal bg-white/5 px-1.5 py-0.5 rounded capitalize">{event.container_name.split('_').slice(-1)[0]}</span>
+                              {event.event_type.toUpperCase()}
+                              <span className="text-[9px] text-muted font-normal bg-white/5 px-1.5 py-0.5 rounded capitalize">{event.container_name.split('_').slice(-1)[0]}</span>
                             </div>
                             <div className="text-[11px] text-gray-400 leading-tight">{event.message}</div>
                             <div className="text-[9px] text-muted font-mono uppercase tracking-tighter">
-                                {new Date(event.created_at).toLocaleString()}
+                              {new Date(event.created_at).toLocaleString()}
                             </div>
                           </div>
                         </div>
@@ -421,16 +525,20 @@ const Dashboard = () => {
                         {user?.has_payment_method ? '💳 Vinculada' : '⚠️ Sin Tarjeta'}
                       </div>
                     </div>
-                    
+
                     <div className="space-y-4">
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5 relative overflow-hidden group hover:border-accent/30 transition-colors">
+                      <div 
+                        onClick={handleToggleAutoscale}
+                        className={`p-4 bg-white/5 rounded-2xl border relative overflow-hidden group transition-all cursor-pointer ${user?.autoscale_enabled ? 'border-accent/30 bg-accent/5' : 'border-white/5 hover:border-white/20'}`}
+                      >
+                        {actionLoading && <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-10"><RefreshCw className="w-4 h-4 animate-spin text-accent" /></div>}
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                           <Zap className="w-12 h-12 text-accent" />
                         </div>
                         <div className="relative">
                           <div className="flex justify-between items-center mb-1">
                             <span className="text-xs font-bold text-white flex items-center gap-2 italic">
-                               <Zap className="w-3 h-3 text-accent fill-accent" /> Auto-Scaling
+                              <Zap className={`w-3 h-3 ${user?.autoscale_enabled ? 'text-accent fill-accent' : 'text-muted'}`} /> Auto-Scaling
                             </span>
                             <span className={`text-[10px] font-black uppercase ${user?.autoscale_enabled ? 'text-accent' : 'text-muted'}`}>
                               {user?.autoscale_enabled ? 'Activado' : 'Desactivado'}
@@ -442,11 +550,17 @@ const Dashboard = () => {
 
                       {!user?.has_payment_method && (user?.balance <= 0) && (
                         <div className="text-[10px] bg-red-400/10 text-red-400 p-3 rounded-xl border border-red-400/20 flex items-center gap-3 font-medium animate-pulse">
-                           <AlertTriangle className="w-4 h-4 shrink-0" /> Recarga saldo para evitar suspensiones por consumo excesivo.
+                          <AlertTriangle className="w-4 h-4 shrink-0" /> Recarga saldo para evitar suspensiones por consumo excesivo.
                         </div>
                       )}
-                      
-                      <button className="w-full py-4 bg-accent text-background rounded-2xl font-black text-xs hover:scale-[1.02] transition-all shadow-lg shadow-accent/20 active:scale-95">RECARGAR SALDO</button>
+
+                      <button 
+                        onClick={handleTopup}
+                        disabled={actionLoading}
+                        className="w-full py-4 bg-accent text-background rounded-2xl font-black text-xs hover:scale-[1.02] transition-all shadow-lg shadow-accent/20 active:scale-95 disabled:opacity-50 disabled:scale-100"
+                      >
+                        {actionLoading ? 'PROCESANDO...' : 'RECARGAR SALDO +$10'}
+                      </button>
                     </div>
                   </div>
 
@@ -463,14 +577,14 @@ const Dashboard = () => {
 
                   {/* NOTIFS */}
                   <div className="card-dash p-4 space-y-4">
-                     <div className="flex items-center gap-2 mb-2">
-                        <Bell className="w-4 h-4 text-muted" />
-                        <span className="text-xs font-bold">Notificaciones</span>
-                     </div>
-                     <div className="p-3 bg-warn/10 border border-warn/20 rounded-xl">
-                        <div className="text-[10px] font-bold text-warn uppercase mb-1">Alerta de CPU</div>
-                        <div className="text-[10px] text-gray-400">Picos detectados en tu proyecto principal.</div>
-                     </div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Bell className="w-4 h-4 text-muted" />
+                      <span className="text-xs font-bold">Notificaciones</span>
+                    </div>
+                    <div className="p-3 bg-warn/10 border border-warn/20 rounded-xl">
+                      <div className="text-[10px] font-bold text-warn uppercase mb-1">Alerta de CPU</div>
+                      <div className="text-[10px] text-gray-400">Picos detectados en tu proyecto principal.</div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -479,10 +593,10 @@ const Dashboard = () => {
         </div>
       </main>
 
-      <LogsModal 
-        isOpen={showLogs} 
-        onClose={() => setShowLogs(false)} 
-        logs={currentLogs} 
+      <LogsModal
+        isOpen={showLogs}
+        onClose={() => setShowLogs(false)}
+        logs={currentLogs}
         projectName={selectedHosting?.name}
         onRefresh={handleRefreshLogs}
         loading={logsLoading}

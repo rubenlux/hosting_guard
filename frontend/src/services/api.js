@@ -6,21 +6,25 @@ const api = axios.create({
   baseURL: API_URL,
 });
 
-// Interceptor para añadir el token a todas las peticiones
+// 1. Interceptor para añadir el token a todas las peticiones
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('access_token');
+
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
   return config;
 });
 
-// Interceptor para errores de respuesta (especialmente 401)
+// 2. Interceptor para errores de respuesta (especialmente 401)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
+    const isLoginRequest = error.config?.url?.includes('/login');
+
+    if (error.response?.status === 401 && !isLoginRequest) {
+      localStorage.removeItem('access_token');
       if (typeof window !== 'undefined') {
         window.location.href = '/'; 
       }
