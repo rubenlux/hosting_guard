@@ -15,9 +15,9 @@ DOMAIN = "hostingguard.lat"
 
 # 🔥 planes simples
 PLANS = {
-    "starter": {"cpu": "0.25", "memory": "256m"},
-    "growth": {"cpu": "0.5", "memory": "512m"},
-    "pro": {"cpu": "1", "memory": "1g"},
+    "starter": {"cpu": "0.5", "memory": "512m"},
+    "growth": {"cpu": "1", "memory": "1g"},
+    "pro": {"cpu": "2", "memory": "2g"},
 }
 
 
@@ -229,6 +229,88 @@ async def get_hosting_metrics(hosting_id: int, user: dict = Depends(verify_token
         return {"cpu": "0%", "memory": "0MiB / 0MiB"}
     except Exception as e:
         return {"error": str(e)}
+
+@router.post("/create-wordpress")
+async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(verify_token)):
+    try:
+        user_id = user.get("user_id")
+        project_name = data.name.lower().replace(" ", "-")
+        subdomain = f"{project_name}.{DOMAIN}"
+        uid = uuid.uuid4().hex[:6]
+        
+        db_container = f"user_{user_id}_db_{project_name}_{uid}"
+        wp_container = f"user_{user_id}_wp_{project_name}_{uid}"
+        network = "deploy_hosting_network"
+        
+        plan = PLANS.get(data.plan)
+        if not plan:
+            raise HTTPException(status_code=400, detail="plan inválido")
+
+        db_password = uuid.uuid4().hex[:16]
+
+        # 1. Lanzar MySQL
+        db_cmd = [
+            "docker", "run", "-d",
+            "--name", db_container,
+            "--network", network,
+            "-e", "MYSQL_ROOT_PASSWORD=" + db_password,
+            "-e", "MYSQL_DATABASE=wordpress",
+            "-e", "MYSQL_USER=wpuser",
+            "-e", "MYSQL_PASSWORD=" + db_password,
+            "--cpus", plan["cpu"],
+            "--memory", plan["memory"],
+            "mariadb:10.11"
+        ]
+        db_result = subprocess.run(db_cmd, capture_output=True, text=True)
+        if db_result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"MySQL error: {db_result.stderr}")
+
+        # 2. Lanzar WordPress
+        wp_cmd = [
+            "docker", "run", "-d",
+            "--name", wp_container,
+            "--network", network,
+            "-e", "WORDPRESS_DB_HOST=" + db_container,
+            "-e", "WORDPRESS_DB_USER=wpuser",
+            "-e", "WORDPRESS_DB_PASSWORD=" + db_password,
+            "-e", "WORDPRESS_DB_NAME=wordpress",
+            "--cpus", plan["cpu"],
+            "--memory", plan["memory"],
+            "-l", "traefik.enable=true",
+            "-l", f"traefik.http.routers.{wp_container}.rule=Host(`{subdomain}`)",
+            "-l", f"traefik.http.routers.{wp_container}.entrypoints=websecure",
+            "-l", f"traefik.http.routers.{wp_container}.tls.certresolver=le",
+            "-l", f"traefik.http.services.{wp_container}.loadbalancer.server.port=80",
+            "wordpress:latest"
+        ]
+        wp_result = subprocess.run(wp_cmd, capture_output=True, text=True)
+        if wp_result.returncode != 0:
+            subprocess.run(["docker", "rm", "-f", db_container], capture_output=True)
+            raise HTTPException(status_code=500, detail=f"WordPress error: {wp_result.stderr}")
+
+        # 3. Persistir en DB
+        hosting_id = hosting_repo.create_hosting(
+            user_id=user_id,
+            name=data.name,
+            subdomain=subdomain,
+            container_name=wp_container,
+            plan=data.plan
+        )
+
+        return {
+            "status": "created",
+            "type": "wordpress",
+            "hosting_id": hosting_id,
+            "url": f"https://{subdomain}",
+            "container": wp_container,
+            "db_container": db_container,
+            "note": "WordPress estará listo en 30-60 segundos"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/orchestrator/events")
 async def get_orchestrator_events(user: dict = Depends(verify_token)):
