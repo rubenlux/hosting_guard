@@ -214,6 +214,7 @@ from app.core.llm.factory import get_llm
 from app.api.routes.hosting import router as hosting_router
 
 # Orquestador con RAG por Tenant y LLM dinámico (env var)
+from app.core.llm.factory import get_llm
 ai_orchestrator = AIOrchestrator(
     knowledge_provider=TenantInMemoryKnowledgeProvider({}),
     llm=get_llm()

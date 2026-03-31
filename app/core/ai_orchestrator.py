@@ -1,10 +1,10 @@
 # app/core/ai_orchestrator.py
-
 import logging
 from typing import Dict, Optional
 
 from app.api.tenancy import Tenant
 from app.core.ai_advisory_engine import generate_advisory
+from app.core.ai_cache import get_cached_response, save_to_cache
 from app.core.ai_interfaces import AdvisoryLLM, TenantKnowledgeProvider
 from app.core.llm.factory import get_llm
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class AIOrchestrator:
     """
-    Orquesta Advisory Engine + RAG + LLM.
+    Orquesta Advisory Engine + RAG + LLM + Cache.
     Read-only. Sin side-effects.
     """
 
@@ -30,33 +30,40 @@ class AIOrchestrator:
         decision: Dict,
         tenant: Optional[Tenant] = None,
     ) -> Dict:
-        """
-        Devuelve advisory base + (opcional) explicación enriquecida.
-        Incluye fallback automático si el LLM falla.
-        """
-
         advisory = generate_advisory(decision)
 
-        # Si no hay RAG o no hay tenant, devolvemos solo el advisory base del core
-        if not self.knowledge_provider or not tenant:
-            return advisory
-
         try:
-            context = self.knowledge_provider.fetch_context(
-                tenant=tenant,
-                decision=decision,
-            )
+            context = []
+            if self.knowledge_provider and tenant:
+                context = self.knowledge_provider.fetch_context(
+                    tenant=tenant,
+                    decision=decision,
+                )
 
-            # Llamada al LLM (Real o Fake según configuración)
+            cached = get_cached_response(decision)
+            if cached:
+                logger.info("Cache HIT - serving from cache")
+                return {
+                    **advisory,
+                    "llm_explanation": cached,
+                    "context_used": context,
+                    "from_cache": True,
+                }
+
             explanation = self.llm.generate(decision, context)
+            save_to_cache(decision, explanation)
 
             return {
                 **advisory,
                 "llm_explanation": explanation,
                 "context_used": context,
+                "from_cache": False,
             }
+
         except Exception as e:
-            # Fallback seguro: si el LLM (especialmente el real) falla,
-            # devolvemos el advisory base determinista del core.
+            logger.error(f"Error en enriquecimiento de IA: {e}")
+            return advisory
+
+        except Exception as e:
             logger.error(f"Error en enriquecimiento de IA: {e}")
             return advisory
