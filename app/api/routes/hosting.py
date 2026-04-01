@@ -12,7 +12,7 @@ hosting_repo = HostingRepository()
 
 def _find_serve_dir(site_dir: str) -> str:
     import os
-    for subdir in ["public", "dist", "build", "www", "_site"]:
+    for subdir in ["public", "dist", "build", "www", "_site", "frontend/dist"]:
         candidate = f"{site_dir}/{subdir}"
         if os.path.exists(f"{candidate}/index.html"):
             return candidate
