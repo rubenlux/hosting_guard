@@ -92,6 +92,10 @@ def init_db():
         cursor.execute("ALTER TABLE users ADD COLUMN autoscale_enabled INTEGER DEFAULT 1")
     except:
         pass
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'free'")
+    except:
+        pass
 
     # Tabla de hostings (proyectos)
     cursor.execute(

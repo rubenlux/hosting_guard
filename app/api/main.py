@@ -142,6 +142,7 @@ def get_me(user: dict = Depends(verify_token)):
     return {
         "user_id": user["user_id"],
         "email": user["email"],
+        "plan": user_db.get("plan", "free"),
         "balance": user_db.get("balance", 0.0),
         "has_payment_method": bool(user_db.get("has_payment_method", 0)),
         "autoscale_enabled": bool(user_db.get("autoscale_enabled", 1)),

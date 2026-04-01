@@ -306,7 +306,7 @@ const Dashboard = () => {
             {!isSidebarCollapsed && (
               <div className="flex-1 min-w-0 opacity-fadeIn">
                 <div className="text-[11px] font-bold text-white truncate">{user?.email}</div>
-                <div className="text-[9px] text-accent font-mono uppercase">Plan Business</div>
+                <div className="text-[9px] text-accent font-mono uppercase">Plan {user?.plan || 'Free'}</div>
               </div>
             )}
             {!isSidebarCollapsed && (
