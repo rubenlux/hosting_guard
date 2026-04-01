@@ -81,3 +81,49 @@ class HostingRepository:
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
+
+    def get_expiring_free_hostings(self) -> List[Dict]:
+        """Retorna hostings free activos para verificar expiración."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM hostings 
+            WHERE plan = 'free' AND status = 'active'
+            """
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def update_hosting_status(self, hosting_id: int, status: str):
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE hostings SET status = ? WHERE hosting_id = ?",
+            (status, hosting_id)
+        )
+        conn.commit()
+        conn.close()
+
+    def get_all_user_hostings_by_user(self, user_id: int) -> List[Dict]:
+        """Incluye días restantes para plan free."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM hostings WHERE user_id = ?", (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        result = []
+        for row in rows:
+            h = dict(row)
+            if h["plan"] == "free":
+                created = datetime.fromisoformat(h["created_at"])
+                elapsed = (datetime.utcnow() - created).days
+                h["days_remaining"] = max(0, 14 - elapsed)
+                h["expires_in_days"] = h["days_remaining"]
+            else:
+                h["days_remaining"] = None
+                h["expires_in_days"] = None
+            result.append(h)
+        return result
+

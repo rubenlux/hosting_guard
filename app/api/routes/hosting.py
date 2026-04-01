@@ -100,7 +100,7 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
 @router.get("/list-hostings")
 async def list_hostings(user: dict = Depends(verify_token)):
     user_id = user.get("user_id")
-    hostings = hosting_repo.get_user_hostings(user_id)
+    hostings = hosting_repo.get_all_user_hostings_by_user(user_id)
 
     # Convertir sqlite3.Row a diccionarios si no lo son
     hostings_list = [dict(h) for h in hostings]

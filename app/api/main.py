@@ -1,6 +1,8 @@
 import json
 import logging
 import time
+import asyncio
+from contextlib import asynccontextmanager
 
 
 from typing import Optional
@@ -42,10 +44,28 @@ from app.observability.metrics import (
 logger = logging.getLogger("hosting_guard_audit")
 logging.basicConfig(level=logging.INFO)
 
+async def expiration_scheduler():
+    """Corre el job de expiración cada 12 horas."""
+    from app.services.expiration_job import check_and_expire_free_hostings
+    while True:
+        try:
+            check_and_expire_free_hostings()
+        except Exception as e:
+            logger.error(f"Error en expiration_scheduler: {e}")
+        await asyncio.sleep(43200)  # 12 horas
+
+
+@asynccontextmanager
+async def lifespan(app):
+    asyncio.create_task(expiration_scheduler())
+    yield
+
+
 app = FastAPI(
     title="Hosting Guard API",
     description="Decision API for hosting diagnostics and safety evaluation",
-    version="1.11.0",
+    version="1.16.0",
+    lifespan=lifespan,
 )
 
 # Servidores de repositorio de usuarios

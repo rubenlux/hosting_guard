@@ -53,6 +53,13 @@ const Dashboard = () => {
   const [events, setEvents] = useState([]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
+  const expiringHostings = hostings.filter(
+    h => h.plan === 'free' && h.days_remaining !== null && h.days_remaining <= 3
+  );
+  const expiredHostings = hostings.filter(
+    h => h.plan === 'free' && h.days_remaining === 0
+  );
+
   const getStatusClass = (status) => {
     switch (status) {
       case 'active': return 'ok';
@@ -341,6 +348,28 @@ const Dashboard = () => {
             </div>
           ) : (
             <>
+              {/* EXPIRATION WARNINGS */}
+              {expiringHostings.map(h => (
+                <div key={h.hosting_id} className={`flex items-center justify-between gap-4 px-5 py-3 rounded-2xl border mb-3 ${
+                  h.days_remaining === 0
+                    ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                    : 'bg-warn/10 border-warn/30 text-warn'
+                }`}>
+                  <div className="flex items-center gap-3">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span className="text-xs font-medium">
+                      {h.days_remaining === 0
+                        ? `Tu sitio "${h.name}" ha expirado. Actualizá tu plan para reactivarlo.`
+                        : `Tu sitio "${h.name}" vence en ${h.days_remaining} día${h.days_remaining === 1 ? '' : 's'}. ¡Actualizá tu plan!`
+                      }
+                    </span>
+                  </div>
+                  <button className="text-[10px] font-black uppercase tracking-wider bg-warn/20 hover:bg-warn/30 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap">
+                    Upgrade →
+                  </button>
+                </div>
+              ))}
+
               {/* AI ADVISORY */}
               <div className="advisory-box-dash flex flex-col md:flex-row gap-4 items-start md:items-center">
                 <div className="flex-1">
@@ -409,6 +438,17 @@ const Dashboard = () => {
                           </div>
                           <div className="flex-1">
                             <div className="text-sm font-bold text-white group-hover:text-accent transition-colors">{h.name}</div>
+                            {h.plan === 'free' && h.days_remaining !== null && (
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                                h.days_remaining <= 0
+                                  ? 'bg-red-500/20 text-red-400'
+                                  : h.days_remaining <= 3
+                                  ? 'bg-warn/20 text-warn'
+                                  : 'bg-accent/20 text-accent'
+                              }`}>
+                                {h.days_remaining <= 0 ? 'Expirado' : `${h.days_remaining}d restantes`}
+                              </span>
+                            )}
                             <div className="flex items-center gap-2">
                               <a href={h.url || `https://${h.subdomain}`} target="_blank" rel="noopener" className="text-[11px] text-muted font-mono hover:underline">
                                 {h.subdomain}
@@ -505,6 +545,8 @@ const Dashboard = () => {
                         <div key={event.event_id} className="flex gap-4 items-start border-l-2 border-white/5 pl-4 ml-1">
                           <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${event.event_type === 'restart' ? 'bg-danger' :
                               event.event_type === 'panic' ? 'bg-warn' :
+                              event.event_type === 'PLAN_EXPIRED' ? 'bg-red-500' :
+                              event.event_type === 'PLAN_EXPIRING_SOON' ? 'bg-warn' :
                                 'bg-accent'
                             }`}></div>
                           <div className="space-y-1">
