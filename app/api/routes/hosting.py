@@ -313,6 +313,135 @@ async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(veri
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class GitDeployRequest(BaseModel):
+    name: str
+    plan: str
+    repo_url: str
+    branch: str = "main"
+
+
+@router.post("/deploy-from-github")
+async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify_token)):
+    try:
+        user_id = user.get("user_id")
+        project_name = data.name.lower().replace(" ", "-")
+        subdomain = f"{project_name}.{DOMAIN}"
+        uid = uuid.uuid4().hex[:6]
+        container_name = f"user_{user_id}_git_{project_name}_{uid}"
+        site_dir = f"/opt/clients/{container_name}"
+
+        plan = PLANS.get(data.plan)
+        if not plan:
+            raise HTTPException(status_code=400, detail="Plan inválido")
+
+        # 1. Clonar el repo en el host
+        clone_result = subprocess.run(
+            ["git", "clone", "--branch", data.branch, "--depth", "1", data.repo_url, site_dir],
+            capture_output=True, text=True, timeout=60
+        )
+        if clone_result.returncode != 0:
+            raise HTTPException(status_code=400, detail=f"Error clonando repo: {clone_result.stderr}")
+
+        # 2. Detectar tipo de proyecto
+        import os
+        has_package_json = os.path.exists(f"{site_dir}/package.json")
+        has_index = os.path.exists(f"{site_dir}/index.html") or os.path.exists(f"{site_dir}/public/index.html")
+
+        # 3. Lanzar contenedor según tipo
+        if has_package_json:
+            # Proyecto Node/React — build y servir
+            image = "node:20-alpine"
+            cmd_str = "npm install && npm run build 2>/dev/null && npx serve dist -l 80 || npx serve . -l 80"
+            command = [
+                "docker", "run", "-d",
+                "--name", container_name,
+                "--network", "deploy_hosting_network",
+                "--cpus", plan["cpu"],
+                "--memory", plan["memory"],
+                "-v", f"{site_dir}:/app",
+                "-w", "/app",
+                "-l", "traefik.enable=true",
+                "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
+                "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
+                "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
+                "-l", f"traefik.http.services.{container_name}.loadbalancer.server.port=80",
+                image,
+                "sh", "-c", cmd_str
+            ]
+        else:
+            # HTML/PHP estático — servir con Nginx
+            command = [
+                "docker", "run", "-d",
+                "--name", container_name,
+                "--network", "deploy_hosting_network",
+                "--cpus", plan["cpu"],
+                "--memory", plan["memory"],
+                "-v", f"{site_dir}:/usr/share/nginx/html:ro",
+                "-l", "traefik.enable=true",
+                "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
+                "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
+                "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
+                "-l", f"traefik.http.services.{container_name}.loadbalancer.server.port=80",
+                "nginx:alpine"
+            ]
+
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            subprocess.run(["rm", "-rf", site_dir])
+            raise HTTPException(status_code=500, detail=f"Docker error: {result.stderr}")
+
+        # 4. Guardar en DB con repo_url
+        hosting_id = hosting_repo.create_hosting(
+            user_id=user_id,
+            name=data.name,
+            subdomain=subdomain,
+            container_name=container_name,
+            plan=data.plan
+        )
+
+        return {
+            "status": "deployed",
+            "type": "github",
+            "hosting_id": hosting_id,
+            "url": f"https://{subdomain}",
+            "repo": data.repo_url,
+            "branch": data.branch,
+            "note": "Sitio desplegado desde GitHub. Listo en 30 segundos."
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/hostings/{hosting_id}/redeploy")
+async def redeploy_from_github(hosting_id: int, user: dict = Depends(verify_token)):
+    """Hace git pull y reinicia el contenedor"""
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    container_name = hosting["container_name"]
+    site_dir = f"/opt/clients/{container_name}"
+
+    if not os.path.exists(site_dir):
+        raise HTTPException(status_code=400, detail="No es un deploy de GitHub")
+
+    pull = subprocess.run(
+        ["git", "-C", site_dir, "pull"],
+        capture_output=True, text=True, timeout=30
+    )
+
+    subprocess.run(["docker", "restart", container_name], capture_output=True)
+
+    return {
+        "status": "redeployed",
+        "git_output": pull.stdout,
+        "container": container_name
+    }
+
 @router.get("/orchestrator/events")
 async def get_orchestrator_events(user: dict = Depends(verify_token)):
     user_id = user.get("user_id")
