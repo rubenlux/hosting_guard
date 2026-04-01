@@ -354,8 +354,22 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
 
         # 2. Detectar tipo de proyecto
         import os
-        has_package_json = os.path.exists(f"{site_dir}/package.json")
-        has_index = os.path.exists(f"{site_dir}/index.html") or os.path.exists(f"{site_dir}/public/index.html")
+        import json
+        has_package_json = False
+        package_json_path = f"{site_dir}/package.json"
+        if os.path.exists(package_json_path):
+            try:
+                with open(package_json_path) as f:
+                    pkg = json.load(f)
+                # Solo usar Node si tiene script de build Y es React/Vue/Vite
+                scripts = pkg.get("scripts", {})
+                deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                is_node_app = "build" in scripts and any(
+                    k in deps for k in ["react", "vue", "vite", "next", "nuxt", "svelte"]
+                )
+                has_package_json = is_node_app
+            except Exception:
+                has_package_json = False
 
         # 3. Lanzar contenedor según tipo
         if has_package_json:
