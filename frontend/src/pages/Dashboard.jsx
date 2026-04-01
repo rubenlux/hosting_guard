@@ -34,6 +34,7 @@ import '../Dashboard.css';
 import HostingCreationForm from '../components/HostingCreationForm';
 import LogsModal from '../components/LogsModal';
 import ZipUploadModal from '../components/ZipUploadModal';
+import PixelAnalytics from '../components/PixelAnalytics';
 import { AlertTriangle, Upload } from "lucide-react"
 
 const Dashboard = () => {
@@ -42,6 +43,7 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [selectedHosting, setSelectedHosting] = useState(null);
   const [showUpload, setShowUpload] = useState(false);
@@ -247,17 +249,17 @@ const Dashboard = () => {
 
         <nav className="nav-dash">
           <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Principal'}</div>
-          <div className="nav-item-dash active" onClick={() => setShowCreate(false)}>
+          <div className={`nav-item-dash ${!showCreate && !showAnalytics ? 'active' : ''}`} onClick={() => { setShowCreate(false); setShowAnalytics(false); }}>
             <div className="nav-icon-dash icon-green"><Activity size={18} /></div>
             {!isSidebarCollapsed && <span>Dashboard</span>}
           </div>
-          <div className="nav-item-dash" onClick={() => setShowCreate(false)}>
+          <div className="nav-item-dash" onClick={() => { setShowCreate(false); setShowAnalytics(false); }}>
             <div className="nav-icon-dash icon-blue"><Globe size={18} /></div>
             {!isSidebarCollapsed && <span>Mis Sitios</span>}
           </div>
-          <div className="nav-item-dash">
+          <div className={`nav-item-dash ${showAnalytics ? 'active' : ''}`} onClick={() => { setShowAnalytics(true); setShowCreate(false); }}>
             <div className="nav-icon-dash icon-multi"><BarChart3 size={18} /></div>
-            {!isSidebarCollapsed && <span>Métricas</span>}
+            {!isSidebarCollapsed && <span>Analytics</span>}
           </div>
           <div className="nav-item-dash">
             <div className="nav-icon-dash icon-ia"><Bot size={18} /></div>
@@ -327,13 +329,13 @@ const Dashboard = () => {
       <main className="main-dash">
         <div className="topbar-dash">
           <div className="text-[15px] font-medium flex-1">
-            {showCreate ? 'Nuevo Proyecto' : 'Dashboard Overview'}
+            {showCreate ? 'Nuevo Proyecto' : showAnalytics ? 'Pixel Analytics' : 'Dashboard Overview'}
           </div>
           <div className="hidden md:flex items-center gap-2 bg-accent/5 text-accent px-3 py-1.5 rounded-full border border-accent/10 text-xs font-medium">
             <div className="pulse-dash"></div> Servicios Operativos
           </div>
           <button
-            onClick={() => setShowCreate(!showCreate)}
+            onClick={() => { setShowCreate(!showCreate); setShowAnalytics(false); }}
             className="btn-dash btn-ghost-dash"
           >
             {showCreate ? 'Volver' : '+ Nuevo sitio'}
@@ -346,6 +348,8 @@ const Dashboard = () => {
             <div className="max-w-4xl mx-auto">
               <HostingCreationForm onSuccess={() => { setShowCreate(false); fetchHostings(); }} />
             </div>
+          ) : showAnalytics ? (
+            <PixelAnalytics />
           ) : (
             <>
               {/* EXPIRATION WARNINGS */}
