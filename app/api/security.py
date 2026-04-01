@@ -18,8 +18,8 @@ def create_token(data: dict, expires_delta: Optional[timedelta] = None):
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        # Access token corto (15 min) para seguridad
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        # Access token largo (24 hrs) para evitar logouts constantes en MVP
+        expire = datetime.utcnow() + timedelta(days=1)
     payload.update({"exp": expire, "type": "access"})
     return jwt.encode(payload, SECRET, algorithm=ALGO)
 
