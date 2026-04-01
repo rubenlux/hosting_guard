@@ -33,7 +33,8 @@ import {
 import '../Dashboard.css';
 import HostingCreationForm from '../components/HostingCreationForm';
 import LogsModal from '../components/LogsModal';
-import { AlertTriangle } from "lucide-react"
+import ZipUploadModal from '../components/ZipUploadModal';
+import { AlertTriangle, Upload } from "lucide-react"
 
 const Dashboard = () => {
   const { user, logoutAction, setUser } = useAuth();
@@ -43,6 +44,8 @@ const Dashboard = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [selectedHosting, setSelectedHosting] = useState(null);
+  const [showUpload, setShowUpload] = useState(false);
+  const [selectedUploadHosting, setSelectedUploadHosting] = useState(null);
   const [currentLogs, setCurrentLogs] = useState('');
   const [lastLogsTimestamp, setLastLogsTimestamp] = useState(null);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -424,6 +427,14 @@ const Dashboard = () => {
                             <div className="flex items-center gap-1 border-l border-white/5 pl-2 ml-2">
                               {h.status === 'active' && (
                                 <>
+                                  {/* Botón ZIP upload — disponible para Sitios Web estáticos */}
+                                  <button
+                                    onClick={() => { setSelectedUploadHosting(h); setShowUpload(true); }}
+                                    title="Subir archivos (.zip)"
+                                    className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-[#00ff88]/20 hover:text-[#00ff88] flex items-center justify-center transition-all"
+                                  >
+                                    <Upload className="w-3.5 h-3.5" />
+                                  </button>
                                   <button
                                     onClick={() => handleAction(h.hosting_id, stopHosting)}
                                     title="Detener"
@@ -600,6 +611,12 @@ const Dashboard = () => {
         projectName={selectedHosting?.name}
         onRefresh={handleRefreshLogs}
         loading={logsLoading}
+      />
+
+      <ZipUploadModal
+        isOpen={showUpload}
+        onClose={() => { setShowUpload(false); setSelectedUploadHosting(null); }}
+        hosting={selectedUploadHosting}
       />
     </div>
   );

@@ -109,4 +109,13 @@ export const getOrchestratorEvents = async () => {
     return response.data;
 };
 
+export const uploadZip = async (hostingId, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post(`/hostings/${hostingId}/upload-zip`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+};
+
 export default api;

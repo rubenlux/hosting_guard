@@ -1,8 +1,12 @@
 import subprocess
 import uuid
+import os
+import shutil
+import tempfile
+import zipfile
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from app.api.security import verify_token
 from app.infra.audit.hosting_repository import HostingRepository
@@ -465,6 +469,97 @@ async def redeploy_from_github(hosting_id: int, user: dict = Depends(verify_toke
         "git_output": pull.stdout,
         "container": container_name
     }
+
+@router.post("/hostings/{hosting_id}/upload-zip")
+async def upload_zip(
+    hosting_id: int,
+    file: UploadFile = File(...),
+    user: dict = Depends(verify_token)
+):
+    """
+    Opción C — ZIP upload.
+    El cliente sube un .zip con su sitio; el sistema lo extrae y despliega
+    en el contenedor Nginx del hosting sin reiniciar el contenedor completo.
+    """
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    # Validar que sea un ZIP
+    if not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Solo se aceptan archivos .zip")
+
+    container_name = hosting["container_name"]
+
+    # Directorio de trabajo en el host
+    site_dir = f"/opt/clients/{container_name}"
+    os.makedirs(site_dir, exist_ok=True)
+
+    tmp_zip = os.path.join(site_dir, "_upload.zip")
+    extracted_dir = os.path.join(site_dir, "_extracted")
+
+    try:
+        # 1. Guardar el ZIP en disco
+        contents = await file.read()
+        with open(tmp_zip, "wb") as f:
+            f.write(contents)
+
+        # 2. Limpiar y extraer
+        if os.path.exists(extracted_dir):
+            shutil.rmtree(extracted_dir)
+        os.makedirs(extracted_dir, exist_ok=True)
+
+        with zipfile.ZipFile(tmp_zip, "r") as zf:
+            zf.extractall(extracted_dir)
+
+        # 3. Detectar si el ZIP tiene carpeta raíz única (ej: mi-sitio/index.html)
+        entries = os.listdir(extracted_dir)
+        if len(entries) == 1 and os.path.isdir(os.path.join(extracted_dir, entries[0])):
+            serve_root = os.path.join(extracted_dir, entries[0])
+        else:
+            serve_root = extracted_dir
+
+        # 4. Detectar subdirectorio de build si existe
+        serve_dir = _find_serve_dir(serve_root)
+
+        # 5. Copiar archivos al contenedor usando docker cp
+        cp_result = subprocess.run(
+            ["docker", "cp", f"{serve_dir}/.", f"{container_name}:/usr/share/nginx/html/"],
+            capture_output=True, text=True, timeout=30
+        )
+        if cp_result.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error copiando archivos al contenedor: {cp_result.stderr}"
+            )
+
+        # 6. Recargar Nginx sin reiniciar el contenedor
+        subprocess.run(
+            ["docker", "exec", container_name, "nginx", "-s", "reload"],
+            capture_output=True, timeout=10
+        )
+
+        return {
+            "status": "deployed",
+            "hosting_id": hosting_id,
+            "url": f"https://{hosting['subdomain']}",
+            "message": "Sitio desplegado correctamente. Activo en segundos."
+        }
+
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="El archivo ZIP está corrupto o es inválido")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Limpiar archivos temporales
+        if os.path.exists(tmp_zip):
+            os.remove(tmp_zip)
+        if os.path.exists(extracted_dir):
+            shutil.rmtree(extracted_dir, ignore_errors=True)
+
 
 @router.get("/orchestrator/events")
 async def get_orchestrator_events(user: dict = Depends(verify_token)):
