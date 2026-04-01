@@ -15,9 +15,10 @@ DOMAIN = "hostingguard.lat"
 
 # 🔥 planes simples
 PLANS = {
-    "starter": {"cpu": "0.5", "memory": "512m"},
-    "growth": {"cpu": "1", "memory": "1g"},
-    "pro": {"cpu": "2", "memory": "2g"},
+    "free": {"cpu": "0.25", "memory": "256m", "max_sites": 1, "days": 14},
+    "personal": {"cpu": "0.5", "memory": "512m", "max_sites": 1, "days": None},
+    "negocio": {"cpu": "1", "memory": "1g", "max_sites": 3, "days": None},
+    "agencia": {"cpu": "2", "memory": "2g", "max_sites": None, "days": None},
 }
 
 

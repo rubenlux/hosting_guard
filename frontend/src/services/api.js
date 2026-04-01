@@ -43,6 +43,11 @@ export const createHosting = async (name, plan) => {
   return response.data;
 };
 
+export const createWordPress = async (name, plan) => {
+  const response = await api.post('/create-wordpress', { name, plan });
+  return response.data;
+};
+
 export const login = async (email, password) => {
   const response = await api.post('/login', { email, password });
   return response.data;
