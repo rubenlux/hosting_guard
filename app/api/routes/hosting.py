@@ -379,7 +379,13 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
         if has_package_json:
             # Proyecto Node/React — build y servir
             image = "node:20-alpine"
-            cmd_str = "npm install && npm run build 2>/dev/null && npx serve dist -l 80 || npx serve . -l 80"
+            # Detectar directorio de salida: Vite usa dist/, CRA usa build/
+            cmd_str = (
+                "npm install && npm run build && "
+                "if [ -d dist ]; then npx serve dist -l 80; "
+                "elif [ -d build ]; then npx serve build -l 80; "
+                "else npx serve . -l 80; fi"
+            )
             command = [
                 "docker", "run", "-d",
                 "--name", container_name,
@@ -505,7 +511,7 @@ async def upload_zip(
         with open(tmp_zip, "wb") as f:
             f.write(contents)
 
-        # 2. Limpiar y extraer
+        # 2. Extraer a directorio temporal
         if os.path.exists(extracted_dir):
             shutil.rmtree(extracted_dir)
         os.makedirs(extracted_dir, exist_ok=True)
@@ -520,21 +526,54 @@ async def upload_zip(
         else:
             serve_root = extracted_dir
 
-        # 4. Detectar subdirectorio de build si existe
+        # 4. Detectar subdirectorio de build si existe (dist/, build/, public/, etc.)
         serve_dir = _find_serve_dir(serve_root)
 
-        # 5. Copiar archivos al contenedor usando docker cp
+        # 5. Estrategia dual según tipo de contenedor:
+        #    - Contenedores con bind-mount (GitHub deploy): actualizar archivos en el HOST
+        #      ya que /opt/clients/{container}/ es el directorio montado como read-only.
+        #    - Contenedores sin mount (create-hosting vacío): usar docker cp.
+
+        deployed_via_host = False
+
+        # 5a. Si existe el directorio del cliente en el host, sincronizar directamente
+        if os.path.isdir(site_dir):
+            # Limpiar archivos existentes (excepto archivos especiales del sistema)
+            for item in os.listdir(site_dir):
+                item_path = os.path.join(site_dir, item)
+                # No borrar archivos temporales propios ni .git
+                if item in ("_upload.zip", "_extracted", ".git"):
+                    continue
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                else:
+                    os.remove(item_path)
+
+            # Copiar archivos nuevos al directorio del host
+            for item in os.listdir(serve_dir):
+                src = os.path.join(serve_dir, item)
+                dst = os.path.join(site_dir, item)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src, dst)
+
+            deployed_via_host = True
+
+        # 5b. Intentar docker cp también (funciona para contenedores sin volume mount)
         cp_result = subprocess.run(
             ["docker", "cp", f"{serve_dir}/.", f"{container_name}:/usr/share/nginx/html/"],
             capture_output=True, text=True, timeout=30
         )
-        if cp_result.returncode != 0:
+
+        # Si ambos métodos fallaron, reportar error
+        if not deployed_via_host and cp_result.returncode != 0:
             raise HTTPException(
                 status_code=500,
-                detail=f"Error copiando archivos al contenedor: {cp_result.stderr}"
+                detail=f"Error desplegando archivos: {cp_result.stderr}"
             )
 
-        # 6. Recargar Nginx sin reiniciar el contenedor
+        # 6. Recargar Nginx
         subprocess.run(
             ["docker", "exec", container_name, "nginx", "-s", "reload"],
             capture_output=True, timeout=10
@@ -559,6 +598,7 @@ async def upload_zip(
             os.remove(tmp_zip)
         if os.path.exists(extracted_dir):
             shutil.rmtree(extracted_dir, ignore_errors=True)
+
 
 
 @router.get("/orchestrator/events")
