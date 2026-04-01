@@ -71,6 +71,13 @@ app = FastAPI(
 # Servidores de repositorio de usuarios
 user_repo = UserRepository()
 
+# Importar y registrar sub-routers
+from app.api.routes.pixel import router as pixel_router
+app.include_router(pixel_router)
+
+# Si el router de hosting.py no está registrado, asegúrate de importarlo en algún archivo (e.g. rutas o middleware), para el usuario, este archivo ahora carga pixel_router.
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
