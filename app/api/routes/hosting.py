@@ -9,6 +9,16 @@ from app.infra.audit.hosting_repository import HostingRepository
 
 hosting_repo = HostingRepository()
 
+
+def _find_serve_dir(site_dir: str) -> str:
+    import os
+    for subdir in ["public", "dist", "build", "www", "_site"]:
+        candidate = f"{site_dir}/{subdir}"
+        if os.path.exists(f"{candidate}/index.html"):
+            return candidate
+    return site_dir
+
+
 router = APIRouter()
 
 DOMAIN = "hostingguard.lat"
@@ -376,7 +386,7 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
                 "--network", "deploy_hosting_network",
                 "--cpus", plan["cpu"],
                 "--memory", plan["memory"],
-                "-v", f"{site_dir}:/usr/share/nginx/html:ro",
+                "-v", f"{_find_serve_dir(site_dir)}:/usr/share/nginx/html:ro",
                 "-l", "traefik.enable=true",
                 "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
                 "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
