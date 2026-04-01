@@ -371,7 +371,7 @@ const Dashboard = () => {
               ))}
 
               {/* AI ADVISORY */}
-              <div className="advisory-box-dash flex flex-col md:flex-row gap-4 items-start md:items-center">
+              <div className="advisory-box-dash border-scanner-warn flex flex-col md:flex-row gap-4 items-start md:items-center bg-[#050505]">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
                     <span className="ai-badge-dash">🤖 IA ADVISORY</span>
@@ -390,26 +390,26 @@ const Dashboard = () => {
 
               {/* METRICS */}
               <div className="metrics-row-dash overflow-x-auto pb-4">
-                <div className="metric-card-dash green min-w-[200px]">
+                <div className="metric-card-dash green min-w-[200px] bg-[#050505] border-[#00ff88]/20">
                   <div className="text-[10px] text-muted font-mono uppercase mb-4 tracking-widest">Uptime General</div>
-                  <div className="metric-value-dash">99.9<span className="text-sm text-muted ml-0.5">%</span></div>
+                  <div className="metric-value-dash font-mono text-glow text-[#00ff88]">99.9<span className="text-sm text-[#00ff88]/50 ml-0.5">%</span></div>
                   <div className="text-xs text-success mt-2">↑ Últimos 30 días</div>
                 </div>
-                <div className="metric-card-dash blue min-w-[200px]">
+                <div className="metric-card-dash blue min-w-[200px] bg-[#050505] border-[#00aaff]/20">
                   <div className="text-[10px] text-muted font-mono uppercase mb-4 tracking-widest">CPU Promedio</div>
-                  <div className="metric-value-dash">23<span className="text-sm text-muted ml-0.5">%</span></div>
+                  <div className="metric-value-dash font-mono text-glow text-[#00aaff]">23<span className="text-sm text-[#00aaff]/50 ml-0.5">%</span></div>
                   <div className="w-full h-1 bg-surface2 mt-4 rounded-full overflow-hidden">
                     <div className="h-full bg-accent" style={{ width: '23%' }}></div>
                   </div>
                 </div>
-                <div className="metric-card-dash amber min-w-[200px]">
+                <div className="metric-card-dash amber min-w-[200px] bg-[#050505] border-[#ffaa00]/20">
                   <div className="text-[10px] text-muted font-mono uppercase mb-4 tracking-widest">RAM Usada</div>
-                  <div className="metric-value-dash">2.1<span className="text-sm text-muted ml-0.5">GB</span></div>
+                  <div className="metric-value-dash font-mono text-glow text-[#ffaa00]">2.1<span className="text-sm text-[#ffaa00]/50 ml-0.5">GB</span></div>
                   <div className="text-xs text-warn mt-2">52% en uso</div>
                 </div>
-                <div className="metric-card-dash purple min-w-[200px]">
+                <div className="metric-card-dash purple min-w-[200px] bg-[#050505] border-[#aa00ff]/20">
                   <div className="text-[10px] text-muted font-mono uppercase mb-4 tracking-widest">Almacenamiento</div>
-                  <div className="metric-value-dash">18<span className="text-sm text-muted ml-0.5">GB</span></div>
+                  <div className="metric-value-dash font-mono text-glow text-[#aa00ff]">18<span className="text-sm text-[#aa00ff]/50 ml-0.5">GB</span></div>
                 </div>
               </div>
 
@@ -462,7 +462,7 @@ const Dashboard = () => {
                             </div>
                           </div>
                           <div className="ml-auto flex items-center gap-2">
-                            <div className={`domain-status-dash ${getStatusClass(h.status)}`}>● {h.status}</div>
+                            <div className={`domain-status-dash ${getStatusClass(h.status)} ${h.status === 'active' ? 'animate-led shadow-[0_0_10px_rgba(0,255,136,0.5)]' : ''}`}>● {h.status}</div>
 
                             <div className="flex items-center gap-1 border-l border-white/5 pl-2 ml-2">
                               {h.status === 'active' && (
@@ -543,11 +543,11 @@ const Dashboard = () => {
                         <div className="text-[11px] text-muted italic p-2">Sin actividad reciente.</div>
                       ) : events.map(event => (
                         <div key={event.event_id} className="flex gap-4 items-start border-l-2 border-white/5 pl-4 ml-1">
-                          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${event.event_type === 'restart' ? 'bg-danger' :
-                              event.event_type === 'panic' ? 'bg-warn' :
-                              event.event_type === 'PLAN_EXPIRED' ? 'bg-red-500' :
-                              event.event_type === 'PLAN_EXPIRING_SOON' ? 'bg-warn' :
-                                'bg-accent'
+                          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${event.event_type === 'restart' ? 'bg-danger shadow-[0_0_8px_red] animate-led' :
+                              event.event_type === 'panic' ? 'bg-warn shadow-[0_0_8px_orange] animate-led' :
+                              event.event_type === 'PLAN_EXPIRED' ? 'bg-red-500 shadow-[0_0_8px_red] animate-led' :
+                              event.event_type === 'PLAN_EXPIRING_SOON' ? 'bg-warn shadow-[0_0_8px_orange] animate-led' :
+                                'bg-accent shadow-[0_0_8px_rgba(0,255,136,0.5)]'
                             }`}></div>
                           <div className="space-y-1">
                             <div className="text-xs font-bold text-white flex items-center gap-2">
@@ -582,7 +582,7 @@ const Dashboard = () => {
                     <div className="space-y-4">
                       <div 
                         onClick={handleToggleAutoscale}
-                        className={`p-4 bg-white/5 rounded-2xl border relative overflow-hidden group transition-all cursor-pointer ${user?.autoscale_enabled ? 'border-accent/30 bg-accent/5' : 'border-white/5 hover:border-white/20'}`}
+                        className={`p-4 bg-white/5 rounded-2xl border relative overflow-hidden group transition-all cursor-pointer ${user?.autoscale_enabled ? 'border-scanner bg-[#00ff88]/5' : 'border-white/5 hover:border-white/20'}`}
                       >
                         {actionLoading && <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-10"><RefreshCw className="w-4 h-4 animate-spin text-accent" /></div>}
                         <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
