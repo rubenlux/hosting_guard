@@ -519,8 +519,8 @@ async def upload_zip(
         with zipfile.ZipFile(tmp_zip, "r") as zf:
             zf.extractall(extracted_dir)
 
-        # 3. Detectar si el ZIP tiene carpeta raíz única (ej: mi-sitio/index.html)
-        entries = os.listdir(extracted_dir)
+        # 3. Detectar si el ZIP tiene carpeta raíz única ignorando __MACOSX
+        entries = [e for e in os.listdir(extracted_dir) if e != "__MACOSX"]
         if len(entries) == 1 and os.path.isdir(os.path.join(extracted_dir, entries[0])):
             serve_root = os.path.join(extracted_dir, entries[0])
         else:
