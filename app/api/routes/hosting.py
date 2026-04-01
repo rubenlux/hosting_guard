@@ -60,7 +60,7 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
         command = [
             "docker", "run", "-d",
             "--name", container_name,
-            "--network", "hosting_guard_hosting_network",
+            "--network", "deploy_hosting_network",
             "-l", "traefik.enable=true",
             "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
             "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
