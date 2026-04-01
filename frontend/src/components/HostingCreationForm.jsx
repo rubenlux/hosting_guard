@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database } from 'lucide-react';
-import { createHosting, createWordPress } from '../services/api';
+import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github } from 'lucide-react';
+import { createHosting, createWordPress, deployFromGithub } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 
 const PLAN_LABELS = {
@@ -24,13 +24,21 @@ const TYPES = [
     desc: 'One-click install',
     icon: Database,
   },
+  {
+    id: 'github',
+    label: 'GitHub',
+    desc: 'Deploy desde repo',
+    icon: Github,
+  },
 ];
 
 const HostingCreationForm = ({ onSuccess }) => {
   const { user } = useAuth();
   const [name, setName] = useState('');
-  const [plan, setPlan] = useState('starter');
+  const [plan, setPlan] = useState('free');
   const [type, setType] = useState('static');
+  const [repoUrl, setRepoUrl] = useState('');
+  const [branch, setBranch] = useState('main');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -48,6 +56,8 @@ const HostingCreationForm = ({ onSuccess }) => {
 
       const data = type === 'wordpress'
         ? await createWordPress(name, plan)
+        : type === 'github'
+        ? await deployFromGithub(name, plan, repoUrl, branch)
         : await createHosting(name, plan);
 
       setResult({ success: true, data });
@@ -78,7 +88,7 @@ const HostingCreationForm = ({ onSuccess }) => {
           {/* Selector de tipo */}
           <div className="space-y-2">
             <label className="block text-[11px] font-black p-1 text-muted uppercase tracking-widest">Tipo de proyecto</label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               {TYPES.map((t) => {
                 const Icon = t.icon;
                 const active = type === t.id;
@@ -87,20 +97,50 @@ const HostingCreationForm = ({ onSuccess }) => {
                     key={t.id}
                     type="button"
                     onClick={() => setType(t.id)}
-                    className={`flex flex-col items-center gap-2 py-4 px-3 rounded-2xl border font-bold transition-all ${
+                    className={`flex flex-col items-center gap-2 py-3 px-2 rounded-2xl border font-bold transition-all ${
                       active
                         ? 'bg-primary/10 border-primary text-primary'
                         : 'bg-background border-white/10 text-gray-500 hover:border-white/30'
                     }`}
                   >
-                    <Icon className="w-6 h-6" />
-                    <span className="text-sm">{t.label}</span>
+                    <Icon className="w-4 h-4" />
+                    <span className="text-xs font-black">{t.label}</span>
                     <span className="text-[10px] font-normal opacity-60">{t.desc}</span>
                   </button>
                 );
               })}
             </div>
           </div>
+
+          {/* Campos GitHub */}
+          {type === 'github' && (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <label className="block text-[11px] font-black p-1 text-muted uppercase tracking-widest">URL del repositorio</label>
+                <input
+                  type="url"
+                  required={type === 'github'}
+                  placeholder="https://github.com/usuario/mi-proyecto"
+                  className="w-full bg-background border border-white/10 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-sm"
+                  value={repoUrl}
+                  onChange={(e) => setRepoUrl(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block text-[11px] font-black p-1 text-muted uppercase tracking-widest">Branch</label>
+                <input
+                  type="text"
+                  placeholder="main"
+                  className="w-full bg-background border border-white/10 rounded-2xl px-5 py-3 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-sm"
+                  value={branch}
+                  onChange={(e) => setBranch(e.target.value)}
+                />
+              </div>
+              <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl px-4 py-3 text-purple-400 text-xs">
+                ⚡ El sistema clona tu repo automáticamente. HTML, React y Node.js soportados.
+              </div>
+            </div>
+          )}
 
           {/* Nombre del proyecto */}
           <div className="space-y-2">
@@ -152,8 +192,8 @@ const HostingCreationForm = ({ onSuccess }) => {
             className={`w-full bg-primary text-background py-5 rounded-2xl font-black text-xl hover:scale-[1.02] transition-all shadow-xl glow-primary flex items-center justify-center gap-3 ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}
           >
             {loading
-              ? (type === 'wordpress' ? 'Instalando WordPress...' : 'Creando...')
-              : (type === 'wordpress' ? 'INSTALAR WORDPRESS' : 'LANZAR PROYECTO')
+              ? (type === 'wordpress' ? 'Instalando WordPress...' : type === 'github' ? 'Clonando repo...' : 'Creando...')
+              : (type === 'wordpress' ? 'INSTALAR WORDPRESS' : type === 'github' ? 'DEPLOY DESDE GITHUB' : 'LANZAR PROYECTO')
             }
             {!loading && <Plus className="w-6 h-6" />}
           </button>

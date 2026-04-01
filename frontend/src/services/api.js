@@ -48,6 +48,16 @@ export const createWordPress = async (name, plan) => {
   return response.data;
 };
 
+export const deployFromGithub = async (name, plan, repoUrl, branch = 'main') => {
+  const response = await api.post('/deploy-from-github', {
+    name,
+    plan,
+    repo_url: repoUrl,
+    branch,
+  });
+  return response.data;
+};
+
 export const login = async (email, password) => {
   const response = await api.post('/login', { email, password });
   return response.data;
