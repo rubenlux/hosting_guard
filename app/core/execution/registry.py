@@ -5,9 +5,9 @@ from app.core.execution.executors import (
     RestartServiceExecutor,
     RollbackDeployExecutor,
 )
-from app.core.execution.interfaces import ActionExecutor
+from app.core.execution.interfaces import BaseExecutor
 
-EXECUTOR_REGISTRY: Dict[str, ActionExecutor] = {
+EXECUTOR_REGISTRY: Dict[str, BaseExecutor] = {
     "restart_service": RestartServiceExecutor(),
     "clear_cache": ClearCacheExecutor(),
     "rollback_deploy": RollbackDeployExecutor(),
