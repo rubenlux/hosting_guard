@@ -55,6 +55,12 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
         if not plan:
             raise HTTPException(status_code=400, detail="plan inválido")
 
+        max_sites = plan.get("max_sites")
+        if max_sites is not None:
+            user_hostings = hosting_repo.get_user_hostings(user_id)
+            if len(user_hostings) >= max_sites:
+                raise HTTPException(status_code=403, detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}.")
+
         image = "nginx:alpine"
 
         command = [
@@ -261,6 +267,12 @@ async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(veri
         if not plan:
             raise HTTPException(status_code=400, detail="plan inválido")
 
+        max_sites = plan.get("max_sites")
+        if max_sites is not None:
+            user_hostings = hosting_repo.get_user_hostings(user_id)
+            if len(user_hostings) >= max_sites:
+                raise HTTPException(status_code=403, detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}.")
+
         db_password = uuid.uuid4().hex[:16]
 
         # 1. Lanzar MySQL
@@ -347,6 +359,12 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
         plan = PLANS.get(data.plan)
         if not plan:
             raise HTTPException(status_code=400, detail="Plan inválido")
+
+        max_sites = plan.get("max_sites")
+        if max_sites is not None:
+            user_hostings = hosting_repo.get_user_hostings(user_id)
+            if len(user_hostings) >= max_sites:
+                raise HTTPException(status_code=403, detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}.")
 
         # 1. Clonar el repo en el host
         clone_result = subprocess.run(
