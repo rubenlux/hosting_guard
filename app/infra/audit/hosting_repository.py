@@ -4,7 +4,7 @@ from typing import List, Dict, Optional
 from contextlib import closing
 from app.infra.audit.sqlite import get_connection
 
-VALID_STATUSES = {"active", "stopped", "expired", "error", "starting"}
+VALID_STATUSES = {"active", "stopped", "expired", "error", "starting", "expiring"}
 
 class HostingRepository:
     def __init__(self):
@@ -91,6 +91,21 @@ class HostingRepository:
             )
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
+
+    def get_last_event_by_type(self, container_name: str, event_type: str) -> Optional[Dict]:
+        with closing(get_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM orchestrator_events 
+                WHERE container_name = ? AND event_type = ?
+                ORDER BY created_at DESC 
+                LIMIT 1
+                """,
+                (container_name, event_type)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def get_expiring_free_hostings(self, batch_size: int = 100, offset: int = 0) -> List[Dict]:
         with closing(get_connection()) as conn:
