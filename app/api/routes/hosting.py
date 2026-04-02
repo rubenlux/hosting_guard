@@ -8,7 +8,7 @@ import zipfile
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
 from app.api.security import verify_token
 from app.infra.audit.hosting_repository import HostingRepository
@@ -93,7 +93,7 @@ class CreateHostingRequest(BaseModel):
 
 
 @router.post("/create-hosting")
-async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify_token)):
+async def create_hosting(data: CreateHostingRequest, request: Request, user: dict = Depends(verify_token)):
     try:
         # FIX #7: validar nombre antes de usarlo en subdominios y labels
         _validate_project_name(data.name)
@@ -102,10 +102,18 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
         project_name = data.name.lower().replace(" ", "-")
         subdomain    = f"{project_name}.{DOMAIN}"
         container_name = f"user_{user_id}_{project_name}_{uuid.uuid4().hex[:6]}"
+        ip_address   = request.client.host if request.client else None
 
         plan = PLANS.get(data.plan)
         if not plan:
             raise HTTPException(status_code=400, detail="plan inválido")
+
+        if data.plan == "free" and ip_address:
+            if hosting_repo.has_free_plan_from_ip(ip_address):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Solo se permite un alojamiento en plan free por dirección IP. Por favor, actualiza tu plan."
+                )
 
         max_sites = plan.get("max_sites")
         if max_sites is not None:
@@ -144,7 +152,8 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
             name=data.name,
             subdomain=subdomain,
             container_name=container_name,
-            plan=data.plan
+            plan=data.plan,
+            ip_address=ip_address
         )
 
         return {
@@ -314,7 +323,7 @@ async def get_hosting_metrics(hosting_id: int, user: dict = Depends(verify_token
         return {"error": str(e)}
 
 @router.post("/create-wordpress")
-async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(verify_token)):
+async def create_wordpress(data: CreateHostingRequest, request: Request, user: dict = Depends(verify_token)):
     try:
         # FIX #7: validar nombre
         _validate_project_name(data.name)
@@ -323,6 +332,7 @@ async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(veri
         project_name = data.name.lower().replace(" ", "-")
         subdomain    = f"{project_name}.{DOMAIN}"
         uid          = uuid.uuid4().hex[:6]
+        ip_address   = request.client.host if request.client else None
 
         # FIX #2: convención de nombres clara para poder limpiar el DB container al borrar
         db_container = f"user_{user_id}_db_{project_name}_{uid}"
@@ -332,6 +342,13 @@ async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(veri
         plan = PLANS.get(data.plan)
         if not plan:
             raise HTTPException(status_code=400, detail="plan inválido")
+
+        if data.plan == "free" and ip_address:
+            if hosting_repo.has_free_plan_from_ip(ip_address):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Solo se permite un alojamiento en plan free por dirección IP. Por favor, actualiza tu plan."
+                )
 
         max_sites = plan.get("max_sites")
         if max_sites is not None:
@@ -396,7 +413,8 @@ async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(veri
             name=data.name,
             subdomain=subdomain,
             container_name=wp_container,
-            plan=data.plan
+            plan=data.plan,
+            ip_address=ip_address
         )
 
         return {
@@ -422,7 +440,7 @@ class GitDeployRequest(BaseModel):
 
 
 @router.post("/deploy-from-github")
-async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify_token)):
+async def deploy_from_github(data: GitDeployRequest, request: Request, user: dict = Depends(verify_token)):
     try:
         # FIX #4: validar URL antes de usarla en subprocess
         # FIX #5: validar branch para prevenir command injection
@@ -437,10 +455,18 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
         uid            = uuid.uuid4().hex[:6]
         container_name = f"user_{user_id}_git_{project_name}_{uid}"
         site_dir       = f"/opt/clients/{container_name}"
+        ip_address     = request.client.host if request.client else None
 
         plan = PLANS.get(data.plan)
         if not plan:
             raise HTTPException(status_code=400, detail="Plan inválido")
+
+        if data.plan == "free" and ip_address:
+            if hosting_repo.has_free_plan_from_ip(ip_address):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Solo se permite un alojamiento en plan free por dirección IP. Por favor, actualiza tu plan."
+                )
 
         max_sites = plan.get("max_sites")
         if max_sites is not None:
@@ -531,7 +557,8 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
             name=data.name,
             subdomain=subdomain,
             container_name=container_name,
-            plan=data.plan
+            plan=data.plan,
+            ip_address=ip_address
         )
 
         return {

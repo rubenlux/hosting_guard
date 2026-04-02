@@ -10,15 +10,15 @@ class HostingRepository:
     def __init__(self):
         pass
 
-    def create_hosting(self, user_id: int, name: str, subdomain: str, container_name: str, plan: str) -> int:
+    def create_hosting(self, user_id: int, name: str, subdomain: str, container_name: str, plan: str, ip_address: Optional[str] = None) -> int:
         with closing(get_connection()) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO hostings (user_id, name, subdomain, container_name, plan, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO hostings (user_id, name, subdomain, container_name, plan, status, created_at, ip_address)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, name, subdomain, container_name, plan, "active", datetime.utcnow().isoformat())
+                (user_id, name, subdomain, container_name, plan, "active", datetime.utcnow().isoformat(), ip_address)
             )
             hosting_id = cursor.lastrowid
             conn.commit()
@@ -91,6 +91,21 @@ class HostingRepository:
             )
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
+
+    def has_free_plan_from_ip(self, ip_address: str) -> bool:
+        if not ip_address:
+            return False
+        with closing(get_connection()) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COUNT(*) as count FROM hostings 
+                WHERE ip_address = ? AND plan = 'free' AND status = 'active'
+                """,
+                (ip_address,)
+            )
+            row = cursor.fetchone()
+            return row["count"] > 0
 
     def get_last_event_by_type(self, container_name: str, event_type: str) -> Optional[Dict]:
         with closing(get_connection()) as conn:

@@ -97,6 +97,11 @@ def init_db():
     except:
         pass
 
+    try:
+        cursor.execute("ALTER TABLE hostings ADD COLUMN ip_address TEXT")
+    except:
+        pass
+
     # Tabla de hostings (proyectos)
     cursor.execute(
         """
@@ -109,14 +114,15 @@ def init_db():
             plan TEXT NOT NULL,
             status TEXT NOT NULL,
             created_at TEXT NOT NULL,
+            ip_address TEXT,
             FOREIGN KEY (user_id) REFERENCES users (user_id)
         )
         """
     )
 
-    # Indices clave de Hostings
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hostings_container ON hostings(container_name)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hostings_user ON hostings(user_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hostings_ip ON hostings(ip_address)")
 
     # Tabla de eventos del orquestador (Smart Monitoring)
     cursor.execute(
