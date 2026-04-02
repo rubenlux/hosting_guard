@@ -43,6 +43,18 @@ class UserRepository:
             return dict(row)
         return None
 
+    def deduct_balance_if_sufficient(self, user_id: int, amount: float) -> bool:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+            (amount, user_id, amount)
+        )
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected > 0
+
     def update_balance(self, user_id: int, amount: float):
         conn = get_connection()
         cursor = conn.cursor()

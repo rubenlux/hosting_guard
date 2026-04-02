@@ -49,7 +49,7 @@ async def expiration_scheduler():
     from app.services.expiration_job import check_and_expire_free_hostings
     while True:
         try:
-            check_and_expire_free_hostings()
+            await asyncio.get_event_loop().run_in_executor(None, check_and_expire_free_hostings)
         except Exception as e:
             logger.error(f"Error en expiration_scheduler: {e}")
         await asyncio.sleep(43200)  # 12 horas
@@ -106,10 +106,11 @@ def register(request: RegisterRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/login")
-def login(request: LoginRequest):
-    user = user_repo.get_user_by_email(request.email)
+@limiter.limit("5/minute")
+def login(request: Request, body: LoginRequest):
+    user = user_repo.get_user_by_email(body.email)
     import hashlib
-    safe_pass = hashlib.sha256(request.password.encode()).hexdigest()
+    safe_pass = hashlib.sha256(body.password.encode()).hexdigest()
     
     if not user or not bcrypt.checkpw(safe_pass.encode(), user["password_hash"].encode()):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -119,11 +120,23 @@ def login(request: LoginRequest):
         "refresh_token": create_refresh_token({"user_id": user["user_id"], "email": user["email"]})
     }
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+from app.api.security import revoke_token
+
+@app.post("/logout")
+def logout(user=Depends(verify_token)):
+    jti = user.get("jti")
+    if jti:
+        revoke_token(jti)
+    return {"status": "ok", "detail": "Sesión cerrada correctamente"}
+
 @app.post("/refresh")
-def refresh(refresh_token: str):
+def refresh(data: RefreshRequest):
     try:
         from jose import jwt, JWTError
-        payload = jwt.decode(refresh_token, SECRET, algorithms=[ALGO])
+        payload = jwt.decode(data.refresh_token, SECRET, algorithms=[ALGO])
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Invalid token type")
         
@@ -173,8 +186,17 @@ def update_user_config(config: UserConfigRequest, user=Depends(verify_token)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+from pydantic import field_validator
+
 class TopupRequest(BaseModel):
     amount: float
+
+    @field_validator("amount")
+    @classmethod
+    def amount_must_be_positive(cls, v):
+        if v <= 0 or v > 1000:
+            raise ValueError("Monto inválido")
+        return v
 
 @app.post("/user/topup")
 def topup(data: TopupRequest, user=Depends(verify_token)):
@@ -242,7 +264,6 @@ from app.core.llm.factory import get_llm
 from app.api.routes.hosting import router as hosting_router
 
 # Orquestador con RAG por Tenant y LLM dinámico (env var)
-from app.core.llm.factory import get_llm
 ai_orchestrator = AIOrchestrator(
     knowledge_provider=TenantInMemoryKnowledgeProvider({}),
     llm=get_llm()
@@ -401,11 +422,14 @@ def update_tenant_config(
     tenant_id: str,
     kind: str,
     content: dict,
+    user=Depends(verify_token),
 ):
     """
     Crea una nueva versión de reglas o prompts para un tenant.
     Endpoint administrativo (debe protegerse en pruducción).
     """
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin required")
     cfg = tenant_config_repo.create_new_version(
         tenant_id=tenant_id,
         kind=kind,
@@ -420,7 +444,7 @@ def update_tenant_config(
 
 
 @app.get("/metrics")
-def metrics():
+def metrics(user=Depends(verify_token)):
     """
     Expone métricas para Prometheus.
     """

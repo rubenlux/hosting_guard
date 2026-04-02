@@ -1,11 +1,13 @@
 import subprocess
 import uuid
 import os
+import re
+import asyncio
 import shutil
-import tempfile
 import zipfile
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from app.api.security import verify_token
@@ -13,9 +15,15 @@ from app.infra.audit.hosting_repository import HostingRepository
 
 hosting_repo = HostingRepository()
 
+# --- Constantes de seguridad ---
+MAX_ZIP_SIZE        = 50  * 1024 * 1024   # 50 MB en memoria
+MAX_EXTRACTED_SIZE  = 200 * 1024 * 1024   # 200 MB descomprimido (anti ZIP-bomb)
+ALLOWED_REPO_HOSTS  = {"github.com", "gitlab.com", "bitbucket.org"}
+BRANCH_REGEX        = re.compile(r'^[a-zA-Z0-9._/\-]+$')
+PROJECT_NAME_REGEX  = re.compile(r'^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$')
+
 
 def _find_serve_dir(site_dir: str) -> str:
-    import os
     for subdir in ["public", "dist", "build", "www", "_site", "frontend/dist"]:
         candidate = f"{site_dir}/{subdir}"
         if os.path.exists(f"{candidate}/index.html"):
@@ -23,32 +31,76 @@ def _find_serve_dir(site_dir: str) -> str:
     return site_dir
 
 
+async def _run_docker(*args, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Ejecuta un comando Docker de forma no bloqueante (sin bloquear el event loop)."""
+    loop = asyncio.get_running_loop()
+    cmd  = list(args)
+    return await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    )
+
+
+def _validate_project_name(name: str) -> None:
+    """Valida que el nombre sea un slug seguro para subdominios y labels de Traefik."""
+    clean = name.lower().replace(" ", "-")
+    if not PROJECT_NAME_REGEX.match(clean):
+        raise HTTPException(
+            status_code=400,
+            detail="Nombre de proyecto inválido. Solo letras minúsculas, números y guiones (3-50 chars)."
+        )
+
+
+def _validate_repo_url(url: str) -> None:
+    """Valida que la URL sea HTTPS y pertenezca a un host de confianza."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise HTTPException(status_code=400, detail="URL de repositorio inválida.")
+    if parsed.scheme != "https":
+        raise HTTPException(status_code=400, detail="Solo se permiten URLs HTTPS.")
+    if parsed.hostname not in ALLOWED_REPO_HOSTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Host no permitido. Usar: {', '.join(sorted(ALLOWED_REPO_HOSTS))}"
+        )
+
+
+def _validate_branch(branch: str) -> None:
+    """Previene command injection en el nombre del branch."""
+    if not BRANCH_REGEX.match(branch):
+        raise HTTPException(
+            status_code=400,
+            detail="Nombre de branch inválido. Solo se permiten letras, números, puntos, guiones y /."
+        )
+
+
 router = APIRouter()
 
 DOMAIN = "hostingguard.lat"
 
-# 🔥 planes simples
 PLANS = {
-    "free": {"cpu": "0.25", "memory": "256m", "max_sites": 1, "days": 14},
-    "personal": {"cpu": "0.5", "memory": "512m", "max_sites": 1, "days": None},
-    "negocio": {"cpu": "1", "memory": "1g", "max_sites": 3, "days": None},
-    "agencia": {"cpu": "2", "memory": "2g", "max_sites": None, "days": None},
+    "free":     {"cpu": "0.25", "memory": "256m",  "max_sites": 1,    "days": 14},
+    "personal": {"cpu": "0.5",  "memory": "512m",  "max_sites": 1,    "days": None},
+    "negocio":  {"cpu": "1",    "memory": "1g",    "max_sites": 3,    "days": None},
+    "agencia":  {"cpu": "2",    "memory": "2g",    "max_sites": None, "days": None},
 }
 
 
 class CreateHostingRequest(BaseModel):
-    name: str  # nombre del proyecto (ej: "miapp")
-    plan: str  # starter | growth | pro
+    name: str
+    plan: str
 
 
 @router.post("/create-hosting")
 async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify_token)):
     try:
-        user_id = user.get("user_id")
+        # FIX #7: validar nombre antes de usarlo en subdominios y labels
+        _validate_project_name(data.name)
+
+        user_id      = user.get("user_id")
         project_name = data.name.lower().replace(" ", "-")
-        subdomain = f"{project_name}.{DOMAIN}"
-        
-        # 🔥 Multi-tenant: nombre único por usuario
+        subdomain    = f"{project_name}.{DOMAIN}"
         container_name = f"user_{user_id}_{project_name}_{uuid.uuid4().hex[:6]}"
 
         plan = PLANS.get(data.plan)
@@ -59,14 +111,20 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
         if max_sites is not None:
             user_hostings = hosting_repo.get_user_hostings(user_id)
             if len(user_hostings) >= max_sites:
-                raise HTTPException(status_code=403, detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}.")
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}."
+                )
 
         image = "nginx:alpine"
 
         command = [
             "docker", "run", "-d",
-            "--name", container_name,
-            "--network", "deploy_hosting_network",
+            "--name",     container_name,
+            "--network",  "deploy_hosting_network",
+            # FIX #7: aplicar límites de recursos del plan (antes faltaban en este endpoint)
+            "--cpus",     plan["cpu"],
+            "--memory",   plan["memory"],
             "-l", "traefik.enable=true",
             "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
             "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
@@ -75,12 +133,12 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
             image
         ]
 
-        result = subprocess.run(command, capture_output=True, text=True)
+        # FIX #1: usar _run_docker async para no bloquear el event loop
+        result = await _run_docker(*command, timeout=30)
 
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"Docker error: {result.stderr}")
 
-        # 🔥 Persistir en DB
         hosting_id = hosting_repo.create_hosting(
             user_id=user_id,
             name=data.name,
@@ -90,11 +148,11 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
         )
 
         return {
-            "status": "created",
+            "status":     "created",
             "hosting_id": hosting_id,
-            "user_id": user_id,
-            "url": f"https://{subdomain}",
-            "container": container_name
+            "user_id":    user_id,
+            "url":        f"https://{subdomain}",
+            "container":  container_name
         }
 
     except HTTPException:
@@ -104,41 +162,51 @@ async def create_hosting(data: CreateHostingRequest, user: dict = Depends(verify
 
 
 @router.get("/list-hostings")
-async def list_hostings(user: dict = Depends(verify_token)):
-    user_id = user.get("user_id")
-    hostings = hosting_repo.get_all_user_hostings_by_user(user_id)
-
-    # Convertir sqlite3.Row a diccionarios si no lo son
+async def list_hostings(skip: int = 0, limit: int = 50, user: dict = Depends(verify_token)):
+    user_id       = user.get("user_id")
+    loop = asyncio.get_running_loop()
+    # Usar executor para no bloquear el event loop con las consultas síncronas a SQLite
+    hostings = await loop.run_in_executor(
+        None, 
+        lambda: hosting_repo.get_all_user_hostings_by_user(user_id, limit=limit, skip=skip)
+    )
     hostings_list = [dict(h) for h in hostings]
 
-    # Mapeo de estados Docker -> UX
+    if not hostings_list:
+        return hostings_list
+
     status_map = {
-        "running": "active",
-        "exited": "stopped",
+        "running":    "active",
+        "exited":     "stopped",
         "restarting": "starting",
-        "paused": "paused",
-        "created": "starting",
-        "removing": "stopped",
-        "dead": "error"
+        "paused":     "paused",
+        "created":    "starting",
+        "removing":   "stopped",
+        "dead":       "error"
     }
 
-    for h in hostings_list:
-        try:
-            # Sincronización real con Docker
-            res = subprocess.run(
-                ["docker", "inspect", "-f", "{{.State.Status}}", h["container_name"]],
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
+    # FIX #3: un solo comando docker inspect para TODOS los contenedores (antes era N llamadas en loop)
+    names = [h["container_name"] for h in hostings_list]
+    try:
+        res = await _run_docker(
+            "docker", "inspect",
+            "--format", "{{.Name}}|{{.State.Status}}",
+            *names,
+            timeout=10
+        )
+        # Construir mapa { container_name -> docker_status }
+        status_by_name: dict[str, str] = {}
+        for line in res.stdout.strip().splitlines():
+            if "|" in line:
+                cname, cstatus = line.lstrip("/").split("|", 1)
+                status_by_name[cname.strip()] = cstatus.strip()
 
-            if res.returncode == 0:
-                docker_status = res.stdout.strip()
-                h["status"] = status_map.get(docker_status, "unknown")
-            else:
-                h["status"] = "not_found"
+        for h in hostings_list:
+            docker_status = status_by_name.get(h["container_name"])
+            h["status"]   = status_map.get(docker_status, "not_found") if docker_status else "not_found"
 
-        except Exception:
+    except Exception:
+        for h in hostings_list:
             h["status"] = "error"
 
     return hostings_list
@@ -147,16 +215,20 @@ async def list_hostings(user: dict = Depends(verify_token)):
 async def delete_hosting(hosting_id: int, user: dict = Depends(verify_token)):
     user_id = user.get("user_id")
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
-    
+
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
 
-    # Intentar detener y borrar el contenedor
-    try:
-        container_name = hosting["container_name"]
-        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-    except Exception as e:
-        print(f"Error deleting container: {e}")
+    container_name = hosting["container_name"]
+
+    # FIX #1: async docker
+    await _run_docker("docker", "rm", "-f", container_name, timeout=15)
+
+    # FIX #2: si es WordPress, eliminar también el contenedor de DB huérfano.
+    # Convención de nombres: user_{id}_wp_{name}_{uid}  →  user_{id}_db_{name}_{uid}
+    if "_wp_" in container_name:
+        db_container = container_name.replace("_wp_", "_db_", 1)
+        await _run_docker("docker", "rm", "-f", db_container, timeout=15)
 
     hosting_repo.delete_hosting(hosting_id, user_id)
     return {"status": "deleted", "hosting_id": hosting_id}
@@ -167,9 +239,10 @@ async def restart_hosting(hosting_id: int, user: dict = Depends(verify_token)):
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
-
-    subprocess.run(["docker", "restart", hosting["container_name"]], capture_output=True)
+    # FIX #1: async docker
+    await _run_docker("docker", "restart", hosting["container_name"], timeout=20)
     return {"status": "restarting"}
+
 
 @router.post("/hostings/{hosting_id}/stop")
 async def stop_hosting(hosting_id: int, user: dict = Depends(verify_token)):
@@ -177,9 +250,10 @@ async def stop_hosting(hosting_id: int, user: dict = Depends(verify_token)):
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
-
-    subprocess.run(["docker", "stop", hosting["container_name"]], capture_output=True)
+    # FIX #1: async docker
+    await _run_docker("docker", "stop", hosting["container_name"], timeout=20)
     return {"status": "stopped"}
+
 
 @router.post("/hostings/{hosting_id}/start")
 async def start_hosting(hosting_id: int, user: dict = Depends(verify_token)):
@@ -187,8 +261,8 @@ async def start_hosting(hosting_id: int, user: dict = Depends(verify_token)):
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
-
-    subprocess.run(["docker", "start", hosting["container_name"]], capture_output=True)
+    # FIX #1: async docker
+    await _run_docker("docker", "start", hosting["container_name"], timeout=20)
     return {"status": "starting"}
 
 @router.get("/hostings/{hosting_id}/logs")
@@ -200,25 +274,17 @@ async def get_hosting_logs(hosting_id: int, since: Optional[str] = None, user: d
 
     command = ["docker", "logs"]
     if since:
-        # Aseguramos que since sea un string válido para docker
         command.extend(["--since", since])
     else:
         command.extend(["--tail", "50"])
-    
     command.append(hosting["container_name"])
 
     try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=3
-        )
+        # FIX #1: async docker
+        result = await _run_docker(*command, timeout=5)
         logs = result.stdout if result.stdout else result.stderr
-        
-        # Devolvemos también el timestamp actual para el próximo 'since'
         return {
-            "logs": logs if logs else "",
+            "logs":      logs if logs else "",
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }
     except Exception as e:
@@ -232,21 +298,17 @@ async def get_hosting_metrics(hosting_id: int, user: dict = Depends(verify_token
         raise HTTPException(status_code=404, detail="Hosting not found")
 
     try:
-        result = subprocess.run(
-            ["docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}|{{.MemUsage}}", hosting["container_name"]],
-            capture_output=True,
-            text=True,
-            timeout=5
+        # FIX #1: async docker
+        result = await _run_docker(
+            "docker", "stats", "--no-stream",
+            "--format", "{{.CPUPerc}}|{{.MemUsage}}",
+            hosting["container_name"],
+            timeout=10
         )
-        
         if result.returncode == 0:
             parts = result.stdout.strip().split("|")
             if len(parts) >= 2:
-                return {
-                    "cpu": parts[0],
-                    "memory": parts[1]
-                }
-        
+                return {"cpu": parts[0], "memory": parts[1]}
         return {"cpu": "0%", "memory": "0MiB / 0MiB"}
     except Exception as e:
         return {"error": str(e)}
@@ -254,15 +316,19 @@ async def get_hosting_metrics(hosting_id: int, user: dict = Depends(verify_token
 @router.post("/create-wordpress")
 async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(verify_token)):
     try:
-        user_id = user.get("user_id")
+        # FIX #7: validar nombre
+        _validate_project_name(data.name)
+
+        user_id      = user.get("user_id")
         project_name = data.name.lower().replace(" ", "-")
-        subdomain = f"{project_name}.{DOMAIN}"
-        uid = uuid.uuid4().hex[:6]
-        
+        subdomain    = f"{project_name}.{DOMAIN}"
+        uid          = uuid.uuid4().hex[:6]
+
+        # FIX #2: convención de nombres clara para poder limpiar el DB container al borrar
         db_container = f"user_{user_id}_db_{project_name}_{uid}"
         wp_container = f"user_{user_id}_wp_{project_name}_{uid}"
-        network = "deploy_hosting_network"
-        
+        network      = "deploy_hosting_network"
+
         plan = PLANS.get(data.plan)
         if not plan:
             raise HTTPException(status_code=400, detail="plan inválido")
@@ -271,37 +337,43 @@ async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(veri
         if max_sites is not None:
             user_hostings = hosting_repo.get_user_hostings(user_id)
             if len(user_hostings) >= max_sites:
-                raise HTTPException(status_code=403, detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}.")
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}."
+                )
 
+        # FIX #9: la contraseña se genera y se pasa a ambos contenedores correctamente
+        # (el patrón de nombres garantiza que delete_hosting pueda limpiar db_container)
         db_password = uuid.uuid4().hex[:16]
 
-        # 1. Lanzar MySQL
+        # 1. Lanzar MariaDB
         db_cmd = [
             "docker", "run", "-d",
-            "--name", db_container,
+            "--name",    db_container,
             "--network", network,
-            "-e", "MYSQL_ROOT_PASSWORD=" + db_password,
+            "-e", f"MYSQL_ROOT_PASSWORD={db_password}",
             "-e", "MYSQL_DATABASE=wordpress",
             "-e", "MYSQL_USER=wpuser",
-            "-e", "MYSQL_PASSWORD=" + db_password,
-            "--cpus", plan["cpu"],
+            "-e", f"MYSQL_PASSWORD={db_password}",
+            "--cpus",   plan["cpu"],
             "--memory", plan["memory"],
             "mariadb:10.11"
         ]
-        db_result = subprocess.run(db_cmd, capture_output=True, text=True)
+        # FIX #1: async docker
+        db_result = await _run_docker(*db_cmd, timeout=30)
         if db_result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"MySQL error: {db_result.stderr}")
 
         # 2. Lanzar WordPress
         wp_cmd = [
             "docker", "run", "-d",
-            "--name", wp_container,
+            "--name",    wp_container,
             "--network", network,
-            "-e", "WORDPRESS_DB_HOST=" + db_container,
+            "-e", f"WORDPRESS_DB_HOST={db_container}",
             "-e", "WORDPRESS_DB_USER=wpuser",
-            "-e", "WORDPRESS_DB_PASSWORD=" + db_password,
+            "-e", f"WORDPRESS_DB_PASSWORD={db_password}",
             "-e", "WORDPRESS_DB_NAME=wordpress",
-            "--cpus", plan["cpu"],
+            "--cpus",   plan["cpu"],
             "--memory", plan["memory"],
             "-l", "traefik.enable=true",
             "-l", f"traefik.http.routers.{wp_container}.rule=Host(`{subdomain}`)",
@@ -310,12 +382,15 @@ async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(veri
             "-l", f"traefik.http.services.{wp_container}.loadbalancer.server.port=80",
             "wordpress:latest"
         ]
-        wp_result = subprocess.run(wp_cmd, capture_output=True, text=True)
+        wp_result = await _run_docker(*wp_cmd, timeout=30)
         if wp_result.returncode != 0:
-            subprocess.run(["docker", "rm", "-f", db_container], capture_output=True)
+            # Rollback: limpiar db container si WordPress falla
+            await _run_docker("docker", "rm", "-f", db_container, timeout=15)
             raise HTTPException(status_code=500, detail=f"WordPress error: {wp_result.stderr}")
 
         # 3. Persistir en DB
+        # NOTA: solo se guarda wp_container. El db_container se recupera por convención
+        # de nombres (_wp_ → _db_) en delete_hosting. Ver FIX #2.
         hosting_id = hosting_repo.create_hosting(
             user_id=user_id,
             name=data.name,
@@ -325,13 +400,13 @@ async def create_wordpress(data: CreateHostingRequest, user: dict = Depends(veri
         )
 
         return {
-            "status": "created",
-            "type": "wordpress",
-            "hosting_id": hosting_id,
-            "url": f"https://{subdomain}",
-            "container": wp_container,
+            "status":       "created",
+            "type":         "wordpress",
+            "hosting_id":   hosting_id,
+            "url":          f"https://{subdomain}",
+            "container":    wp_container,
             "db_container": db_container,
-            "note": "WordPress estará listo en 30-60 segundos"
+            "note":         "WordPress estará listo en 30-60 segundos"
         }
 
     except HTTPException:
@@ -349,12 +424,19 @@ class GitDeployRequest(BaseModel):
 @router.post("/deploy-from-github")
 async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify_token)):
     try:
-        user_id = user.get("user_id")
-        project_name = data.name.lower().replace(" ", "-")
-        subdomain = f"{project_name}.{DOMAIN}"
-        uid = uuid.uuid4().hex[:6]
+        # FIX #4: validar URL antes de usarla en subprocess
+        # FIX #5: validar branch para prevenir command injection
+        # FIX #7: validar nombre de proyecto
+        _validate_project_name(data.name)
+        _validate_repo_url(data.repo_url)
+        _validate_branch(data.branch)
+
+        user_id        = user.get("user_id")
+        project_name   = data.name.lower().replace(" ", "-")
+        subdomain      = f"{project_name}.{DOMAIN}"
+        uid            = uuid.uuid4().hex[:6]
         container_name = f"user_{user_id}_git_{project_name}_{uid}"
-        site_dir = f"/opt/clients/{container_name}"
+        site_dir       = f"/opt/clients/{container_name}"
 
         plan = PLANS.get(data.plan)
         if not plan:
@@ -364,40 +446,43 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
         if max_sites is not None:
             user_hostings = hosting_repo.get_user_hostings(user_id)
             if len(user_hostings) >= max_sites:
-                raise HTTPException(status_code=403, detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}.")
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}."
+                )
 
-        # 1. Clonar el repo en el host
-        clone_result = subprocess.run(
-            ["git", "clone", "--branch", data.branch, "--depth", "1", data.repo_url, site_dir],
-            capture_output=True, text=True, timeout=60
+        loop = asyncio.get_running_loop()
+
+        # 1. Clonar el repo (FIX #1: no bloqueante)
+        clone_result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                ["git", "clone", "--branch", data.branch, "--depth", "1", data.repo_url, site_dir],
+                capture_output=True, text=True, timeout=60
+            )
         )
         if clone_result.returncode != 0:
             raise HTTPException(status_code=400, detail=f"Error clonando repo: {clone_result.stderr}")
 
         # 2. Detectar tipo de proyecto
-        import os
-        import json
-        has_package_json = False
+        import json as _json
+        has_package_json  = False
         package_json_path = f"{site_dir}/package.json"
         if os.path.exists(package_json_path):
             try:
                 with open(package_json_path) as f:
-                    pkg = json.load(f)
-                # Solo usar Node si tiene script de build Y es React/Vue/Vite
+                    pkg = _json.load(f)
                 scripts = pkg.get("scripts", {})
-                deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-                is_node_app = "build" in scripts and any(
+                deps    = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                has_package_json = "build" in scripts and any(
                     k in deps for k in ["react", "vue", "vite", "next", "nuxt", "svelte"]
                 )
-                has_package_json = is_node_app
             except Exception:
                 has_package_json = False
 
         # 3. Lanzar contenedor según tipo
         if has_package_json:
-            # Proyecto Node/React — build y servir
-            image = "node:20-alpine"
-            # Detectar directorio de salida: Vite usa dist/, CRA usa build/
+            image   = "node:20-alpine"
             cmd_str = (
                 "npm install && npm run build && "
                 "if [ -d dist ]; then npx serve dist -l 80; "
@@ -406,10 +491,10 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
             )
             command = [
                 "docker", "run", "-d",
-                "--name", container_name,
+                "--name",    container_name,
                 "--network", "deploy_hosting_network",
-                "--cpus", plan["cpu"],
-                "--memory", plan["memory"],
+                "--cpus",    plan["cpu"],
+                "--memory",  plan["memory"],
                 "-v", f"{site_dir}:/app",
                 "-w", "/app",
                 "-l", "traefik.enable=true",
@@ -417,17 +502,15 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
                 "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
                 "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
                 "-l", f"traefik.http.services.{container_name}.loadbalancer.server.port=80",
-                image,
-                "sh", "-c", cmd_str
+                image, "sh", "-c", cmd_str
             ]
         else:
-            # HTML/PHP estático — servir con Nginx
             command = [
                 "docker", "run", "-d",
-                "--name", container_name,
+                "--name",    container_name,
                 "--network", "deploy_hosting_network",
-                "--cpus", plan["cpu"],
-                "--memory", plan["memory"],
+                "--cpus",    plan["cpu"],
+                "--memory",  plan["memory"],
                 "-v", f"{_find_serve_dir(site_dir)}:/usr/share/nginx/html:ro",
                 "-l", "traefik.enable=true",
                 "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
@@ -437,12 +520,12 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
                 "nginx:alpine"
             ]
 
-        result = subprocess.run(command, capture_output=True, text=True)
+        # FIX #1: async docker
+        result = await _run_docker(*command, timeout=60)
         if result.returncode != 0:
-            subprocess.run(["rm", "-rf", site_dir])
+            await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
             raise HTTPException(status_code=500, detail=f"Docker error: {result.stderr}")
 
-        # 4. Guardar en DB con repo_url
         hosting_id = hosting_repo.create_hosting(
             user_id=user_id,
             name=data.name,
@@ -452,13 +535,13 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
         )
 
         return {
-            "status": "deployed",
-            "type": "github",
+            "status":     "deployed",
+            "type":       "github",
             "hosting_id": hosting_id,
-            "url": f"https://{subdomain}",
-            "repo": data.repo_url,
-            "branch": data.branch,
-            "note": "Sitio desplegado desde GitHub. Listo en 30 segundos."
+            "url":        f"https://{subdomain}",
+            "repo":       data.repo_url,
+            "branch":     data.branch,
+            "note":       "Sitio desplegado desde GitHub. Listo en 30 segundos."
         }
 
     except HTTPException:
@@ -469,29 +552,40 @@ async def deploy_from_github(data: GitDeployRequest, user: dict = Depends(verify
 
 @router.post("/hostings/{hosting_id}/redeploy")
 async def redeploy_from_github(hosting_id: int, user: dict = Depends(verify_token)):
-    """Hace git pull y reinicia el contenedor"""
+    """Hace git pull y reinicia el contenedor."""
     user_id = user.get("user_id")
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
 
     container_name = hosting["container_name"]
-    site_dir = f"/opt/clients/{container_name}"
+    site_dir       = f"/opt/clients/{container_name}"
 
     if not os.path.exists(site_dir):
         raise HTTPException(status_code=400, detail="No es un deploy de GitHub")
 
-    pull = subprocess.run(
-        ["git", "-C", site_dir, "pull"],
-        capture_output=True, text=True, timeout=30
-    )
+    # FIX #8: verificar que el directorio sea un repo git válido antes de hacer pull
+    if not os.path.exists(os.path.join(site_dir, ".git")):
+        raise HTTPException(
+            status_code=400,
+            detail="El directorio no contiene un repositorio Git válido."
+        )
 
-    subprocess.run(["docker", "restart", container_name], capture_output=True)
+    loop = asyncio.get_running_loop()
+    # FIX #1: no bloqueante
+    pull = await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(
+            ["git", "-C", site_dir, "pull"],
+            capture_output=True, text=True, timeout=30
+        )
+    )
+    await _run_docker("docker", "restart", container_name, timeout=20)
 
     return {
-        "status": "redeployed",
+        "status":     "redeployed",
         "git_output": pull.stdout,
-        "container": container_name
+        "container":  container_name
     }
 
 @router.post("/hostings/{hosting_id}/upload-zip")
@@ -524,8 +618,20 @@ async def upload_zip(
     extracted_dir = os.path.join(site_dir, "_extracted")
 
     try:
-        # 1. Guardar el ZIP en disco
-        contents = await file.read()
+        # FIX #6: leer en chunks para evitar agotamiento de RAM con archivos gigantes
+        contents = b""
+        chunk_size = 1024 * 1024  # 1 MB por chunk
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            contents += chunk
+            if len(contents) > MAX_ZIP_SIZE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Archivo demasiado grande. Máximo permitido: {MAX_ZIP_SIZE // (1024 * 1024)} MB."
+                )
+
         with open(tmp_zip, "wb") as f:
             f.write(contents)
 
@@ -534,7 +640,14 @@ async def upload_zip(
             shutil.rmtree(extracted_dir)
         os.makedirs(extracted_dir, exist_ok=True)
 
+        # FIX #6: protección contra ZIP bomb — verificar tamaño total antes de extraer
         with zipfile.ZipFile(tmp_zip, "r") as zf:
+            total_size = sum(info.file_size for info in zf.infolist())
+            if total_size > MAX_EXTRACTED_SIZE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El contenido descomprimido excede el límite de {MAX_EXTRACTED_SIZE // (1024 * 1024)} MB."
+                )
             zf.extractall(extracted_dir)
 
         # 3. Detectar si el ZIP tiene carpeta raíz única ignorando __MACOSX
@@ -578,23 +691,23 @@ async def upload_zip(
 
             deployed_via_host = True
 
-        # 5b. Intentar docker cp también (funciona para contenedores sin volume mount)
-        cp_result = subprocess.run(
-            ["docker", "cp", f"{serve_dir}/.", f"{container_name}:/usr/share/nginx/html/"],
-            capture_output=True, text=True, timeout=30
+                # 5b. Intentar docker cp también (funciona para contenedores sin volume mount)
+        # FIX #1: async docker
+        cp_result = await _run_docker(
+            "docker", "cp", f"{serve_dir}/.", f"{container_name}:/usr/share/nginx/html/",
+            timeout=30
         )
 
-        # Si ambos métodos fallaron, reportar error
         if not deployed_via_host and cp_result.returncode != 0:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error desplegando archivos: {cp_result.stderr}"
             )
 
-        # 6. Recargar Nginx
-        subprocess.run(
-            ["docker", "exec", container_name, "nginx", "-s", "reload"],
-            capture_output=True, timeout=10
+        # 6. Recargar Nginx (FIX #1: async docker)
+        await _run_docker(
+            "docker", "exec", container_name, "nginx", "-s", "reload",
+            timeout=10
         )
 
         return {
@@ -620,7 +733,9 @@ async def upload_zip(
 
 
 @router.get("/orchestrator/events")
-async def get_orchestrator_events(user: dict = Depends(verify_token)):
+def get_orchestrator_events(skip: int = 0, limit: int = 20, user: dict = Depends(verify_token)):
     user_id = user.get("user_id")
-    events = hosting_repo.get_orchestrator_events(user_id)
+    # Al ser "def" y no "async def", FastAPI lo ejecuta en un ThreadPool
+    # y no bloqueamos el hilo principal asíncrono haciendo peticiones síncronas a SQLite!
+    events = hosting_repo.get_orchestrator_events(user_id, limit=limit, skip=skip)
     return events

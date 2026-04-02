@@ -63,7 +63,3 @@ class AIOrchestrator:
         except Exception as e:
             logger.error(f"Error en enriquecimiento de IA: {e}")
             return advisory
-
-        except Exception as e:
-            logger.error(f"Error en enriquecimiento de IA: {e}")
-            return advisory

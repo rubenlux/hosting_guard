@@ -104,8 +104,8 @@ def init_db():
             hosting_id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            subdomain TEXT NOT NULL,
-            container_name TEXT NOT NULL,
+            subdomain TEXT NOT NULL UNIQUE,
+            container_name TEXT NOT NULL UNIQUE,
             plan TEXT NOT NULL,
             status TEXT NOT NULL,
             created_at TEXT NOT NULL,
@@ -113,6 +113,10 @@ def init_db():
         )
         """
     )
+
+    # Indices clave de Hostings
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hostings_container ON hostings(container_name)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_hostings_user ON hostings(user_id)")
 
     # Tabla de eventos del orquestador (Smart Monitoring)
     cursor.execute(

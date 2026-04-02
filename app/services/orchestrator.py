@@ -4,6 +4,10 @@ import os
 from datetime import datetime
 import sys
 import threading
+import logging
+
+logger = logging.getLogger("hosting_guard_orchestrator")
+logging.basicConfig(level=logging.INFO)
 
 # Asegurar que el path incluye la raíz para los imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -19,26 +23,33 @@ CHECK_INTERVAL = 10  # segundos
 
 # 🔥 PLANES DEFINIDOS (Sincronizados con el resto de la app)
 PLANS = {
-    "starter": {
+    "free": {
         "cpu_limit": 0.25,
         "mem_limit": 256,
         "cpu_soft": 60,   # % de su limite
         "cpu_hard": 80,   # % de su limite
         "mem_hard": 85,   # % de su limite
     },
-    "growth": {
+    "personal": {
         "cpu_limit": 0.50,
         "mem_limit": 512,
         "cpu_soft": 75,
         "cpu_hard": 90,
         "mem_hard": 90,
     },
-    "pro": {
+    "negocio": {
         "cpu_limit": 1.00,
         "mem_limit": 1024,
         "cpu_soft": 85,
         "cpu_hard": 95,
         "mem_hard": 95,
+    },
+    "agencia": {
+        "cpu_limit": 2.00,
+        "mem_limit": 2048,
+        "cpu_soft": 90,
+        "cpu_hard": 98,
+        "mem_hard": 98,
     }
 }
 
@@ -54,7 +65,8 @@ def get_system_load():
         if hasattr(os, 'getloadavg'):
             return os.getloadavg()[0]
         return 0
-    except:
+    except OSError as e:
+        logger.warning(f"No se pudo leer load average: {e}")
         return 0
 
 def get_container_stats():
@@ -65,7 +77,8 @@ def get_container_stats():
             "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemPerc}}"
         ],
         capture_output=True,
-        text=True
+        text=True,
+        timeout=30
     )
 
     containers = []
@@ -91,7 +104,7 @@ def get_container_stats():
 
 def throttle_container(name, user_id, cpu_limit, reason_type):
     """Aplica límites de CPU dinámicamente y registra el evento."""
-    print(f"[{datetime.now()}] ⚡ LIMITANDO {name} → {cpu_limit} CPU")
+    logger.info(f"[{datetime.now()}] ⚡ LIMITANDO {name} → {cpu_limit} CPU")
     subprocess.run([
         "docker", "update",
         f"--cpus={cpu_limit}",
@@ -106,7 +119,7 @@ def throttle_container(name, user_id, cpu_limit, reason_type):
 
 def restart_container(name, user_id):
     """Reinicia un contenedor por exceso crítico de memoria y registra el evento."""
-    print(f"[{datetime.now()}] 🔄 REINICIANDO {name} (Exceso crítico de RAM)")
+    logger.info(f"[{datetime.now()}] 🔄 REINICIANDO {name} (Exceso crítico de RAM)")
     subprocess.run([
         "docker", "restart",
         name
@@ -116,7 +129,7 @@ def restart_container(name, user_id):
 
 def revert_scaling(name, user_id, original_cpu, original_mem):
     """Devuelve el contenedor a su estado original según plan."""
-    print(f"[{datetime.now()}] 🔙 REVIRTIENDO {name} a límites de plan ({original_cpu} CPU)")
+    logger.info(f"[{datetime.now()}] 🔙 REVIRTIENDO {name} a límites de plan ({original_cpu} CPU)")
     try:
         subprocess.run([
             "docker", "update",
@@ -126,38 +139,73 @@ def revert_scaling(name, user_id, original_cpu, original_mem):
         ], capture_output=True)
         hosting_repo.log_orchestrator_event(name, user_id, "autoscale_revert", "Pico de tráfico superado. Recursos restaurados a los límites de tu plan.")
     except Exception as e:
-        print(f"Error en revert_scaling: {e}")
+        logger.error(f"Error en revert_scaling: {e}")
+
+_active_timers: dict = {}
 
 def apply_autoscale(name, user_id, rules):
-    """Aplica escalamiento temporal cobrando al usuario."""
-    print(f"[{datetime.now()}] 🚀 AUTOSCALING {name} (+Potencia temporal)")
-    
-    # 1. Cobrar
-    user_repo.update_balance(user_id, AUTOSCALE_COST)
+    """Aplica escalamiento temporal cobrando al usuario atómicamente."""
+    if name in _active_timers and _active_timers[name].is_alive():
+        return
+        
+    cost_abs = abs(AUTOSCALE_COST)
+    if not user_repo.deduct_balance_if_sufficient(user_id, cost_abs):
+        logger.warning(f"[{datetime.now()}] Saldo insuficiente para {name}.")
+        return
+
+    logger.info(f"[{datetime.now()}] 🚀 AUTOSCALING {name} (+Potencia temporal)")
     
     # 2. Aplicar recursos
     try:
-        subprocess.run([
+        result = subprocess.run([
             "docker", "update",
             f"--cpus={AUTOSCALE_CPU}",
             f"--memory={AUTOSCALE_RAM}",
             name
         ], capture_output=True)
         
+        if result.returncode != 0:
+            logger.error(f"Autoscale falló para {name}: {result.stderr}")
+            user_repo.update_balance(user_id, cost_abs) # Rollback
+            return
+            
         hosting_repo.log_orchestrator_event(
             name, user_id, "autoscale", 
-            f"Escalamiento automático activado por alta demanda. (+{AUTOSCALE_CPU} vCPU). Costo: ${abs(AUTOSCALE_COST)}"
+            f"Escalamiento automático activado por alta demanda. (+{AUTOSCALE_CPU} vCPU). Costo: ${cost_abs}"
         )
         
         # 3. Programar reversión
-        threading.Timer(
+        t = threading.Timer(
             AUTOSCALE_TIME, 
             revert_scaling, 
             args=[name, user_id, rules["cpu_limit"], rules["mem_limit"]]
-        ).start()
+        )
+        t.start()
+        _active_timers[name] = t
         
     except Exception as e:
-        print(f"Error aplicando autoscale: {e}")
+        logger.error(f"Error aplicando autoscale: {e}")
+        user_repo.update_balance(user_id, cost_abs)
+
+_hosting_cache: dict = {}
+CACHE_TTL = 60  # segundos
+
+def _get_hosting_cached(name: str):
+    entry = _hosting_cache.get(name)
+    if entry and time.time() - entry["ts"] < CACHE_TTL:
+        return entry["data"]
+    data = hosting_repo.get_hosting_by_container(name)
+    _hosting_cache[name] = {"data": data, "ts": time.time()}
+    return data
+
+def _get_user_cached(user_id: int):
+    cache_key = f"u_{user_id}"
+    entry = _hosting_cache.get(cache_key)
+    if entry and time.time() - entry["ts"] < CACHE_TTL:
+        return entry["data"]
+    data = user_repo.get_user_by_id(user_id)
+    _hosting_cache[cache_key] = {"data": data, "ts": time.time()}
+    return data
 
 def handle_container(container):
     """Toma decisiones basadas en métricas y plan del usuario."""
@@ -165,17 +213,15 @@ def handle_container(container):
     cpu = container["cpu"]
     mem = container["mem"]
 
-    # Obtenemos el plan real de la DB
-    hosting = hosting_repo.get_hosting_by_container(name)
+    hosting = _get_hosting_cached(name)
     if not hosting:
-        # No es un contenedor gestionado por nosotros
         return
 
     user_id = hosting["user_id"]
-    plan_name = hosting.get("plan", "starter").lower()
-    rules = PLANS.get(plan_name, PLANS["starter"])
+    plan_name = hosting.get("plan", "free").lower()
+    rules = PLANS.get(plan_name, PLANS["free"])
 
-    user_data = user_repo.get_user_by_id(user_id)
+    user_data = _get_user_cached(user_id)
     sys_load = get_system_load()
 
     # --- 💰 LÓGICA DE MONETIZACIÓN (AUTOSCALE) ---
@@ -186,9 +232,9 @@ def handle_container(container):
             return
 
     # --- 🛡️ LÓGICA DE PROTECCIÓN (THROTTLE/RESTART) ---
-    # 🚨 PROTECCIÓN DE SISTEMA: Si el server está saturado (> Load 4), bajamos Starter al 50%
-    if sys_load > 4.0 and plan_name == "starter":
-        print(f"⚠️ Servidor Saturado (L:{sys_load}). Penalizando Starter: {name}")
+    # 🚨 PROTECCIÓN DE SISTEMA: Si el server está saturado (> Load 4), bajamos Free al 50%
+    if sys_load > 4.0 and plan_name == "free":
+        logger.warning(f"⚠️ Servidor Saturado (L:{sys_load}). Penalizando Free: {name}")
         throttle_container(name, user_id, rules["cpu_limit"] * 0.5, "panic")
         return
 
@@ -209,18 +255,24 @@ def handle_container(container):
 
 def run_orchestrator():
     """Loop principal del orquestador."""
-    print("-----------------------------------------")
-    print(f"🚀 HostingGuard Intelligent Orchestrator")
-    print(f"[{datetime.now()}] Iniciando monitoreo...")
-    print("-----------------------------------------")
+    logger.info("-----------------------------------------")
+    logger.info(f"🚀 HostingGuard Intelligent Orchestrator")
+    logger.info(f"[{datetime.now()}] Iniciando monitoreo...")
+    logger.info("-----------------------------------------")
     
+    consecutive_errors = 0
     while True:
         try:
             containers = get_container_stats()
+            consecutive_errors = 0
             for c in containers:
                 handle_container(c)
         except Exception as e:
-            print(f"❌ Error en el loop del orchestrator: {e}")
+            consecutive_errors += 1
+            wait = min(CHECK_INTERVAL * (2 ** consecutive_errors), 300)
+            logger.error(f"❌ Error en el loop del orchestrator (intento {consecutive_errors}): {e}. Esperando {wait}s")
+            time.sleep(wait)
+            continue
 
         time.sleep(CHECK_INTERVAL)
 
