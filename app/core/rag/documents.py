@@ -9,3 +9,7 @@ class KnowledgeDocument:
     tags: List[str]
     content: str
     metadata: Dict[str, str]
+
+def load_tenant_documents() -> Dict[str, List[KnowledgeDocument]]:
+    """Carga los documentos RAG por tenant. Devuelve vacío para el MVP."""
+    return {}

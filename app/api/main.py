@@ -260,13 +260,12 @@ human_repo = HumanActionRepository()
 execution_repo = ExecutionRepository()
 tenant_config_repo = TenantConfigRepository()
 
-from app.core.llm.factory import get_llm
+from app.core.rag.documents import load_tenant_documents
 from app.api.routes.hosting import router as hosting_router
 
 # Orquestador con RAG por Tenant y LLM dinámico (env var)
 ai_orchestrator = AIOrchestrator(
-    knowledge_provider=TenantInMemoryKnowledgeProvider({}),
-    llm=get_llm()
+    knowledge_provider=TenantInMemoryKnowledgeProvider(load_tenant_documents())
 )
 
 # Motor de ejecución
@@ -278,7 +277,7 @@ app.include_router(hosting_router)
 
 @app.post("/decision", response_model=DecisionResponse)
 @limiter.limit("30/minute")
-def make_decision(
+async def make_decision(
     request: Request,
     payload: DecisionRequest,
     tenant: Tenant = Depends(resolve_tenant),
@@ -298,7 +297,7 @@ def make_decision(
 
     # Enriquecimiento opcional (Feature Flag)
     if ENABLE_AI_ADVISORY:
-        advisory = ai_orchestrator.enrich(decision=decision, tenant=tenant)
+        advisory = await ai_orchestrator.enrich(decision=decision, tenant=tenant)
 
     # 📊 MÉTRICAS DE NEGOCIO
     DECISIONS_TOTAL.labels(
