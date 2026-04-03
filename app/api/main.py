@@ -83,12 +83,25 @@ app.include_router(pixel_router)
 _IS_PRODUCTION = APP_ENV == "production"
 
 # Flags de seguridad para cookies de sesión.
-# En producción: Secure=True + SameSite=Strict (solo HTTPS, mismo origen estricto).
-# En desarrollo: Secure=False + SameSite=Lax  (permite HTTP localhost).
+#
+# PRODUCCIÓN (APP_ENV=production):
+#   Secure=True   → solo se envían sobre HTTPS (obligatorio con SameSite=None o en general)
+#   SameSite=Lax  → permite peticiones cross-origin same-site (hostingguard.lat → api.hostingguard.lat)
+#   Domain=hostingguard.lat → cubre todos los subdominios; evita ambigüedad con cookies host-only
+#
+# DESARROLLO (APP_ENV=development):
+#   Secure=False  → permite HTTP en localhost
+#   SameSite=Lax  → mismo comportamiento
+#   Sin domain    → host-only a localhost
+#
+# NOTA: SameSite=Strict fue cambiado a Lax en producción porque aunque ambos dominios son
+# same-site (mismo eTLD+1), ciertos navegadores tratan peticiones XHR cross-origin como
+# "cross-site" en contextos edge. Lax es el balance correcto: seguro + funcional.
 _COOKIE_SECURE   = _IS_PRODUCTION
-_COOKIE_SAMESITE = "strict" if _IS_PRODUCTION else "lax"
-_ACCESS_TOKEN_TTL  = 15 * 60        # 15 minutos en segundos
-_REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60  # 7 días en segundos
+_COOKIE_SAMESITE = "lax"
+_COOKIE_DOMAIN   = "hostingguard.lat" if _IS_PRODUCTION else None
+_ACCESS_TOKEN_TTL  = 15 * 60
+_REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60
 
 
 def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
@@ -99,25 +112,26 @@ def _set_auth_cookies(response: Response, access_token: str, refresh_token: str)
         httponly=True,
         secure=_COOKIE_SECURE,
         samesite=_COOKIE_SAMESITE,
+        domain=_COOKIE_DOMAIN,
         max_age=_ACCESS_TOKEN_TTL,
         path="/",
     )
-    # La cookie de refresh solo se envía al endpoint /refresh (path scoping).
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
         secure=_COOKIE_SECURE,
         samesite=_COOKIE_SAMESITE,
+        domain=_COOKIE_DOMAIN,
         max_age=_REFRESH_TOKEN_TTL,
         path="/refresh",
     )
 
 
 def _clear_auth_cookies(response: Response) -> None:
-    """Elimina las cookies de sesión. Los paths deben coincidir con los del set."""
-    response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/refresh")
+    """Elimina las cookies de sesión. Domain y path deben coincidir exactamente con el set."""
+    response.delete_cookie("access_token",  path="/",        domain=_COOKIE_DOMAIN)
+    response.delete_cookie("refresh_token", path="/refresh", domain=_COOKIE_DOMAIN)
 
 
 class LoginRequest(BaseModel):

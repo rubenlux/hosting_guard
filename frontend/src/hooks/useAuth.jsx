@@ -9,21 +9,29 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     // Al montar, intentar recuperar la sesión desde el servidor.
-    // Si la cookie de access_token es válida, /me devuelve los datos del usuario.
-    // No leemos localStorage ni decodificamos el JWT en el cliente.
+    // _noRefresh: true evita que el interceptor intente POST /refresh cuando no hay
+    // cookies — sin este flag, un usuario no logueado generaría un loop infinito:
+    // GET /me → 401 → POST /refresh → 401 → reload → GET /me → 401 → ...
     const initAuth = async () => {
       try {
-        const res = await api.get('/me');
+        const res = await api.get('/me', { _noRefresh: true });
         setUser(res.data);
       } catch {
-        // 401 o red caída: no hay sesión activa
         setUser(null);
       } finally {
         setLoading(false);
       }
     };
 
+    // Cuando el interceptor detecta que ambos tokens han expirado (refresh también falla),
+    // emite este evento en lugar de recargar la página. Aquí limpiamos la sesión y
+    // PrivateRoute redirige a '/' via React Router sin causar un reload.
+    const handleSessionExpired = () => setUser(null);
+    window.addEventListener('auth:session-expired', handleSessionExpired);
+
     initAuth();
+
+    return () => window.removeEventListener('auth:session-expired', handleSessionExpired);
   }, []);
 
   // Llamar tras un login exitoso: el servidor ya estableció las cookies.

@@ -28,8 +28,10 @@ api.interceptors.response.use(
       originalRequest?.url?.includes('/login') ||
       originalRequest?.url?.includes('/refresh');
 
-    if (error.response?.status === 401 && !isAuthEndpoint && !originalRequest._retry) {
-      // If a refresh is already in flight, queue this request until it finishes
+    // _noRefresh: flag para peticiones que no deben intentar refresh al recibir 401.
+    // Se usa en initAuth (primer chequeo de sesión al cargar la app) para evitar que
+    // un usuario sin sesión active el loop: GET /me → 401 → POST /refresh → 401 → reload.
+    if (error.response?.status === 401 && !isAuthEndpoint && !originalRequest._retry && !originalRequest._noRefresh) {
       if (_isRefreshing) {
         return new Promise((resolve, reject) => {
           _refreshQueue.push({ resolve, reject });
@@ -42,14 +44,15 @@ api.interceptors.response.use(
       _isRefreshing = true;
 
       try {
-        await api.post('/refresh'); // cookie auto-included via withCredentials
+        await api.post('/refresh');
         _drainQueue(null);
         return api(originalRequest);
       } catch (refreshError) {
         _drainQueue(refreshError);
-        if (typeof window !== 'undefined') {
-          window.location.href = '/';
-        }
+        // No hacer window.location.href aquí: causaría un reload loop si el usuario
+        // está en '/'. En su lugar, emitir un evento para que useAuth limpie la sesión
+        // y PrivateRoute redirija a '/' via React Router sin recargar la página.
+        window.dispatchEvent(new Event('auth:session-expired'));
         return Promise.reject(refreshError);
       } finally {
         _isRefreshing = false;
