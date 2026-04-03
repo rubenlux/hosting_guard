@@ -239,7 +239,7 @@ async def list_hostings(skip: int = 0, limit: int = 50, user: dict = Depends(ver
             timeout=10
         )
         # Construir mapa { container_name -> docker_status }
-        status_by_name: dict[str, str] = {}
+        status_by_name = {}
         for line in res.stdout.strip().splitlines():
             if "|" in line:
                 cname, cstatus = line.lstrip("/").split("|", 1)

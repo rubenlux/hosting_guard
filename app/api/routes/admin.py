@@ -54,7 +54,7 @@ async def get_all_hostings_metrics(_: dict = Depends(require_role("admin"))):
         timeout=15,
     )
 
-    docker_stats: dict[str, dict] = {}
+    docker_stats = {}
     if result.returncode == 0:
         for line in result.stdout.strip().splitlines():
             if "|" not in line:

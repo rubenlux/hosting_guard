@@ -47,6 +47,12 @@ def collect_traffic() -> None:
     For every active hosting: pull 5-minute nginx log window, parse, store.
     Called by the background scheduler.
     """
+    # Reset thread-local DB connection before each cycle.
+    # run_in_executor reuses threads, so the PostgreSQL connection cached from
+    # the previous cycle may have been closed server-side after the 5-minute idle.
+    from app.infra.audit.sqlite import release_connection
+    release_connection()
+
     hostings = _hosting_repo.get_all_hostings()
     active = [h for h in hostings if h.get("status") == "active"]
     logger.info("traffic_collector: %d active hostings", len(active))

@@ -35,6 +35,29 @@ def get_connection() -> _ConnectionAdapter:
     return conn
 
 
+def release_connection() -> None:
+    """
+    Cierra la conexión del hilo actual y limpia el thread-local.
+
+    Usar en background tasks (schedulers) para garantizar que cada ciclo
+    comienza con una conexión fresca — evita OperationalError por
+    conexiones PostgreSQL cerradas por el servidor tras idle prolongado.
+
+    Safe to call even if no connection exists.
+    """
+    if BACKEND == "postgresql":
+        reset_pg_connection()
+        return
+
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+
+
 # ---------------------------------------------------------------------------
 # Esquemas
 # ---------------------------------------------------------------------------

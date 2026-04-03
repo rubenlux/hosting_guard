@@ -26,6 +26,12 @@ def check_all_hostings() -> None:
     For every non-expired hosting: check container state via docker inspect, record result.
     Called by the background scheduler.
     """
+    # Reset thread-local DB connection before each cycle.
+    # run_in_executor reuses threads, so the PostgreSQL connection cached from
+    # the previous cycle may have been closed server-side after the 5-minute idle.
+    from app.infra.audit.sqlite import release_connection
+    release_connection()
+
     hostings = _hosting_repo.get_all_hostings()
     # Check all hostings that should be running (skip expired/deleted)
     checkable = [h for h in hostings if h.get("status") not in ("expired", "not_found")]

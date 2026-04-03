@@ -189,9 +189,21 @@ _pg_local = threading.local()
 def get_pg_connection() -> _ConnectionAdapter:
     """
     Devuelve la conexión PostgreSQL del hilo actual (thread-local pool).
-    Crea una nueva si no existe.
+    Crea una nueva si no existe o si la existente fue cerrada por el servidor.
+
+    Maneja dos casos de conexión muerta:
+    - conn._conn.closed != 0: psycopg2 la marcó como cerrada (error explícito o close())
+    - conn._conn.closed == 0 pero el servidor la cerró silenciosamente (detectado en primera query)
     """
     conn = getattr(_pg_local, "conn", None)
+    if conn is not None and conn._conn.closed != 0:
+        # La conexión fue cerrada (por el servidor, por error, o por close() explícito)
+        logger.warning(
+            "PostgreSQL: conexión muerta detectada en hilo '%s' — reconectando",
+            threading.current_thread().name,
+        )
+        _pg_local.conn = None
+        conn = None
     if conn is None:
         raw = psycopg2.connect(DATABASE_URL)
         raw.autocommit = False

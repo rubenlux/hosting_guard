@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Globe, BarChart3, RefreshCw, ShieldCheck, Activity } from 'lucide-react';
+import { Users, Globe, BarChart3, RefreshCw, ShieldCheck, Activity, LogOut } from 'lucide-react';
 import { getAdminUsers, getAdminHostings, getAdminPixelStats, getAdminPixelOverview, getAdminPixelEvents } from '../services/api';
+import { useAuth } from '../hooks/useAuth';
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
+  const { logoutAction } = useAuth();
   const [users, setUsers]           = useState([]);
   const [hostings, setHostings]     = useState([]);
   const [pixelStats, setPixelStats] = useState(null);
@@ -63,9 +65,14 @@ export default function AdminDashboard() {
           </h2>
           <p className="text-sm text-gray-400">Vista global del sistema — solo admin.</p>
         </div>
-        <button onClick={fetchAll} className="btn-dash btn-ghost-dash flex items-center gap-2 text-sm">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Actualizar
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={fetchAll} className="btn-dash btn-ghost-dash flex items-center gap-2 text-sm">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Actualizar
+          </button>
+          <button onClick={logoutAction} className="btn-dash btn-ghost-dash flex items-center gap-2 text-sm text-danger hover:text-danger">
+            <LogOut className="w-4 h-4" /> Cerrar sesión
+          </button>
+        </div>
       </div>
 
       {/* Metric cards */}

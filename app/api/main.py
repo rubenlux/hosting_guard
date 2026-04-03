@@ -391,6 +391,21 @@ def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    Catches unhandled exceptions inside FastAPI's ExceptionMiddleware layer,
+    which sits *inside* CORSMiddleware — so CORS headers are always present,
+    even on 500 responses. Without this, ServerErrorMiddleware (outer layer)
+    would return 500 before CORS headers are added.
+    """
+    logger.error("Unhandled exception on %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+
 # Infraestructura
 audit_repo = AuditRepository()
 human_repo = HumanActionRepository()

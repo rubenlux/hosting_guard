@@ -215,6 +215,8 @@ const Dashboard = () => {
   useEffect(() => { hostingsRef.current = hostings; }, [hostings]);
 
   useEffect(() => {
+    if (user?.role === 'admin') return;
+
     fetchHostings();
     fetchEvents();
 
@@ -234,9 +236,7 @@ const Dashboard = () => {
       clearInterval(metricsInterval);
       clearInterval(eventsInterval);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const uptimeData = Array.from({ length: 40 }, (_, i) => Math.random() > 0.95 ? 'warn' : 'ok');
+  }, [user?.role]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (user?.role === 'admin') {
     return <AdminDashboard />;
@@ -428,30 +428,6 @@ const Dashboard = () => {
                 </div>
               </div>
 
-              {/* METRICS */}
-              <div className="metrics-row-dash overflow-x-auto pb-4">
-                <div className="metric-card-dash green min-w-[200px] bg-[#050505] border-[#00ff88]/20">
-                  <div className="text-[10px] text-muted font-mono uppercase mb-4 tracking-widest">Uptime General</div>
-                  <div className="metric-value-dash font-mono text-glow text-[#00ff88]">99.9<span className="text-sm text-[#00ff88]/50 ml-0.5">%</span></div>
-                  <div className="text-xs text-success mt-2">↑ Últimos 30 días</div>
-                </div>
-                <div className="metric-card-dash blue min-w-[200px] bg-[#050505] border-[#00aaff]/20">
-                  <div className="text-[10px] text-muted font-mono uppercase mb-4 tracking-widest">CPU Promedio</div>
-                  <div className="metric-value-dash font-mono text-glow text-[#00aaff]">23<span className="text-sm text-[#00aaff]/50 ml-0.5">%</span></div>
-                  <div className="w-full h-1 bg-surface2 mt-4 rounded-full overflow-hidden">
-                    <div className="h-full bg-accent" style={{ width: '23%' }}></div>
-                  </div>
-                </div>
-                <div className="metric-card-dash amber min-w-[200px] bg-[#050505] border-[#ffaa00]/20">
-                  <div className="text-[10px] text-muted font-mono uppercase mb-4 tracking-widest">RAM Usada</div>
-                  <div className="metric-value-dash font-mono text-glow text-[#ffaa00]">2.1<span className="text-sm text-[#ffaa00]/50 ml-0.5">GB</span></div>
-                  <div className="text-xs text-warn mt-2">52% en uso</div>
-                </div>
-                <div className="metric-card-dash purple min-w-[200px] bg-[#050505] border-[#aa00ff]/20">
-                  <div className="text-[10px] text-muted font-mono uppercase mb-4 tracking-widest">Almacenamiento</div>
-                  <div className="metric-value-dash font-mono text-glow text-[#aa00ff]">18<span className="text-sm text-[#aa00ff]/50 ml-0.5">GB</span></div>
-                </div>
-              </div>
 
               {/* GRID */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -657,16 +633,6 @@ const Dashboard = () => {
                     </div>
                   </div>
 
-                  {/* UPTIME */}
-                  <div className="card-dash p-6">
-                    <div className="text-sm font-bold mb-1">📡 Uptime — 90 días</div>
-                    <div className="text-2xl font-black text-accent mb-4">99.9%</div>
-                    <div className="flex flex-wrap gap-1">
-                      {uptimeData.map((s, i) => (
-                        <div key={i} className={`w-2 h-6 rounded-[1px] ${s === 'ok' ? 'bg-accent/40' : 'bg-warn/60'}`}></div>
-                      ))}
-                    </div>
-                  </div>
 
                   {/* NOTIFS */}
                   <div className="card-dash p-4 space-y-4">
