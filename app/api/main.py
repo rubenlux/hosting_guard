@@ -60,32 +60,41 @@ async def expiration_scheduler():
 async def traffic_scheduler():
     """Recoge métricas de tráfico nginx cada 5 minutos."""
     from app.services.traffic_collector import collect_traffic
+    logger.info("traffic_scheduler: iniciado — primera ejecución inmediata")
     while True:
-        await asyncio.sleep(300)  # primera ejecución después de 5 min (da tiempo al arranque)
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, collect_traffic)
+            logger.info("traffic_scheduler: ciclo completado")
         except Exception as e:
-            logger.error(f"Error en traffic_scheduler: {e}")
+            logger.error(f"Error en traffic_scheduler: {e}", exc_info=True)
+        await asyncio.sleep(300)
 
 
 async def health_scheduler():
     """Health check de contenedores cada 5 minutos."""
     from app.services.health_checker import check_all_hostings
+    logger.info("health_scheduler: iniciado — primera ejecución inmediata")
     while True:
-        await asyncio.sleep(300)
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, check_all_hostings)
+            logger.info("health_scheduler: ciclo completado")
         except Exception as e:
-            logger.error(f"Error en health_scheduler: {e}")
+            logger.error(f"Error en health_scheduler: {e}", exc_info=True)
+        await asyncio.sleep(300)
+
+
+_background_tasks: set = set()
 
 
 @asynccontextmanager
 async def lifespan(app):
-    asyncio.create_task(expiration_scheduler())
-    asyncio.create_task(traffic_scheduler())
-    asyncio.create_task(health_scheduler())
+    for coro in (expiration_scheduler(), traffic_scheduler(), health_scheduler()):
+        task = asyncio.create_task(coro)
+        _background_tasks.add(task)          # prevent garbage collection
+        task.add_done_callback(_background_tasks.discard)
+    logger.info("lifespan: %d background tasks created", len(_background_tasks))
     yield
 
 

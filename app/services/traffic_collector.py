@@ -26,7 +26,7 @@ _hosting_repo = HostingRepository()
 _metrics_repo = MetricsRepository()
 
 
-def _parse_logs(raw: str) -> tuple[int, int, int]:
+def _parse_logs(raw: str):
     """Returns (total_requests, errors_4xx, errors_5xx) from raw nginx log text."""
     total = errors_4xx = errors_5xx = 0
     for line in raw.splitlines():
@@ -49,6 +49,7 @@ def collect_traffic() -> None:
     """
     hostings = _hosting_repo.get_all_hostings()
     active = [h for h in hostings if h.get("status") == "active"]
+    logger.info("traffic_collector: %d active hostings", len(active))
 
     for hosting in active:
         container = hosting["container_name"]

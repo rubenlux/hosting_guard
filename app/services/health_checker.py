@@ -29,6 +29,7 @@ def check_all_hostings() -> None:
     hostings = _hosting_repo.get_all_hostings()
     # Check all hostings that should be running (skip expired/deleted)
     checkable = [h for h in hostings if h.get("status") not in ("expired", "not_found")]
+    logger.info("health_checker: checking %d hostings", len(checkable))
 
     for hosting in checkable:
         container  = hosting["container_name"]
