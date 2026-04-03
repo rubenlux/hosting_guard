@@ -173,4 +173,24 @@ export const getAdminPixelStats = async () => {
     return response.data;
 };
 
+export const getAdminHostingsMetrics = async () => {
+    const response = await api.get('/admin/hostings/metrics');
+    return response.data;
+};
+
+export const getAdminUserFull = async (userId) => {
+    const response = await api.get(`/admin/users/${userId}/full`);
+    return response.data;
+};
+
+export const getAdminPixelOverview = async () => {
+    const response = await api.get('/admin/pixel/overview');
+    return response.data;
+};
+
+export const getAdminPixelEvents = async (limit = 100, offset = 0) => {
+    const response = await api.get(`/admin/pixel/events?limit=${limit}&offset=${offset}`);
+    return response.data;
+};
+
 export default api;

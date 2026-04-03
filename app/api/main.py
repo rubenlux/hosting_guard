@@ -57,9 +57,35 @@ async def expiration_scheduler():
         await asyncio.sleep(43200)  # 12 horas
 
 
+async def traffic_scheduler():
+    """Recoge métricas de tráfico nginx cada 5 minutos."""
+    from app.services.traffic_collector import collect_traffic
+    while True:
+        await asyncio.sleep(300)  # primera ejecución después de 5 min (da tiempo al arranque)
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, collect_traffic)
+        except Exception as e:
+            logger.error(f"Error en traffic_scheduler: {e}")
+
+
+async def health_scheduler():
+    """Health check de contenedores cada 5 minutos."""
+    from app.services.health_checker import check_all_hostings
+    while True:
+        await asyncio.sleep(300)
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, check_all_hostings)
+        except Exception as e:
+            logger.error(f"Error en health_scheduler: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app):
     asyncio.create_task(expiration_scheduler())
+    asyncio.create_task(traffic_scheduler())
+    asyncio.create_task(health_scheduler())
     yield
 
 

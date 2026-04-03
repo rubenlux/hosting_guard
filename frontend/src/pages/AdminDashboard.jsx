@@ -1,25 +1,33 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Users, Globe, BarChart3, RefreshCw, ShieldCheck, Activity } from 'lucide-react';
-import { getAdminUsers, getAdminHostings, getAdminPixelStats } from '../services/api';
+import { getAdminUsers, getAdminHostings, getAdminPixelStats, getAdminPixelOverview, getAdminPixelEvents } from '../services/api';
 
 export default function AdminDashboard() {
-  const [users, setUsers]         = useState([]);
-  const [hostings, setHostings]   = useState([]);
+  const navigate = useNavigate();
+  const [users, setUsers]           = useState([]);
+  const [hostings, setHostings]     = useState([]);
   const [pixelStats, setPixelStats] = useState(null);
-  const [loading, setLoading]     = useState(true);
-  const [activeTab, setActiveTab] = useState('users');
+  const [pixelOverview, setPixelOverview] = useState(null);
+  const [pixelEvents, setPixelEvents]     = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [activeTab, setActiveTab]   = useState('users');
 
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [u, h, p] = await Promise.all([
+      const [u, h, p, po, pe] = await Promise.all([
         getAdminUsers(),
         getAdminHostings(),
         getAdminPixelStats(),
+        getAdminPixelOverview(),
+        getAdminPixelEvents(50, 0),
       ]);
       setUsers(u);
       setHostings(h);
       setPixelStats(p);
+      setPixelOverview(po);
+      setPixelEvents(pe);
     } catch (err) {
       console.error('Admin fetch error:', err);
     } finally {
@@ -63,10 +71,10 @@ export default function AdminDashboard() {
       {/* Metric cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: 'Usuarios',        val: users.length,                  color: 'text-[#00aaff]', border: 'border-[#00aaff]/20', icon: <Users className="w-4 h-4 opacity-40" /> },
-          { label: 'Hostings Totales', val: hostings.length,              color: 'text-[#00ff88]', border: 'border-[#00ff88]/20', icon: <Globe className="w-4 h-4 opacity-40" /> },
-          { label: 'Pixels Activos',  val: pixelStats?.total_sites ?? '—', color: 'text-[#ffaa00]', border: 'border-[#ffaa00]/20', icon: <BarChart3 className="w-4 h-4 opacity-40" /> },
-          { label: 'Eventos Pixel',   val: pixelStats?.total_events ?? '—', color: 'text-[#aa00ff]', border: 'border-[#aa00ff]/20', icon: <Activity className="w-4 h-4 opacity-40" /> },
+          { label: 'Usuarios',         val: users.length,                       color: 'text-[#00aaff]', border: 'border-[#00aaff]/20', icon: <Users className="w-4 h-4 opacity-40" /> },
+          { label: 'Hostings Totales', val: hostings.length,                    color: 'text-[#00ff88]', border: 'border-[#00ff88]/20', icon: <Globe className="w-4 h-4 opacity-40" /> },
+          { label: 'Pixels Activos',   val: pixelStats?.total_sites ?? '—',     color: 'text-[#ffaa00]', border: 'border-[#ffaa00]/20', icon: <BarChart3 className="w-4 h-4 opacity-40" /> },
+          { label: 'Eventos Pixel',    val: pixelOverview?.total_events ?? '—', color: 'text-[#aa00ff]', border: 'border-[#aa00ff]/20', icon: <Activity className="w-4 h-4 opacity-40" /> },
         ].map((m, i) => (
           <div key={i} className={`p-4 bg-[#050505] rounded-xl border ${m.border}`}>
             <div className="flex justify-between items-start mb-2">
@@ -85,6 +93,7 @@ export default function AdminDashboard() {
         {[
           { id: 'users',    label: `Usuarios (${users.length})` },
           { id: 'hostings', label: `Hostings (${hostings.length})` },
+          { id: 'pixel',    label: `Pixel (${pixelEvents.length})` },
         ].map(tab => (
           <button
             key={tab.id}
@@ -123,7 +132,11 @@ export default function AdminDashboard() {
               </thead>
               <tbody>
                 {users.map(u => (
-                  <tr key={u.user_id} className="border-b border-white/5 hover:bg-white/3 transition-colors">
+                  <tr
+                    key={u.user_id}
+                    onClick={() => navigate(`/admin/users/${u.user_id}`)}
+                    className="border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors"
+                  >
                     <td className="p-3 text-muted">{u.user_id}</td>
                     <td className="p-3 text-white font-medium">{u.email}</td>
                     <td className="p-3">
@@ -193,6 +206,80 @@ export default function AdminDashboard() {
               </tbody>
             </table>
           )}
+        </div>
+      )}
+
+      {/* Pixel tab */}
+      {activeTab === 'pixel' && (
+        <div className="flex flex-col gap-4">
+          {/* Overview cards */}
+          {pixelOverview && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { label: 'Total Eventos', val: pixelOverview.total_events },
+                { label: 'Hoy',           val: pixelOverview.today_events },
+                { label: 'Sitios',        val: pixelOverview.total_sites },
+                { label: 'Tipos',         val: pixelOverview.by_event_type?.length ?? 0 },
+              ].map((m, i) => (
+                <div key={i} className="p-4 bg-[#050505] rounded-xl border border-white/10">
+                  <div className="text-[9px] font-mono tracking-widest uppercase text-muted mb-1">{m.label}</div>
+                  <div className="text-2xl font-black font-mono text-[#aa00ff] text-glow">{loading ? '…' : m.val}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Events by type */}
+          {pixelOverview?.by_event_type?.length > 0 && (
+            <div className="card-dash p-4">
+              <div className="text-[10px] font-mono uppercase text-muted tracking-widest mb-3">Por Tipo de Evento</div>
+              <div className="flex flex-wrap gap-2">
+                {pixelOverview.by_event_type.map((t, i) => (
+                  <div key={i} className="bg-white/5 px-3 py-1.5 rounded-lg text-xs font-mono">
+                    <span className="text-white">{t.event_type}</span>
+                    <span className="text-muted ml-2">{t.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Recent events table */}
+          <div className="card-dash overflow-x-auto">
+            <div className="p-3 border-b border-white/5 text-[10px] font-mono uppercase text-muted tracking-widest">
+              Eventos Recientes ({pixelEvents.length})
+            </div>
+            {loading ? (
+              <div className="p-10 flex justify-center"><RefreshCw className="w-5 h-5 animate-spin text-accent" /></div>
+            ) : pixelEvents.length === 0 ? (
+              <div className="p-8 text-center text-muted text-sm italic">Sin eventos registrados.</div>
+            ) : (
+              <table className="w-full text-xs font-mono">
+                <thead>
+                  <tr className="border-b border-white/5 text-muted">
+                    <th className="text-left p-3 text-[9px] uppercase tracking-widest">Sitio</th>
+                    <th className="text-left p-3 text-[9px] uppercase tracking-widest">Tipo</th>
+                    <th className="text-left p-3 text-[9px] uppercase tracking-widest">URL</th>
+                    <th className="text-left p-3 text-[9px] uppercase tracking-widest">Dispositivo</th>
+                    <th className="text-left p-3 text-[9px] uppercase tracking-widest">País</th>
+                    <th className="text-left p-3 text-[9px] uppercase tracking-widest">Fecha</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pixelEvents.map(e => (
+                    <tr key={e.event_id} className="border-b border-white/5 hover:bg-white/3 transition-colors">
+                      <td className="p-3 text-[#aa00ff]">{e.site_name || e.site_id?.slice(0, 8)}</td>
+                      <td className="p-3 text-white">{e.event_type}</td>
+                      <td className="p-3 text-muted truncate max-w-[200px]" title={e.url}>{e.url?.replace(/^https?:\/\//, '') || '—'}</td>
+                      <td className="p-3 text-muted">{e.device || '—'}</td>
+                      <td className="p-3 text-muted">{e.country || '—'}</td>
+                      <td className="p-3 text-muted">{e.created_at ? new Date(e.created_at).toLocaleString() : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
     </div>

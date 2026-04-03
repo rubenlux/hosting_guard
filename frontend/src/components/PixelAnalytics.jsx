@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
+import { getAdminPixelOverview, getAdminPixelEvents } from '../services/api';
 import { Plus, Trash2, Copy, CheckCircle, BarChart3, Globe, Users, Clock, Monitor, X, Loader, Activity, Database } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
@@ -10,6 +11,8 @@ export default function PixelAnalytics() {
   const [selectedSite, setSelectedSite] = useState(null);
   const [stats, setStats] = useState(null);
   const [adminStats, setAdminStats] = useState(null);
+  const [adminOverview, setAdminOverview] = useState(null);
+  const [adminEvents, setAdminEvents]     = useState([]);
   
   // Create Site form
   const [showCreate, setShowCreate] = useState(false);
@@ -38,6 +41,12 @@ export default function PixelAnalytics() {
     try {
       const { data } = await api.get('/pixel/admin/stats');
       setAdminStats(data);
+      const [overview, events] = await Promise.all([
+        getAdminPixelOverview(),
+        getAdminPixelEvents(50, 0),
+      ]);
+      setAdminOverview(overview);
+      setAdminEvents(events);
     } catch (err) {
       console.error(err);
     }
@@ -126,16 +135,61 @@ export default function PixelAnalytics() {
       {adminStats && (
         <div className="p-4 bg-danger/10 border border-danger/30 rounded-2xl border-scanner-warn">
           <div className="text-[10px] text-danger font-mono tracking-widest uppercase mb-2">⚡ GLOBAL ADMIN STATS</div>
-          <div className="flex gap-8">
+          <div className="flex gap-8 flex-wrap">
             <div>
               <div className="text-[10px] text-muted font-mono uppercase">Total Pixels Activos</div>
-              <div className="font-mono text-glow text-danger text-2xl">{adminStats.total_sites}</div>
+              <div className="font-mono text-glow text-danger text-2xl">{adminOverview?.total_sites ?? adminStats.total_sites}</div>
             </div>
             <div>
               <div className="text-[10px] text-muted font-mono uppercase">Eventos Recibidos</div>
-              <div className="font-mono text-glow text-danger text-2xl">{adminStats.total_events}</div>
+              <div className="font-mono text-glow text-danger text-2xl">{adminOverview?.total_events ?? adminStats.total_events}</div>
             </div>
+            {adminOverview?.today_events !== undefined && (
+              <div>
+                <div className="text-[10px] text-muted font-mono uppercase">Hoy</div>
+                <div className="font-mono text-glow text-danger text-2xl">{adminOverview.today_events}</div>
+              </div>
+            )}
           </div>
+          {adminOverview?.by_event_type?.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {adminOverview.by_event_type.map((t, i) => (
+                <span key={i} className="bg-danger/10 text-danger text-[10px] font-mono px-2 py-0.5 rounded">
+                  {t.event_type}: {t.count}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Admin events table */}
+      {adminEvents.length > 0 && (
+        <div className="card-dash overflow-x-auto">
+          <div className="p-3 border-b border-white/5 text-[10px] font-mono uppercase text-muted tracking-widest">
+            Eventos Globales Recientes ({adminEvents.length})
+          </div>
+          <table className="w-full text-xs font-mono">
+            <thead>
+              <tr className="border-b border-white/5 text-muted">
+                {['Sitio', 'Tipo', 'URL', 'Dispositivo', 'País', 'Fecha'].map(h => (
+                  <th key={h} className="text-left p-3 text-[9px] uppercase tracking-widest">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {adminEvents.map(e => (
+                <tr key={e.event_id} className="border-b border-white/5 hover:bg-white/3 transition-colors">
+                  <td className="p-3 text-[#aa00ff]">{e.site_name || e.site_id?.slice(0, 8)}</td>
+                  <td className="p-3 text-white">{e.event_type}</td>
+                  <td className="p-3 text-muted truncate max-w-[200px]" title={e.url}>{e.url?.replace(/^https?:\/\//, '') || '—'}</td>
+                  <td className="p-3 text-muted">{e.device || '—'}</td>
+                  <td className="p-3 text-muted">{e.country || '—'}</td>
+                  <td className="p-3 text-muted">{e.created_at ? new Date(e.created_at).toLocaleString() : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

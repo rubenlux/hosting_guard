@@ -8,6 +8,7 @@ import Pricing from './components/Pricing';
 import HostingCreationForm from './components/HostingCreationForm';
 import Footer from './components/Footer';
 import Dashboard from './pages/Dashboard';
+import AdminUserDetail from './pages/AdminUserDetail';
 import { useAuth } from './hooks/useAuth';
 
 const PrivateRoute = ({ children }) => {
@@ -18,10 +19,8 @@ const PrivateRoute = ({ children }) => {
 
 const AdminRoute = ({ children }) => {
   const { user, loading } = useAuth();
-  console.log('[AdminRoute] loading:', loading, '| USER STATE:', user);
   if (loading) return null;
   if (!user) return <Navigate to="/" />;
-  console.log('[AdminRoute] role check — user.role:', JSON.stringify(user.role), '| typeof:', typeof user.role);
   if (user.role !== 'admin') return <Navigate to="/dashboard" />;
   return children;
 };
@@ -50,7 +49,8 @@ function App() {
           <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Home />} />
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/pixel"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
-          <Route path="/admin"     element={<AdminRoute><Dashboard /></AdminRoute>} />
+          <Route path="/admin"          element={<AdminRoute><Dashboard /></AdminRoute>} />
+          <Route path="/admin/users/:id" element={<AdminRoute><AdminUserDetail /></AdminRoute>} />
         </Routes>
       </main>
       {!user && <Footer />}

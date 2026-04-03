@@ -201,6 +201,22 @@ _MIGRATIONS_SQLITE = [
     "ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'free'",
     "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'",
     "ALTER TABLE hostings ADD COLUMN ip_address TEXT",
+    """CREATE TABLE IF NOT EXISTS traffic_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        container_name TEXT NOT NULL,
+        collected_at TEXT NOT NULL,
+        total_requests INTEGER DEFAULT 0,
+        errors_4xx INTEGER DEFAULT 0,
+        errors_5xx INTEGER DEFAULT 0
+    )""",
+    """CREATE TABLE IF NOT EXISTS uptime_checks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        hosting_id INTEGER NOT NULL,
+        checked_at TEXT NOT NULL,
+        is_up INTEGER NOT NULL,
+        response_ms INTEGER,
+        status_code INTEGER
+    )""",
 ]
 
 _MIGRATIONS_PG = [
@@ -210,6 +226,22 @@ _MIGRATIONS_PG = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free'",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'",
     "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS ip_address TEXT",
+    """CREATE TABLE IF NOT EXISTS traffic_stats (
+        id SERIAL PRIMARY KEY,
+        container_name TEXT NOT NULL,
+        collected_at TEXT NOT NULL,
+        total_requests INTEGER DEFAULT 0,
+        errors_4xx INTEGER DEFAULT 0,
+        errors_5xx INTEGER DEFAULT 0
+    )""",
+    """CREATE TABLE IF NOT EXISTS uptime_checks (
+        id SERIAL PRIMARY KEY,
+        hosting_id INTEGER NOT NULL,
+        checked_at TEXT NOT NULL,
+        is_up INTEGER NOT NULL,
+        response_ms INTEGER,
+        status_code INTEGER
+    )""",
 ]
 
 _INDEXES = [
@@ -217,6 +249,10 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_hostings_container ON hostings(container_name)",
     "CREATE INDEX IF NOT EXISTS idx_hostings_user ON hostings(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_hostings_ip ON hostings(ip_address)",
+    "CREATE INDEX IF NOT EXISTS idx_traffic_container ON traffic_stats(container_name)",
+    "CREATE INDEX IF NOT EXISTS idx_traffic_collected ON traffic_stats(collected_at)",
+    "CREATE INDEX IF NOT EXISTS idx_uptime_hosting ON uptime_checks(hosting_id)",
+    "CREATE INDEX IF NOT EXISTS idx_uptime_checked ON uptime_checks(checked_at)",
 ]
 
 

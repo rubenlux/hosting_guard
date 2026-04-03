@@ -210,11 +210,6 @@ const Dashboard = () => {
     }
   };
 
-  // Diagnostic: log every time user state changes so we can see if setUser overwrites role
-  useEffect(() => {
-    console.log('[Dashboard] USER STATE:', user, '| role:', JSON.stringify(user?.role), '| typeof:', typeof user?.role);
-  }, [user]);
-
   // Ref always points to latest hostings so the metrics interval never closes over a stale snapshot
   const hostingsRef = useRef(hostings);
   useEffect(() => { hostingsRef.current = hostings; }, [hostings]);

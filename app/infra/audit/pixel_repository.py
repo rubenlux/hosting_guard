@@ -198,6 +198,48 @@ class PixelRepository:
             "top_sites": [dict(r) for r in top_sites],
         }
 
+    def get_overview_admin(self) -> Dict:
+        conn = _get_connection()
+        total = conn.execute("SELECT COUNT(*) FROM pixel_events").fetchone()[0]
+        total_sites = conn.execute("SELECT COUNT(*) FROM pixel_sites").fetchone()[0]
+        today = conn.execute(
+            "SELECT COUNT(*) FROM pixel_events WHERE DATE(created_at) = DATE('now')"
+        ).fetchone()[0]
+        top_sites = conn.execute(
+            """SELECT s.name, s.site_id, s.domain, COUNT(e.event_id) as events
+               FROM pixel_sites s
+               LEFT JOIN pixel_events e ON s.site_id = e.site_id
+               GROUP BY s.site_id ORDER BY events DESC LIMIT 20"""
+        ).fetchall()
+        events_by_day = conn.execute(
+            """SELECT DATE(created_at) as day, COUNT(*) as count
+               FROM pixel_events GROUP BY day ORDER BY day DESC LIMIT 30"""
+        ).fetchall()
+        by_event_type = conn.execute(
+            """SELECT event_type, COUNT(*) as count FROM pixel_events
+               GROUP BY event_type ORDER BY count DESC"""
+        ).fetchall()
+        return {
+            "total_events": total,
+            "today_events": today,
+            "total_sites": total_sites,
+            "top_sites": [dict(r) for r in top_sites],
+            "events_by_day": [dict(r) for r in events_by_day],
+            "by_event_type": [dict(r) for r in by_event_type],
+        }
+
+    def get_all_events_admin(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+        conn = _get_connection()
+        rows = conn.execute(
+            """SELECT e.event_id, e.site_id, e.user_id, e.event_type, e.url,
+                      e.device, e.browser, e.country, e.created_at, s.name as site_name
+               FROM pixel_events e
+               LEFT JOIN pixel_sites s ON e.site_id = s.site_id
+               ORDER BY e.created_at DESC LIMIT ? OFFSET ?""",
+            (limit, offset)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def delete_site(self, site_id: str, user_id: int):
         conn = _get_connection()
         conn.execute(

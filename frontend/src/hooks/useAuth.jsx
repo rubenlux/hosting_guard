@@ -4,16 +4,8 @@ import api from '../services/api';
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
+  const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
-  const [user, _setUser]     = useState(null);
-  const setUser = (val) => {
-    if (typeof val === 'function') {
-      console.log('[useAuth] setUser called with functional update (preserves prev role)');
-    } else {
-      console.log('[useAuth] setUser called → role:', JSON.stringify(val?.role), '| full:', val);
-    }
-    _setUser(val);
-  };
 
   useEffect(() => {
     // Al montar, intentar recuperar la sesión desde el servidor.
