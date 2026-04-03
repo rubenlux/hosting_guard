@@ -26,25 +26,34 @@ class ExecutionEngine:
         # 1. Dry-run (Verificación de pre-condiciones)
         try:
             if not executor.dry_run(action):
-                logger.error(f"Dry-run failed for action: {action_type}")
+                logger.error("Dry-run failed for action: %s", action_type)
                 return "DRY_RUN_FAIL"
-        except Exception as e:
-            logger.error(f"Exception during dry-run of {action_type}: {e}")
+        except Exception:
+            logger.error("Exception during dry-run of %s", action_type, exc_info=True)
             return "DRY_RUN_FAIL"
 
         # 2. Execute (Aplicación de la acción)
         try:
             ok = executor.execute(action)
             if not ok:
-                logger.warning(f"Execution failed for {action_type}, initiating rollback")
-                executor.rollback(action)
-                return "ROLLED_BACK"
-        except Exception as e:
-            logger.error(f"Execution exception for {action_type}: {e}. Initiating rollback")
-            try:
-                executor.rollback(action)
-            except Exception as re:
-                logger.critical(f"Rollback also failed for {action_type}: {re}")
-            return "ROLLED_BACK"
+                logger.warning("Execution failed for %s, initiating rollback", action_type)
+                return _safe_rollback(executor, action, action_type)
+        except Exception:
+            logger.error("Execution exception for %s, initiating rollback", action_type, exc_info=True)
+            return _safe_rollback(executor, action, action_type)
 
         return "EXECUTED"
+
+
+def _safe_rollback(executor, action: dict, action_type: str) -> str:
+    """Ejecuta rollback y devuelve el status real — distingue éxito de fallo."""
+    try:
+        executor.rollback(action)
+        return "ROLLED_BACK"
+    except Exception:
+        logger.critical(
+            "Rollback also failed for %s — system may be in inconsistent state",
+            action_type,
+            exc_info=True,
+        )
+        return "ROLLBACK_FAILED"

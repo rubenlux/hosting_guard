@@ -52,6 +52,6 @@ class HumanActionRepository:
         )
 
         conn.commit()
-        conn.close()
+
 
         return event

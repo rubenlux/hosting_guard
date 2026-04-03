@@ -65,7 +65,19 @@ const HostingCreationForm = ({ onSuccess }) => {
         setTimeout(() => onSuccess(), 2000);
       }
     } catch (err) {
-      setResult({ success: false, error: err.response?.data?.detail || err.message });
+      // Mapear errores conocidos del backend; no exponer detail interno al usuario
+      const detail = err.response?.data?.detail || '';
+      let errorMsg = 'Error al crear el proyecto. Inténtalo de nuevo.';
+      if (detail.includes('ya existe') || detail.includes('already exists')) {
+        errorMsg = 'Ya existe un proyecto con ese nombre.';
+      } else if (detail.includes('plan') || detail.includes('suscripción')) {
+        errorMsg = 'Tu plan actual no permite esta acción. Actualiza tu suscripción.';
+      } else if (detail.includes('IP') || detail.includes('free')) {
+        errorMsg = 'Solo se permite un alojamiento gratuito por dirección IP.';
+      } else if (detail.includes('nombre') || detail.includes('inválido')) {
+        errorMsg = 'Nombre de proyecto inválido. Usa solo letras, números y guiones.';
+      }
+      setResult({ success: false, error: errorMsg });
     } finally {
       setLoading(false);
     }

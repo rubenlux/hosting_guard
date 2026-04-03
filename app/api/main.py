@@ -3,20 +3,21 @@ import logging
 import time
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 
 from typing import Optional
-from fastapi import Depends, FastAPI, Request, HTTPException
+from fastapi import Depends, FastAPI, Request, HTTPException, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import generate_latest
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from app.api.config import ENABLE_ACTION_EXECUTION, ENABLE_AI_ADVISORY
+from app.api.config import APP_ENV, ENABLE_ACTION_EXECUTION, ENABLE_AI_ADVISORY
 from app.api.rate_limit import limiter
 from app.api.schemas import DecisionRequest, DecisionResponse, HumanActionRequest
-from app.api.security import create_token, create_refresh_token, verify_token, SECRET, ALGO
+from app.api.security import create_token, create_refresh_token, verify_token, revoke_token, require_role, SECRET, ALGO, _is_revoked
 from app.api.security_headers import SecurityHeadersMiddleware
 from app.api.tenancy import Tenant
 from app.api.tenant_resolver import resolve_tenant
@@ -49,7 +50,8 @@ async def expiration_scheduler():
     from app.services.expiration_job import check_and_expire_free_hostings
     while True:
         try:
-            await asyncio.get_event_loop().run_in_executor(None, check_and_expire_free_hostings)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, check_and_expire_free_hostings)
         except Exception as e:
             logger.error(f"Error en expiration_scheduler: {e}")
         await asyncio.sleep(43200)  # 12 horas
@@ -78,6 +80,46 @@ app.include_router(pixel_router)
 # Si el router de hosting.py no está registrado, asegúrate de importarlo en algún archivo (e.g. rutas o middleware), para el usuario, este archivo ahora carga pixel_router.
 
 
+_IS_PRODUCTION = APP_ENV == "production"
+
+# Flags de seguridad para cookies de sesión.
+# En producción: Secure=True + SameSite=Strict (solo HTTPS, mismo origen estricto).
+# En desarrollo: Secure=False + SameSite=Lax  (permite HTTP localhost).
+_COOKIE_SECURE   = _IS_PRODUCTION
+_COOKIE_SAMESITE = "strict" if _IS_PRODUCTION else "lax"
+_ACCESS_TOKEN_TTL  = 15 * 60        # 15 minutos en segundos
+_REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60  # 7 días en segundos
+
+
+def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    """Establece las dos cookies de sesión con los flags de seguridad correctos."""
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=_COOKIE_SECURE,
+        samesite=_COOKIE_SAMESITE,
+        max_age=_ACCESS_TOKEN_TTL,
+        path="/",
+    )
+    # La cookie de refresh solo se envía al endpoint /refresh (path scoping).
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=_COOKIE_SECURE,
+        samesite=_COOKIE_SAMESITE,
+        max_age=_REFRESH_TOKEN_TTL,
+        path="/refresh",
+    )
+
+
+def _clear_auth_cookies(response: Response) -> None:
+    """Elimina las cookies de sesión. Los paths deben coincidir con los del set."""
+    response.delete_cookie("access_token", path="/")
+    response.delete_cookie("refresh_token", path="/refresh")
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -95,61 +137,104 @@ def root():
     }
 
 @app.post("/register")
-def register(request: RegisterRequest):
-    import hashlib
-    safe_pass = hashlib.sha256(request.password.encode()).hexdigest()
-    hashed_password = bcrypt.hashpw(safe_pass.encode(), bcrypt.gensalt()).decode()
+@limiter.limit("5/minute")
+def register(request: Request, body: RegisterRequest):
+    hashed_password = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
     try:
-        user_id = user_repo.create_user(request.email, hashed_password)
-        return {"user_id": user_id, "email": request.email}
+        user_repo.create_user(body.email, hashed_password)
+        return {"email": body.email, "status": "registered"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/login")
 @limiter.limit("5/minute")
-def login(request: Request, body: LoginRequest):
+def login(request: Request, response: Response, body: LoginRequest):
+    ip = request.client.host if request.client else "unknown"
     user = user_repo.get_user_by_email(body.email)
-    import hashlib
-    safe_pass = hashlib.sha256(body.password.encode()).hexdigest()
-    
-    if not user or not bcrypt.checkpw(safe_pass.encode(), user["password_hash"].encode()):
+
+    if not user or not bcrypt.checkpw(body.password.encode(), user["password_hash"].encode()):
+        user_repo.log_login_attempt(body.email, ip, success=False, detail="Invalid credentials")
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
-    return {
-        "access_token": create_token({"user_id": user["user_id"], "email": user["email"]}),
-        "refresh_token": create_refresh_token({"user_id": user["user_id"], "email": user["email"]})
-    }
 
-class RefreshRequest(BaseModel):
-    refresh_token: str
+    user_repo.log_login_attempt(body.email, ip, success=True)
 
-from app.api.security import revoke_token
+    claims = {"user_id": user["user_id"], "email": user["email"], "role": user.get("role", "user")}
+    _set_auth_cookies(response, create_token(claims), create_refresh_token(claims))
+
+    # No devolver tokens en el cuerpo: están en cookies HttpOnly inaccesibles desde JS.
+    return {"status": "ok"}
 
 @app.post("/logout")
-def logout(user=Depends(verify_token)):
+def logout(response: Response, user=Depends(verify_token)):
+    # Revocar access token
     jti = user.get("jti")
-    if jti:
-        revoke_token(jti)
+    exp = user.get("exp")
+    if jti and exp:
+        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
+        revoke_token(jti, expires_at=expires_at)
+    _clear_auth_cookies(response)
     return {"status": "ok", "detail": "Sesión cerrada correctamente"}
 
-@app.post("/refresh")
-def refresh(data: RefreshRequest):
+
+@app.post("/refresh/revoke")
+@limiter.limit("10/minute")
+def revoke_refresh(request: Request, response: Response):
+    """
+    Revoca el refresh_token activo.
+    El browser envía la cookie refresh_token aquí (path=/refresh) pero NO en /logout,
+    por eso este endpoint existe separado. Llamar desde el frontend justo antes de /logout.
+    """
+    from jose import jwt, JWTError
+    refresh_token_value = request.cookies.get("refresh_token")
+    if not refresh_token_value:
+        return {"status": "ok"}  # Nada que revocar
     try:
-        from jose import jwt, JWTError
-        payload = jwt.decode(data.refresh_token, SECRET, algorithms=[ALGO])
+        payload = jwt.decode(refresh_token_value, SECRET, algorithms=[ALGO])
+        r_jti = payload.get("jti")
+        r_exp = payload.get("exp")
+        if r_jti and r_exp:
+            revoke_token(r_jti, datetime.fromtimestamp(r_exp, tz=timezone.utc))
+    except JWTError:
+        pass  # Token ya inválido — nada que hacer
+    return {"status": "ok"}
+
+@app.post("/refresh")
+@limiter.limit("10/minute")
+def refresh(request: Request, response: Response):
+    from jose import jwt, JWTError
+    refresh_token_value = request.cookies.get("refresh_token")
+    if not refresh_token_value:
+        raise HTTPException(status_code=401, detail="No refresh token")
+    try:
+        payload = jwt.decode(refresh_token_value, SECRET, algorithms=[ALGO])
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Invalid token type")
-        
+
         user_id = payload.get("user_id")
-        email = payload.get("email")
-        
-        return {
-            "access_token": create_token({"user_id": user_id, "email": email})
-        }
+        email   = payload.get("email")
+        role    = payload.get("role", "user")
+
+        # Comprobar que este refresh token no haya sido ya rotado o revocado.
+        # Sin esta comprobación, un token robado sigue funcionando aunque el usuario
+        # legítimo ya haya rotado su sesión (replay attack).
+        old_jti = payload.get("jti")
+        old_exp = payload.get("exp")
+        if old_jti and _is_revoked(old_jti):
+            _clear_auth_cookies(response)
+            raise HTTPException(status_code=401, detail="Refresh token revocado")
+
+        # Rotación: revocar el refresh token usado antes de emitir uno nuevo
+        if old_jti and old_exp:
+            revoke_token(old_jti, datetime.fromtimestamp(old_exp, tz=timezone.utc))
+
+        claims = {"user_id": user_id, "email": email, "role": role}
+        _set_auth_cookies(response, create_token(claims), create_refresh_token(claims))
+        return {"status": "ok"}
     except JWTError:
+        _clear_auth_cookies(response)
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error interno al procesar el token")
 
 @app.get("/me")
 def get_me(user: dict = Depends(verify_token)):
@@ -162,6 +247,9 @@ def get_me(user: dict = Depends(verify_token)):
     return {
         "user_id": user["user_id"],
         "email": user["email"],
+        # Role is read from the DB (not the JWT) so a role change in the DB takes effect
+        # on the next /me call without waiting for token expiry.
+        "role": user_db.get("role", "user"),
         "plan": user_db.get("plan", "free"),
         "balance": user_db.get("balance", 0.0),
         "has_payment_method": bool(user_db.get("has_payment_method", 0)),
@@ -421,14 +509,12 @@ def update_tenant_config(
     tenant_id: str,
     kind: str,
     content: dict,
-    user=Depends(verify_token),
+    user=Depends(require_role("admin")),
 ):
     """
     Crea una nueva versión de reglas o prompts para un tenant.
-    Endpoint administrativo (debe protegerse en pruducción).
+    Solo accesible para usuarios con rol 'admin'.
     """
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin required")
     cfg = tenant_config_repo.create_new_version(
         tenant_id=tenant_id,
         kind=kind,

@@ -34,7 +34,7 @@ export default function PixelAnalytics() {
   };
 
   const fetchAdminStats = async () => {
-    if (user?.email !== 'inspyria.cloud@gmail.com') return;
+    if (user?.role !== 'admin') return;
     try {
       const { data } = await api.get('/pixel/admin/stats');
       setAdminStats(data);

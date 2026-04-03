@@ -1,56 +1,56 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { jwtDecode } from 'jwt-decode';
-import { getToken, removeToken, setToken as saveToken } from '../services/auth';
 import api from '../services/api';
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
+  const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Al montar, intentar recuperar la sesión desde el servidor.
+    // Si la cookie de access_token es válida, /me devuelve los datos del usuario.
+    // No leemos localStorage ni decodificamos el JWT en el cliente.
     const initAuth = async () => {
-      const token = getToken();
-      if (token) {
-        try {
-          // 1. Decodificar localmente (rápido)
-          const decoded = jwtDecode(token);
-          if (decoded.exp * 1000 > Date.now()) {
-            setUser(decoded);
-            
-            // 2. Validar con el servidor (Step 4 de la recomendación)
-            try {
-              const res = await api.get('/me');
-              setUser(res.data);
-            } catch (err) {
-              if (err.response?.status === 401) {
-                logoutAction();
-              }
-            }
-          } else {
-            logoutAction();
-          }
-        } catch (err) {
-          logoutAction();
-        }
+      try {
+        const res = await api.get('/me');
+        setUser(res.data);
+      } catch {
+        // 401 o red caída: no hay sesión activa
+        setUser(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     initAuth();
   }, []);
 
-  const loginAction = (token) => {
-    saveToken(token);
-    setUser(jwtDecode(token));
+  // Llamar tras un login exitoso: el servidor ya estableció las cookies.
+  // Solo necesitamos obtener los datos del usuario desde /me.
+  const loginAction = async () => {
+    try {
+      const res = await api.get('/me');
+      setUser(res.data);
+    } catch {
+      setUser(null);
+    }
   };
 
-  const logoutAction = () => {
-    removeToken();
-    setUser(null);
-    if (typeof window !== 'undefined') {
-      window.location.href = '/'; 
+  // Llamar al hacer logout: revocamos ambos tokens y el servidor borra las cookies.
+  const logoutAction = async () => {
+    try {
+      // /refresh/revoke está en path=/refresh, por lo que el browser envía el refresh_token cookie.
+      // Debe llamarse ANTES de /logout para que la cookie aún exista en el browser.
+      await api.post('/refresh/revoke').catch(() => {});
+      await api.post('/logout');
+    } catch {
+      // Si falla (sesión ya expirada), igualmente limpiamos el estado local.
+    } finally {
+      setUser(null);
+      if (typeof window !== 'undefined') {
+        window.location.href = '/';
+      }
     }
   };
 

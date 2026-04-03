@@ -72,7 +72,6 @@ class TenantConfigRepository:
         )
 
         conn.commit()
-        conn.close()
         return cfg
 
     def get_active(self, tenant_id: str, kind: str) -> Dict:
@@ -91,7 +90,6 @@ class TenantConfigRepository:
         )
 
         row = cur.fetchone()
-        conn.close()
 
         return json.loads(row["content"]) if row else {}
 
@@ -112,7 +110,6 @@ class TenantConfigRepository:
         )
 
         rows = cur.fetchall()
-        conn.close()
 
         return [
             TenantConfigVersion(

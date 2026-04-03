@@ -4,31 +4,58 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://api.hostingguard.lat';
 
 const api = axios.create({
   baseURL: API_URL,
+  // Necesario para que el navegador envíe automáticamente las cookies HttpOnly
+  // en cada petición cross-origin al backend.
+  withCredentials: true,
 });
 
-// 1. Interceptor para añadir el token a todas las peticiones
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token');
+// Interceptor de respuesta: en 401 intentar renovar el access_token con /refresh
+// (el refresh_token llega automáticamente como cookie HttpOnly).
+// Si /refresh también falla, redirigir al inicio de sesión.
+let _isRefreshing = false;
+let _refreshQueue = []; // { resolve, reject }[]
 
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+const _drainQueue = (err) => {
+  _refreshQueue.forEach(p => (err ? p.reject(err) : p.resolve()));
+  _refreshQueue = [];
+};
 
-  return config;
-});
-
-// 2. Interceptor para errores de respuesta (especialmente 401)
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    const isLoginRequest = error.config?.url?.includes('/login');
+  async (error) => {
+    const originalRequest = error.config;
+    const isAuthEndpoint =
+      originalRequest?.url?.includes('/login') ||
+      originalRequest?.url?.includes('/refresh');
 
-    if (error.response?.status === 401 && !isLoginRequest) {
-      localStorage.removeItem('access_token');
-      if (typeof window !== 'undefined') {
-        window.location.href = '/'; 
+    if (error.response?.status === 401 && !isAuthEndpoint && !originalRequest._retry) {
+      // If a refresh is already in flight, queue this request until it finishes
+      if (_isRefreshing) {
+        return new Promise((resolve, reject) => {
+          _refreshQueue.push({ resolve, reject });
+        })
+          .then(() => api(originalRequest))
+          .catch(err => Promise.reject(err));
+      }
+
+      originalRequest._retry = true;
+      _isRefreshing = true;
+
+      try {
+        await api.post('/refresh'); // cookie auto-included via withCredentials
+        _drainQueue(null);
+        return api(originalRequest);
+      } catch (refreshError) {
+        _drainQueue(refreshError);
+        if (typeof window !== 'undefined') {
+          window.location.href = '/';
+        }
+        return Promise.reject(refreshError);
+      } finally {
+        _isRefreshing = false;
       }
     }
+
     return Promise.reject(error);
   }
 );
@@ -109,12 +136,22 @@ export const getOrchestratorEvents = async () => {
     return response.data;
 };
 
+export const updateUserConfig = async (config) => {
+    const response = await api.post('/user/config', config);
+    return response.data;
+};
+
+export const topupBalance = async (amount) => {
+    const response = await api.post('/user/topup', { amount });
+    return response.data;
+};
+
 export const uploadZip = async (hostingId, file) => {
     const formData = new FormData();
     formData.append('file', file);
-    const response = await api.post(`/hostings/${hostingId}/upload-zip`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    // No forzar Content-Type: axios lo establece automáticamente con el boundary correcto
+    // cuando detecta un FormData. Forzarlo manualmente omite el boundary y puede romper el upload.
+    const response = await api.post(`/hostings/${hostingId}/upload-zip`, formData);
     return response.data;
 };
 

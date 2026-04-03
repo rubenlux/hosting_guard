@@ -10,13 +10,13 @@ import Footer from './components/Footer';
 import Dashboard from './pages/Dashboard';
 import { useAuth } from './hooks/useAuth';
 
-// Rutas protegidas
+// Ruta protegida: requiere cualquier usuario autenticado
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
-  
   if (loading) return null;
   return user ? children : <Navigate to="/" />;
 };
+
 
 const Home = () => (
   <>

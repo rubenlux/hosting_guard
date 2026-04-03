@@ -49,6 +49,6 @@ class ExecutionRepository:
         )
 
         conn.commit()
-        conn.close()
+
 
         return event

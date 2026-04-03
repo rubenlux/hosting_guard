@@ -48,8 +48,8 @@ def classify_action(hosting_type: str, project_type: str, action_type: str, esti
     if estimated_impact == "low" and action_type == "restart_service":
         return {
             "classification": CLASSIFICATION_SAFE,
-            "requires_human_approval": True,
-            "explanation": "La acción es de bajo impacto y reversible, pero requiere aprobación humana.",
+            "requires_human_approval": False,
+            "explanation": "La acción es de bajo impacto y reversible. Puede ejecutarse automáticamente.",
         }
 
     # Caso por defecto: prudencia

@@ -1,7 +1,11 @@
+import re
 import time
 import logging
 import subprocess
 from app.core.execution.interfaces import BaseExecutor
+
+# Formato válido para git refs: sha corto/largo, tags, ramas (sin caracteres peligrosos)
+_SAFE_GIT_REF_RE = re.compile(r'^[a-zA-Z0-9._/\-]{1,128}$')
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +22,10 @@ class RestartServiceExecutor(BaseExecutor):
         return valid
 
     def execute(self, action: dict) -> bool:
-        container = action.get("service_name").strip()
+        container = (action.get("service_name") or "").strip()
+        if not container:
+            logger.error("RestartServiceExecutor.execute: service_name vacío")
+            return False
         logger.info(f"Iniciando RestartServiceExecutor para: {container}")
         
         max_retries = 3
@@ -62,8 +69,11 @@ class ClearCacheExecutor(BaseExecutor):
         return valid
 
     def execute(self, action: dict) -> bool:
-        container = action.get("container_name").strip()
+        container = (action.get("container_name") or "").strip()
         cache_type = action.get("cache_type")
+        if not container or not cache_type:
+            logger.error("ClearCacheExecutor.execute: container_name o cache_type vacíos")
+            return False
         logger.info(f"Iniciando ClearCacheExecutor para {container} (Tipo: {cache_type})")
         
         max_retries = 2
@@ -85,8 +95,8 @@ class ClearCacheExecutor(BaseExecutor):
                 logger.error(f"Excepción limpiando caché en {container}: {e}", exc_info=True)
                 
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-                
+                time.sleep(2 ** attempt)  # Backoff exponencial: 1s, 2s...
+
         logger.error(f"ClearCacheExecutor falló definitivamente tras {max_retries} intentos para {container}.")
         return False
 
@@ -101,14 +111,25 @@ class RollbackDeployExecutor(BaseExecutor):
     """
 
     def dry_run(self, action: dict) -> bool:
-        valid = bool(action.get("container_name")) and bool(action.get("previous_version"))
-        if not valid:
+        container = action.get("container_name")
+        version = action.get("previous_version")
+        if not container or not version:
             logger.warning(f"Dry run fallido [RollbackDeployExecutor]. Parámetros incompletos: {action}")
-        return valid
+            return False
+        if not _SAFE_GIT_REF_RE.match(str(version)):
+            logger.error(
+                "Dry run fallido [RollbackDeployExecutor]. previous_version con formato inválido: '%s'",
+                version,
+            )
+            return False
+        return True
 
     def execute(self, action: dict) -> bool:
-        container = action.get("container_name").strip()
-        version = action.get("previous_version").strip()
+        container = (action.get("container_name") or "").strip()
+        version = (action.get("previous_version") or "").strip()
+        if not container or not version:
+            logger.error("RollbackDeployExecutor.execute: container_name o previous_version vacíos")
+            return False
         logger.info(f"Iniciando RollbackDeployExecutor en {container} destino a versión {version}")
         
         max_retries = 2
@@ -130,8 +151,8 @@ class RollbackDeployExecutor(BaseExecutor):
                 logger.error(f"Excepción en RollbackDeployExecutor para {container}: {e}", exc_info=True)
                 
             if attempt < max_retries - 1:
-                time.sleep(3)
-                
+                time.sleep(2 ** attempt)  # Backoff exponencial: 1s, 2s...
+
         logger.error(f"RollbackDeployExecutor falló tras {max_retries} intentos para {container}.")
         return False
 

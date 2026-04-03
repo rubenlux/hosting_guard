@@ -44,7 +44,8 @@ class AIOrchestrator:
             advisory = generate_advisory(decision)
 
             # 1. Primero verificar cache (operación barata)
-            cached = get_cached_response(decision)
+            tenant_id = tenant.tenant_id if tenant else None
+            cached = get_cached_response(decision, tenant_id=tenant_id)
             if cached:
                 logger.info("Cache HIT - serving from cache")
                 return {
@@ -63,13 +64,20 @@ class AIOrchestrator:
                 )
 
             # 3. Llamar al LLM con Timeout
+            logger.info(
+                "LLM enrich request",
+                extra={"tenant_id": tenant_id, "decision_id": decision.get("decision_id")},
+            )
             loop = asyncio.get_running_loop()
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(self.llm.generate, decision, context)
                 try:
                     explanation = await loop.run_in_executor(None, lambda: future.result(timeout=LLM_TIMEOUT_SECONDS))
                 except FuturesTimeout:
-                    logger.warning("LLM timeout - devolviendo advisory base")
+                    logger.warning(
+                        "LLM timeout - devolviendo advisory base",
+                        extra={"tenant_id": tenant_id},
+                    )
                     return {
                         **advisory,
                         "llm_explanation": None,
@@ -77,7 +85,20 @@ class AIOrchestrator:
                         "from_cache": False,
                     }
 
-            save_to_cache(decision, explanation)
+            # 4. Validar output del LLM antes de cachear y devolver
+            if not explanation or not isinstance(explanation, str) or not explanation.strip():
+                logger.warning(
+                    "LLM devolvió output vacío o inválido",
+                    extra={"tenant_id": tenant_id},
+                )
+                return {
+                    **advisory,
+                    "llm_explanation": None,
+                    "context_used": context,
+                    "from_cache": False,
+                }
+
+            save_to_cache(decision, explanation, tenant_id=tenant_id)
 
             return {
                 **advisory,
@@ -86,6 +107,10 @@ class AIOrchestrator:
                 "from_cache": False,
             }
 
-        except Exception as e:
-            logger.error("Error en enriquecimiento de IA", exc_info=True)
+        except Exception:
+            logger.error(
+                "Error en enriquecimiento de IA",
+                exc_info=True,
+                extra={"tenant_id": tenant.tenant_id if tenant else None},
+            )
             return {"summary": "No disponible", "requires_human_attention": True}

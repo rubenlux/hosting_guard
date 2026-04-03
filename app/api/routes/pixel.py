@@ -1,16 +1,18 @@
 import hashlib
+import json
+import re
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import Response
+
+_SITE_ID_RE = re.compile(r'^[a-f0-9\-]{8,36}$')
 from pydantic import BaseModel
-from app.api.security import verify_token
+from app.api.security import verify_token, require_role
 from app.infra.audit.pixel_repository import PixelRepository
 
 router = APIRouter()
 pixel_repo = PixelRepository()
-
-ADMIN_EMAIL = "inspyria.cloud@gmail.com"
 
 
 def _parse_user_agent(ua: str) -> dict:
@@ -40,9 +42,14 @@ def _parse_user_agent(ua: str) -> dict:
 @router.get("/pixel.js")
 async def pixel_script(id: str, request: Request):
     """Sirve el script de tracking."""
+    # Validar id antes de interpolarlo en JS: solo UUIDs / hex con guiones
+    if not _SITE_ID_RE.match(id):
+        raise HTTPException(status_code=400, detail="Invalid site id")
+    # json.dumps produce un string JS literal correctamente escapado (sin riesgo de injection)
+    safe_id = json.dumps(id)
     script = f"""
 (function() {{
-  var HG_SITE_ID = '{id}';
+  var HG_SITE_ID = {safe_id};
   var HG_API = 'https://api.hostingguard.lat';
   var session = sessionStorage.getItem('hg_sid') || Math.random().toString(36).substr(2);
   sessionStorage.setItem('hg_sid', session);
@@ -154,7 +161,7 @@ async def get_stats(site_id: str, user: dict = Depends(verify_token)):
     site = pixel_repo.get_site(site_id)
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
-    if site["user_id"] != user["user_id"] and user.get("email") != ADMIN_EMAIL:
+    if site["user_id"] != user["user_id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Forbidden")
     return pixel_repo.get_stats(site_id)
 
@@ -171,7 +178,5 @@ async def delete_site(site_id: str, user: dict = Depends(verify_token)):
 
 
 @router.get("/pixel/admin/stats")
-async def admin_stats(user: dict = Depends(verify_token)):
-    if user.get("email") != ADMIN_EMAIL:
-        raise HTTPException(status_code=403, detail="Solo admin")
+async def admin_stats(user: dict = Depends(require_role("admin"))):
     return pixel_repo.get_all_stats_admin()

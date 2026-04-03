@@ -46,6 +46,8 @@ class AnthropicAdvisoryLLM(AdvisoryLLM):
         )
 
         # Anthropic v0.3.0+ API
+        if not response.content:
+            raise RuntimeError("Empty LLM response: no content blocks returned")
         text = response.content[0].text.strip()
         if not text:
             raise RuntimeError("Empty LLM response")

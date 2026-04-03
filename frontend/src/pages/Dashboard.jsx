@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import api, { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents } from '../services/api';
+import React, { useEffect, useRef, useState } from 'react';
+import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import {
   Globe,
@@ -116,7 +116,7 @@ const Dashboard = () => {
         await deleteHosting(id);
         setHostings(hostings.filter(h => h.hosting_id !== id));
       } catch (err) {
-        alert("Error al eliminar: " + err.message);
+        alert("Error al eliminar el hosting. Inténtalo de nuevo.");
       }
     }
   };
@@ -126,7 +126,7 @@ const Dashboard = () => {
       await actionFn(id);
       fetchHostings(); // Refresh status
     } catch (err) {
-      alert("Error en la acción: " + (err.response?.data?.detail || err.message));
+      alert("Error al ejecutar la acción. Inténtalo de nuevo.");
     }
   };
 
@@ -141,7 +141,7 @@ const Dashboard = () => {
       setCurrentLogs(data.logs);
       setLastLogsTimestamp(data.timestamp);
     } catch (err) {
-      setCurrentLogs("Error al cargar logs: " + (err.response?.data?.detail || err.message));
+      setCurrentLogs("Error al cargar logs. Inténtalo de nuevo.");
     } finally {
       setLogsLoading(false);
     }
@@ -169,10 +169,10 @@ const Dashboard = () => {
     const newValue = !user?.autoscale_enabled;
     setActionLoading(true);
     try {
-      await api.post("/user/config", { autoscale_enabled: newValue });
+      await updateUserConfig({ autoscale_enabled: newValue });
       setUser(prev => ({ ...prev, autoscale_enabled: newValue }));
     } catch (err) {
-      alert("Error al actualizar config: " + (err.response?.data?.detail || err.message));
+      alert("Error al actualizar la configuración. Inténtalo de nuevo.");
     } finally {
       setActionLoading(false);
     }
@@ -183,10 +183,10 @@ const Dashboard = () => {
     setActionLoading(true);
     try {
       // Recarga fija de $10 para la demo
-      const res = await api.post("/user/topup", { amount: 10 });
-      setUser(prev => ({ ...prev, balance: res.data.balance }));
+      const res = await topupBalance(10);
+      setUser(prev => ({ ...prev, balance: res.balance }));
     } catch (err) {
-      alert("Error al recargar: " + (err.response?.data?.detail || err.message));
+      alert("Error al recargar el saldo. Inténtalo de nuevo.");
     } finally {
       setActionLoading(false);
     }
@@ -194,20 +194,24 @@ const Dashboard = () => {
 
   const handleRefreshUser = async () => {
     try {
-      const res = await api.get('/me');
-      setUser(res.data);
+      const res = await getMe();
+      setUser(res);
     } catch (err) {
       console.error("Error refreshing user info:", err);
     }
   };
 
+  // Ref always points to latest hostings so the metrics interval never closes over a stale snapshot
+  const hostingsRef = useRef(hostings);
+  useEffect(() => { hostingsRef.current = hostings; }, [hostings]);
+
   useEffect(() => {
     fetchHostings();
     fetchEvents();
 
-    // Polling de métricas cada 10 segundos
+    // Polling de métricas cada 10 segundos — lee hostingsRef para ver el estado actual
     const metricsInterval = setInterval(() => {
-      hostings.forEach(h => {
+      hostingsRef.current.forEach(h => {
         if (h.status === 'active') {
           fetchMetrics(h.hosting_id);
         }
@@ -215,15 +219,13 @@ const Dashboard = () => {
     }, 10000);
 
     // Polling de eventos cada 15 segundos
-    const eventsInterval = setInterval(() => {
-      fetchEvents();
-    }, 15000);
+    const eventsInterval = setInterval(fetchEvents, 15000);
 
     return () => {
       clearInterval(metricsInterval);
       clearInterval(eventsInterval);
     };
-  }, [hostings.length]); // Re-run when list changes
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const uptimeData = Array.from({ length: 40 }, (_, i) => Math.random() > 0.95 ? 'warn' : 'ok');
 

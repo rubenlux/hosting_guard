@@ -12,6 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
 from app.api.security import verify_token
 from app.infra.audit.hosting_repository import HostingRepository
+from app.infra.audit.user_repository import UserRepository
+
+_user_repo = UserRepository()
 
 hosting_repo = HostingRepository()
 
@@ -21,6 +24,8 @@ MAX_EXTRACTED_SIZE  = 200 * 1024 * 1024   # 200 MB descomprimido (anti ZIP-bomb)
 ALLOWED_REPO_HOSTS  = {"github.com", "gitlab.com", "bitbucket.org"}
 BRANCH_REGEX        = re.compile(r'^[a-zA-Z0-9._/\-]+$')
 PROJECT_NAME_REGEX  = re.compile(r'^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$')
+# Formatos válidos para --since de docker logs: "5m", "2h", "3d", "2024-01-15T10:00:00"
+_SINCE_REGEX        = re.compile(r'^\d+[smhd]$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$')
 
 
 def _find_serve_dir(site_dir: str) -> str:
@@ -75,6 +80,25 @@ def _validate_branch(branch: str) -> None:
         )
 
 
+def _get_real_ip(request: Request) -> Optional[str]:
+    """
+    Extrae la IP real del cliente respetando el proxy inverso (Traefik/Nginx).
+    Orden de precedencia:
+      1. X-Real-IP  — cabecera canónica que Traefik/Nginx inyectan con la IP del cliente
+      2. X-Forwarded-For — primer segmento (más cercano al cliente)
+      3. request.client.host — fallback directo (correcto solo sin proxy)
+    IMPORTANTE: solo confiar en estas cabeceras si el proxy está en una red de confianza
+    y está configurado para reescribirlas (no reenviarlas desde el cliente).
+    """
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 router = APIRouter()
 
 DOMAIN = "hostingguard.lat"
@@ -102,11 +126,22 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
         project_name = data.name.lower().replace(" ", "-")
         subdomain    = f"{project_name}.{DOMAIN}"
         container_name = f"user_{user_id}_{project_name}_{uuid.uuid4().hex[:6]}"
-        ip_address   = request.client.host if request.client else None
+        ip_address   = _get_real_ip(request)
 
         plan = PLANS.get(data.plan)
         if not plan:
             raise HTTPException(status_code=400, detail="plan inválido")
+
+        # Verificar que el plan solicitado coincide con el plan adquirido.
+        # Impide que un usuario free solicite recursos de un plan de pago.
+        if data.plan != "free" and user.get("role") != "admin":
+            user_db = _user_repo.get_user_by_id(user_id)
+            user_plan = user_db.get("plan", "free") if user_db else "free"
+            if user_plan != data.plan:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Tu plan actual es '{user_plan}'. Actualiza tu suscripción para usar el plan '{data.plan}'."
+                )
 
         if data.plan == "free" and ip_address:
             if hosting_repo.has_free_plan_from_ip(ip_address):
@@ -281,6 +316,12 @@ async def get_hosting_logs(hosting_id: int, since: Optional[str] = None, user: d
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
 
+    if since and not _SINCE_REGEX.match(since):
+        raise HTTPException(
+            status_code=400,
+            detail="Formato de 'since' inválido. Usar: '5m', '2h', '3d' o 'YYYY-MM-DDTHH:MM:SS'."
+        )
+
     command = ["docker", "logs"]
     if since:
         command.extend(["--since", since])
@@ -294,10 +335,13 @@ async def get_hosting_logs(hosting_id: int, since: Optional[str] = None, user: d
         logs = result.stdout if result.stdout else result.stderr
         return {
             "logs":      logs if logs else "",
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
         }
-    except Exception as e:
-        return {"logs": f"Error retrieving logs: {str(e)}"}
+    except Exception:
+        return {
+            "logs": "Error al obtener los logs. Inténtalo de nuevo.",
+            "timestamp": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
+        }
 
 @router.get("/hostings/{hosting_id}/metrics")
 async def get_hosting_metrics(hosting_id: int, user: dict = Depends(verify_token)):
@@ -332,7 +376,7 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
         project_name = data.name.lower().replace(" ", "-")
         subdomain    = f"{project_name}.{DOMAIN}"
         uid          = uuid.uuid4().hex[:6]
-        ip_address   = request.client.host if request.client else None
+        ip_address   = _get_real_ip(request)
 
         # FIX #2: convención de nombres clara para poder limpiar el DB container al borrar
         db_container = f"user_{user_id}_db_{project_name}_{uid}"
@@ -342,6 +386,15 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
         plan = PLANS.get(data.plan)
         if not plan:
             raise HTTPException(status_code=400, detail="plan inválido")
+
+        if data.plan != "free" and user.get("role") != "admin":
+            user_db = _user_repo.get_user_by_id(user_id)
+            user_plan = user_db.get("plan", "free") if user_db else "free"
+            if user_plan != data.plan:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Tu plan actual es '{user_plan}'. Actualiza tu suscripción para usar el plan '{data.plan}'."
+                )
 
         if data.plan == "free" and ip_address:
             if hosting_repo.has_free_plan_from_ip(ip_address):
@@ -455,11 +508,20 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
         uid            = uuid.uuid4().hex[:6]
         container_name = f"user_{user_id}_git_{project_name}_{uid}"
         site_dir       = f"/opt/clients/{container_name}"
-        ip_address     = request.client.host if request.client else None
+        ip_address     = _get_real_ip(request)
 
         plan = PLANS.get(data.plan)
         if not plan:
             raise HTTPException(status_code=400, detail="Plan inválido")
+
+        if data.plan != "free" and user.get("role") != "admin":
+            user_db = _user_repo.get_user_by_id(user_id)
+            user_plan = user_db.get("plan", "free") if user_db else "free"
+            if user_plan != data.plan:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Tu plan actual es '{user_plan}'. Actualiza tu suscripción para usar el plan '{data.plan}'."
+                )
 
         if data.plan == "free" and ip_address:
             if hosting_repo.has_free_plan_from_ip(ip_address):

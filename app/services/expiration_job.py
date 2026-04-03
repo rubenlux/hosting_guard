@@ -9,12 +9,50 @@ from app.infra.audit.hosting_repository import HostingRepository
 logger = logging.getLogger(__name__)
 
 FREE_PLAN_DAYS = 14
+# Tiempo máximo en minutos que un hosting puede permanecer en 'expiring' antes de considerarse huérfano
+_STALE_EXPIRING_MINUTES = 30
 
-def _expire_single(hosting, hosting_repo):
+
+def _recover_stale_expiring() -> None:
+    """
+    Detecta hostings atascados en estado 'expiring' (proceso previo interrumpido)
+    y los reintenta o los revierte a 'active' si Docker tampoco los puede detener.
+    Se ejecuta al inicio de cada ciclo del job como paso de recuperación.
+    """
+    repo = HostingRepository()
+    stale = repo.get_stale_expiring_hostings(stale_minutes=_STALE_EXPIRING_MINUTES)
+    if not stale:
+        return
+
+    logger.warning("Encontrados %d hosting(s) huérfanos en estado 'expiring'. Reintentando.", len(stale))
+
+    for hosting in stale:
+        container = hosting["container_name"]
+        result = subprocess.run(
+            ["docker", "stop", container],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            repo.update_hosting_status(hosting["hosting_id"], "expired")
+            logger.info("Hosting huérfano %s marcado como 'expired'.", hosting["hosting_id"])
+        else:
+            # Docker no puede detenerlo (ya no existe el contenedor, etc.) → revertir a active
+            repo.update_hosting_status(hosting["hosting_id"], "active")
+            logger.error(
+                "No se pudo detener hosting huérfano %s. Revertido a 'active'. Error: %s",
+                hosting["hosting_id"],
+                result.stderr.decode("utf-8", errors="replace").strip(),
+            )
+
+
+def _expire_single(hosting):
     """
     Intenta detener el contenedor del hosting y manejar el status atómicamente.
+    Crea su propia conexión a DB para ser thread-safe.
     Devuelve (hosting, success)
     """
+    hosting_repo = HostingRepository()
     container = hosting["container_name"]
     # 1. Marcar en DB como en progreso (operación segura y reversible)
     hosting_repo.update_hosting_status(hosting["hosting_id"], "expiring")
@@ -52,6 +90,12 @@ def check_and_expire_free_hostings():
     expired_count = 0
     warned_count = 0
     error_count = 0
+
+    # Paso 0: recuperar hostings huérfanos de ciclos anteriores interrumpidos
+    try:
+        _recover_stale_expiring()
+    except Exception as e:
+        logger.error("Error en _recover_stale_expiring: %s", e, exc_info=True)
 
     hosting_repo = HostingRepository()
     now = datetime.now(timezone.utc)
@@ -114,7 +158,7 @@ def check_and_expire_free_hostings():
         # Procesar los expirados en paralelo
         if to_expire:
             with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = {executor.submit(_expire_single, h, hosting_repo): h for h in to_expire}
+                futures = {executor.submit(_expire_single, h): h for h in to_expire}
                 for future in as_completed(futures):
                     try:
                         hosting_res, success = future.result()

@@ -1,11 +1,52 @@
 services:
+
+  # ---------------------------------------------------------------------------
+  # docker-socket-proxy — único punto de acceso al socket de Docker.
+  # Ni Traefik ni la app montan el socket directamente.
+  # ---------------------------------------------------------------------------
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    container_name: docker_socket_proxy
+    restart: always
+    environment:
+      CONTAINERS:   1
+      NETWORKS:     1
+      SERVICES:     1
+      TASKS:        1
+      POST:         1   # crear/parar/reiniciar contenedores de usuarios
+      IMAGES:       1
+      INFO:         1
+      PING:         1
+      EXEC:         0
+      BUILD:        0
+      COMMIT:       0
+      CONFIGS:      0
+      DISTRIBUTION: 0
+      PLUGINS:      0
+      SECRETS:      0
+      SESSION:      0
+      SWARM:        0
+      SYSTEM:       0
+      VOLUMES:      0
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    networks:
+      - socket_proxy_network
+
+  # ---------------------------------------------------------------------------
+  # traefik — reverse proxy + TLS automático
+  # ---------------------------------------------------------------------------
   traefik:
     image: traefik:v3.0
     container_name: traefik
     restart: always
+    depends_on:
+      - docker-socket-proxy
 
     command:
+      - "--providers.docker.endpoint=tcp://docker-socket-proxy:2375"
       - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       - "--certificatesresolvers.le.acme.email=inspyria.cloud@gmail.com"
@@ -18,17 +59,29 @@ services:
       - "443:443"
 
     volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "./letsencrypt:/letsencrypt"
+      # sin socket directo — usa el proxy
 
     networks:
       - hosting_network
+      - socket_proxy_network
 
+  # ---------------------------------------------------------------------------
+  # app — backend FastAPI
+  # ---------------------------------------------------------------------------
   app:
-    build: .
+    build:
+      context: /opt/hosting_guard
     container_name: hosting_guard
     restart: always
     env_file: .env.production
+    depends_on:
+      - docker-socket-proxy
+      - postgres
+
+    environment:
+      # La CLI de docker usa el proxy en lugar del socket directo
+      DOCKER_HOST: "tcp://docker-socket-proxy:2375"
 
     labels:
       - "traefik.enable=true"
@@ -38,26 +91,65 @@ services:
       - "traefik.http.services.hg.loadbalancer.server.port=8000"
 
     volumes:
-      - .:/app
       - ./data:/app/data
+      - /usr/bin/docker:/usr/bin/docker:ro   # binario docker del host (solo lectura)
+      - /opt/clients:/opt/clients             # sitios desplegados por usuarios (github deploy)
+      # sin socket directo — DOCKER_HOST apunta al proxy
 
     networks:
       - hosting_network
+      - socket_proxy_network
 
+  # ---------------------------------------------------------------------------
+  # frontend — React (Nginx)
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: /opt/hosting_guard/frontend
+    container_name: frontend
+    restart: always
+    networks:
+      - hosting_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`hostingguard.lat`) || Host(`www.hostingguard.lat`)"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls.certresolver=le"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+
+  # ---------------------------------------------------------------------------
+  # postgres — base de datos relacional
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15
+    container_name: hosting_guard_db
+    restart: always
+    env_file: .env.production   # lee POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - hosting_network
+
+  # ---------------------------------------------------------------------------
+  # prometheus — métricas internas
+  # ---------------------------------------------------------------------------
   prometheus:
     image: prom/prometheus:v2.54.1
     container_name: prometheus
     restart: always
-
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
-
     ports:
-      - "9090:9090"
-
+      - "127.0.0.1:9090:9090"   # solo loopback — no expuesto a Internet
     networks:
       - hosting_network
 
 networks:
   hosting_network:
     driver: bridge
+  socket_proxy_network:
+    driver: bridge
+    internal: true   # sin acceso a Internet
+
+volumes:
+  pgdata:

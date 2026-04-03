@@ -69,8 +69,17 @@ def get_system_load():
         logger.warning(f"No se pudo leer load average: {e}")
         return 0
 
+# Prefijo que identifica contenedores gestionados por HostingGuard.
+# El orquestador SOLO actúa sobre estos — nunca sobre contenedores del sistema.
+_CONTAINER_PREFIX = "user_"
+
+
 def get_container_stats():
-    """Lee estadísticas reales de Docker sin streaming."""
+    """
+    Lee estadísticas de Docker filtradas por prefijo 'user_'.
+    Solo procesa contenedores creados por HostingGuard, evitando actuar sobre
+    contenedores del sistema (traefik, prometheus, etc.).
+    """
     result = subprocess.run(
         [
             "docker", "stats", "--no-stream",
@@ -78,7 +87,7 @@ def get_container_stats():
         ],
         capture_output=True,
         text=True,
-        timeout=30
+        timeout=30,
     )
 
     containers = []
@@ -89,15 +98,17 @@ def get_container_stats():
 
         try:
             name, cpu, mem = line.split("|")
+            name = name.strip()
+
+            # ARCH-01: ignorar contenedores que no sean de usuarios
+            if not name.startswith(_CONTAINER_PREFIX):
+                continue
+
             cpu_val = float(cpu.replace("%", "").strip())
             mem_val = float(mem.replace("%", "").strip())
 
-            containers.append({
-                "name": name,
-                "cpu": cpu_val,
-                "mem": mem_val
-            })
-        except Exception as e:
+            containers.append({"name": name, "cpu": cpu_val, "mem": mem_val})
+        except Exception:
             continue
 
     return containers
@@ -105,41 +116,56 @@ def get_container_stats():
 def throttle_container(name, user_id, cpu_limit, reason_type):
     """Aplica límites de CPU dinámicamente y registra el evento."""
     logger.info(f"[{datetime.now()}] ⚡ LIMITANDO {name} → {cpu_limit} CPU")
-    subprocess.run([
+    result = subprocess.run([
         "docker", "update",
         f"--cpus={cpu_limit}",
         name
-    ], capture_output=True)
-    
+    ], capture_output=True, text=True, timeout=15)
+
+    if result.returncode != 0:
+        logger.error(f"throttle_container falló para {name}: {result.stderr.strip()}")
+        return
+
     msg = f"Uso elevado de recursos. Se aplicó limitación temporal a {cpu_limit} vCPU."
     if reason_type == "panic":
         msg = "Alta carga del servidor. Recursos reducidos temporalmente para proteger la estabilidad."
-        
+
     hosting_repo.log_orchestrator_event(name, user_id, reason_type, msg)
 
 def restart_container(name, user_id):
     """Reinicia un contenedor por exceso crítico de memoria y registra el evento."""
     logger.info(f"[{datetime.now()}] 🔄 REINICIANDO {name} (Exceso crítico de RAM)")
-    subprocess.run([
+    result = subprocess.run([
         "docker", "restart",
         name
-    ], capture_output=True)
-    
+    ], capture_output=True, text=True, timeout=30)
+
+    if result.returncode != 0:
+        logger.error(f"restart_container falló para {name}: {result.stderr.strip()}")
+        return
+
     hosting_repo.log_orchestrator_event(name, user_id, "restart", "Uso crítico de memoria. El contenedor se reinició automáticamente para evitar fallos.")
 
 def revert_scaling(name, user_id, original_cpu, original_mem):
     """Devuelve el contenedor a su estado original según plan."""
     logger.info(f"[{datetime.now()}] 🔙 REVIRTIENDO {name} a límites de plan ({original_cpu} CPU)")
     try:
-        subprocess.run([
+        result = subprocess.run([
             "docker", "update",
             f"--cpus={original_cpu}",
             f"--memory={original_mem}m",
             name
-        ], capture_output=True)
-        hosting_repo.log_orchestrator_event(name, user_id, "autoscale_revert", "Pico de tráfico superado. Recursos restaurados a los límites de tu plan.")
+        ], capture_output=True, text=True, timeout=15)
+
+        if result.returncode != 0:
+            logger.error(f"revert_scaling falló para {name}: {result.stderr.strip()}")
+        else:
+            hosting_repo.log_orchestrator_event(name, user_id, "autoscale_revert", "Pico de tráfico superado. Recursos restaurados a los límites de tu plan.")
     except Exception as e:
-        logger.error(f"Error en revert_scaling: {e}")
+        logger.error(f"Error en revert_scaling: {e}", exc_info=True)
+    finally:
+        # Limpiar el timer del registro para evitar acumulación de objetos muertos
+        _active_timers.pop(name, None)
 
 _active_timers: dict = {}
 
@@ -162,10 +188,10 @@ def apply_autoscale(name, user_id, rules):
             f"--cpus={AUTOSCALE_CPU}",
             f"--memory={AUTOSCALE_RAM}",
             name
-        ], capture_output=True)
+        ], capture_output=True, text=True, timeout=15)
         
         if result.returncode != 0:
-            logger.error(f"Autoscale falló para {name}: {result.stderr}")
+            logger.error(f"Autoscale falló para {name}: {result.stderr.strip()}")
             user_repo.update_balance(user_id, cost_abs) # Rollback
             return
             
@@ -188,6 +214,7 @@ def apply_autoscale(name, user_id, rules):
         user_repo.update_balance(user_id, cost_abs)
 
 _hosting_cache: dict = {}
+_user_cache: dict = {}
 CACHE_TTL = 60  # segundos
 
 def _get_hosting_cached(name: str):
@@ -199,12 +226,11 @@ def _get_hosting_cached(name: str):
     return data
 
 def _get_user_cached(user_id: int):
-    cache_key = f"u_{user_id}"
-    entry = _hosting_cache.get(cache_key)
+    entry = _user_cache.get(user_id)
     if entry and time.time() - entry["ts"] < CACHE_TTL:
         return entry["data"]
     data = user_repo.get_user_by_id(user_id)
-    _hosting_cache[cache_key] = {"data": data, "ts": time.time()}
+    _user_cache[user_id] = {"data": data, "ts": time.time()}
     return data
 
 def handle_container(container):

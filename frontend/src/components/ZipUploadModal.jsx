@@ -28,7 +28,10 @@ const ZipUploadModal = ({ isOpen, onClose, hosting }) => {
 
   const pickFile = (f) => {
     if (!f) return;
-    if (!f.name.endsWith('.zip')) {
+    // Validar tanto por extensión como por MIME type para dificultar bypass
+    const validMime = f.type === 'application/zip' || f.type === 'application/x-zip-compressed';
+    const validExt  = f.name.toLowerCase().endsWith('.zip');
+    if (!validExt || !validMime) {
       setResult({ success: false, error: 'Solo se aceptan archivos .zip' });
       return;
     }
@@ -64,10 +67,8 @@ const ZipUploadModal = ({ isOpen, onClose, hosting }) => {
     } catch (err) {
       clearInterval(tick);
       setProgress(0);
-      setResult({
-        success: false,
-        error: err.response?.data?.detail || err.message || 'Error desconocido',
-      });
+      // No exponer detail interno del servidor al usuario
+      setResult({ success: false, error: 'Error al subir el archivo. Inténtalo de nuevo.' });
     } finally {
       setUploading(false);
     }

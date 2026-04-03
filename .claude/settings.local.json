@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__context-mode__ctx_index",
+      "mcp__context-mode__ctx_search",
+      "mcp__context-mode__ctx_stats",
+      "Bash(python3:*)"
+    ]
+  }
+}

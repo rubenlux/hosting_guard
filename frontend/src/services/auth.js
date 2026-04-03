@@ -1,11 +1,7 @@
-export const getToken = () => localStorage.getItem("access_token");
+// Los tokens ya NO se almacenan en localStorage.
+// Las cookies HttpOnly son gestionadas automáticamente por el navegador.
+// Este módulo se mantiene para compatibilidad pero no expone tokens al JS.
 
-export const setToken = (token) => {
-  localStorage.setItem("access_token", token);
-};
-
-export const removeToken = () => {
-  localStorage.removeItem("access_token");
-};
-
-export const isLoggedIn = () => !!getToken();
+// isLoggedIn() ya no es fiable desde el cliente: la cookie HttpOnly
+// es invisible para JS. El estado de autenticación viene de /me via useAuth.
+export const isLoggedIn = () => false; // siempre false; usar useAuth().user en su lugar

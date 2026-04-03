@@ -51,7 +51,7 @@ def init_pixel_db():
         CREATE INDEX IF NOT EXISTS idx_events_created_at ON pixel_events(created_at)
     """)
     conn.commit()
-    conn.close()
+
 
 
 class PixelRepository:
@@ -66,7 +66,7 @@ class PixelRepository:
             (site_id, user_id, name, domain, datetime.utcnow().isoformat())
         )
         conn.commit()
-        conn.close()
+
         return site_id
 
     def get_user_sites(self, user_id: int) -> List[Dict]:
@@ -74,7 +74,7 @@ class PixelRepository:
         rows = conn.execute(
             "SELECT * FROM pixel_sites WHERE user_id = ?", (user_id,)
         ).fetchall()
-        conn.close()
+
         return [dict(r) for r in rows]
 
     def get_site(self, site_id: str) -> Optional[Dict]:
@@ -82,7 +82,7 @@ class PixelRepository:
         row = conn.execute(
             "SELECT * FROM pixel_sites WHERE site_id = ?", (site_id,)
         ).fetchone()
-        conn.close()
+
         return dict(row) if row else None
 
     def save_event(
@@ -116,7 +116,7 @@ class PixelRepository:
             )
         )
         conn.commit()
-        conn.close()
+
         return event_id
 
     def get_stats(self, site_id: str, days: int = 30) -> Dict:
@@ -169,7 +169,7 @@ class PixelRepository:
             (site_id,)
         ).fetchone()[0]
 
-        conn.close()
+
         return {
             "total_events": total,
             "today_events": today,
@@ -191,7 +191,7 @@ class PixelRepository:
                LEFT JOIN pixel_events e ON s.site_id = e.site_id
                GROUP BY s.site_id ORDER BY events DESC LIMIT 20"""
         ).fetchall()
-        conn.close()
+
         return {
             "total_events": total,
             "total_sites": total_sites,
@@ -208,4 +208,4 @@ class PixelRepository:
             "DELETE FROM pixel_events WHERE site_id = ?", (site_id,)
         )
         conn.commit()
-        conn.close()
+

@@ -27,13 +27,14 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
 
       const data = await login(email, password);
 
-      if (data?.access_token) {
-        localStorage.setItem("access_token", data.access_token);
-        loginAction(data.access_token);
+      if (data?.status === "ok") {
+        // El servidor estableció las cookies HttpOnly; solo necesitamos
+        // cargar los datos del usuario desde /me.
+        await loginAction();
         onLoginSuccess();
-        onClose(); // ✅ SOLO si todo sale bien
+        onClose();
       } else {
-        throw new Error("No se recibió token del servidor");
+        throw new Error("Respuesta inesperada del servidor");
       }
     } catch (err) {
       console.error(err);
@@ -45,11 +46,10 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
         errorMessage = "Email o contraseña incorrectos";
       } else if (detail === "Email already exists") {
         errorMessage = "El email ya está registrado";
-      } else if (detail) {
-        errorMessage = detail;
-      } else if (err.message) {
-        errorMessage = err.message;
+      } else if (err.response?.status === 429) {
+        errorMessage = "Demasiados intentos. Espera un momento e inténtalo de nuevo.";
       }
+      // No exponer detalles internos del servidor al usuario final
       
       setError(errorMessage);
     } finally {
