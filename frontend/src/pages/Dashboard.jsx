@@ -210,6 +210,11 @@ const Dashboard = () => {
     }
   };
 
+  // Diagnostic: log every time user state changes so we can see if setUser overwrites role
+  useEffect(() => {
+    console.log('[Dashboard] USER STATE:', user, '| role:', JSON.stringify(user?.role), '| typeof:', typeof user?.role);
+  }, [user]);
+
   // Ref always points to latest hostings so the metrics interval never closes over a stale snapshot
   const hostingsRef = useRef(hostings);
   useEffect(() => { hostingsRef.current = hostings; }, [hostings]);
@@ -237,6 +242,10 @@ const Dashboard = () => {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const uptimeData = Array.from({ length: 40 }, (_, i) => Math.random() > 0.95 ? 'warn' : 'ok');
+
+  if (user?.role === 'admin') {
+    return <AdminDashboard />;
+  }
 
   return (
     <div className={`dashboard-container fixed inset-0 z-50 overflow-hidden ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>

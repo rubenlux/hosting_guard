@@ -18,8 +18,10 @@ const PrivateRoute = ({ children }) => {
 
 const AdminRoute = ({ children }) => {
   const { user, loading } = useAuth();
+  console.log('[AdminRoute] loading:', loading, '| USER STATE:', user);
   if (loading) return null;
   if (!user) return <Navigate to="/" />;
+  console.log('[AdminRoute] role check — user.role:', JSON.stringify(user.role), '| typeof:', typeof user.role);
   if (user.role !== 'admin') return <Navigate to="/dashboard" />;
   return children;
 };

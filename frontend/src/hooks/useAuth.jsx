@@ -4,8 +4,16 @@ import api from '../services/api';
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
+  const [user, _setUser]     = useState(null);
+  const setUser = (val) => {
+    if (typeof val === 'function') {
+      console.log('[useAuth] setUser called with functional update (preserves prev role)');
+    } else {
+      console.log('[useAuth] setUser called → role:', JSON.stringify(val?.role), '| full:', val);
+    }
+    _setUser(val);
+  };
 
   useEffect(() => {
     // Al montar, intentar recuperar la sesión desde el servidor.
@@ -15,7 +23,9 @@ export const AuthProvider = ({ children }) => {
     const initAuth = async () => {
       try {
         const res = await api.get('/me', { _noRefresh: true });
-        setUser(res.data);
+        // Normalizar role a minúsculas para que todas las comparaciones
+        // (=== 'admin') funcionen independientemente de cómo esté en la DB.
+        setUser({ ...res.data, role: res.data.role?.toLowerCase() ?? 'user' });
       } catch {
         setUser(null);
       } finally {
@@ -39,7 +49,7 @@ export const AuthProvider = ({ children }) => {
   const loginAction = async () => {
     try {
       const res = await api.get('/me');
-      setUser(res.data);
+      setUser({ ...res.data, role: res.data.role?.toLowerCase() ?? 'user' });
     } catch {
       setUser(null);
     }
