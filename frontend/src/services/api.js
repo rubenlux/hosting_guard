@@ -158,4 +158,19 @@ export const uploadZip = async (hostingId, file) => {
     return response.data;
 };
 
+export const getAdminUsers = async () => {
+    const response = await api.get('/admin/users');
+    return response.data;
+};
+
+export const getAdminHostings = async () => {
+    const response = await api.get('/admin/hostings');
+    return response.data;
+};
+
+export const getAdminPixelStats = async () => {
+    const response = await api.get('/pixel/admin/stats');
+    return response.data;
+};
+
 export default api;

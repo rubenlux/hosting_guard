@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import {
@@ -35,15 +36,23 @@ import HostingCreationForm from '../components/HostingCreationForm';
 import LogsModal from '../components/LogsModal';
 import ZipUploadModal from '../components/ZipUploadModal';
 import PixelAnalytics from '../components/PixelAnalytics';
+import AdminDashboard from './AdminDashboard';
 import { AlertTriangle, Upload } from "lucide-react"
 
 const Dashboard = () => {
   const { user, logoutAction, setUser } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Determina la vista activa por URL; showCreate sobreescribe localmente
+  const activeView = location.pathname === '/pixel' ? 'pixel'
+                   : location.pathname === '/admin' ? 'admin'
+                   : 'dashboard';
+
   const [hostings, setHostings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
-  const [showAnalytics, setShowAnalytics] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [selectedHosting, setSelectedHosting] = useState(null);
   const [showUpload, setShowUpload] = useState(false);
@@ -251,23 +260,30 @@ const Dashboard = () => {
 
         <nav className="nav-dash">
           <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Principal'}</div>
-          <div className={`nav-item-dash ${!showCreate && !showAnalytics ? 'active' : ''}`} onClick={() => { setShowCreate(false); setShowAnalytics(false); }}>
+          <div className={`nav-item-dash ${activeView === 'dashboard' && !showCreate ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/dashboard'); }}>
             <div className="nav-icon-dash icon-green"><Activity size={18} /></div>
             {!isSidebarCollapsed && <span>Dashboard</span>}
           </div>
-          <div className="nav-item-dash" onClick={() => { setShowCreate(false); setShowAnalytics(false); }}>
+          <div className="nav-item-dash" onClick={() => { setShowCreate(false); navigate('/dashboard'); }}>
             <div className="nav-icon-dash icon-blue"><Globe size={18} /></div>
             {!isSidebarCollapsed && <span>Mis Sitios</span>}
           </div>
-          <div className={`nav-item-dash ${showAnalytics ? 'active' : ''}`} onClick={() => { setShowAnalytics(true); setShowCreate(false); }}>
+          <div className={`nav-item-dash ${activeView === 'pixel' ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/pixel'); }}>
             <div className="nav-icon-dash icon-multi"><BarChart3 size={18} /></div>
-            {!isSidebarCollapsed && <span>Analytics</span>}
+            {!isSidebarCollapsed && <span>Pixel Analytics</span>}
           </div>
           <div className="nav-item-dash">
             <div className="nav-icon-dash icon-ia"><Bot size={18} /></div>
             {!isSidebarCollapsed && <span>IA Advisory</span>}
             {!isSidebarCollapsed && <span className="ml-auto bg-danger/20 text-danger text-[9px] px-1.5 py-0.5 rounded-full">2</span>}
           </div>
+
+          {user?.role === 'admin' && (
+            <div className={`nav-item-dash ${activeView === 'admin' ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/admin'); }}>
+              <div className="nav-icon-dash icon-orange"><ShieldCheck size={18} /></div>
+              {!isSidebarCollapsed && <span>Admin Panel</span>}
+            </div>
+          )}
 
           <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Gestión'}</div>
           <div className="nav-item-dash">
@@ -331,17 +347,29 @@ const Dashboard = () => {
       <main className="main-dash">
         <div className="topbar-dash">
           <div className="text-[15px] font-medium flex-1">
-            {showCreate ? 'Nuevo Proyecto' : showAnalytics ? 'Pixel Analytics' : 'Dashboard Overview'}
+            {showCreate ? 'Nuevo Proyecto'
+              : activeView === 'pixel' ? 'Pixel Analytics'
+              : activeView === 'admin' ? 'Panel de Administración'
+              : 'Dashboard Overview'}
           </div>
           <div className="hidden md:flex items-center gap-2 bg-accent/5 text-accent px-3 py-1.5 rounded-full border border-accent/10 text-xs font-medium">
             <div className="pulse-dash"></div> Servicios Operativos
           </div>
-          <button
-            onClick={() => { setShowCreate(!showCreate); setShowAnalytics(false); }}
-            className="btn-dash btn-ghost-dash"
-          >
-            {showCreate ? 'Volver' : '+ Nuevo sitio'}
-          </button>
+          {activeView !== 'admin' && (
+            <button
+              onClick={() => {
+                if (showCreate) {
+                  setShowCreate(false);
+                } else {
+                  navigate('/dashboard');
+                  setShowCreate(true);
+                }
+              }}
+              className="btn-dash btn-ghost-dash"
+            >
+              {showCreate ? 'Volver' : '+ Nuevo sitio'}
+            </button>
+          )}
           <button className="btn-dash btn-primary-dash">Upgrade</button>
         </div>
 
@@ -350,8 +378,10 @@ const Dashboard = () => {
             <div className="max-w-4xl mx-auto">
               <HostingCreationForm onSuccess={() => { setShowCreate(false); fetchHostings(); }} />
             </div>
-          ) : showAnalytics ? (
+          ) : activeView === 'pixel' ? (
             <PixelAnalytics />
+          ) : activeView === 'admin' ? (
+            <AdminDashboard />
           ) : (
             <>
               {/* EXPIRATION WARNINGS */}

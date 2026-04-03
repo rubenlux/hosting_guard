@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
-import { Plus, Trash2, Copy, CheckCircle, BarChart3, Globe, Users, Clock, Monitor, X } from 'lucide-react';
+import { Plus, Trash2, Copy, CheckCircle, BarChart3, Globe, Users, Clock, Monitor, X, Loader, Activity, Database } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
 export default function PixelAnalytics() {

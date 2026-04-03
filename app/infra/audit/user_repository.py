@@ -1,6 +1,6 @@
 import sqlite3
 from datetime import datetime, timezone
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from app.infra.audit.sqlite import get_connection
 
 class UserRepository:
@@ -67,6 +67,16 @@ class UserRepository:
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET autoscale_enabled = ? WHERE user_id = ?", (1 if enabled else 0, user_id))
         conn.commit()
+
+    def get_all_users(self) -> List[Dict]:
+        conn = get_connection()
+        cursor = conn.cursor()
+        # password_hash excluido deliberadamente — endpoint admin, no exponer hashes
+        cursor.execute(
+            "SELECT user_id, email, role, plan, balance, has_payment_method, autoscale_enabled, created_at "
+            "FROM users ORDER BY created_at DESC"
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     def log_login_attempt(self, email: str, ip: str, success: bool, detail: str = "") -> None:
         conn = get_connection()

@@ -53,6 +53,12 @@ class HostingRepository:
         row = cursor.fetchone()
         return dict(row) if row else None
 
+    def get_all_hostings(self) -> List[Dict]:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM hostings ORDER BY created_at DESC")
+        return [dict(row) for row in cursor.fetchall()]
+
     def log_orchestrator_event(self, container_name: str, user_id: int, event_type: str, message: str):
         conn = get_connection()
         cursor = conn.cursor()

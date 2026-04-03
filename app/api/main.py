@@ -364,6 +364,7 @@ tenant_config_repo = TenantConfigRepository()
 
 from app.core.rag.documents import load_tenant_documents
 from app.api.routes.hosting import router as hosting_router
+from app.api.routes.admin import router as admin_router
 
 # Orquestador con RAG por Tenant y LLM dinámico (env var)
 ai_orchestrator = AIOrchestrator(
@@ -373,8 +374,9 @@ ai_orchestrator = AIOrchestrator(
 # Motor de ejecución
 execution_engine = ExecutionEngine()
 
-# Router hosting
+# Routers
 app.include_router(hosting_router)
+app.include_router(admin_router)
 
 
 @app.post("/decision", response_model=DecisionResponse)
