@@ -17,14 +17,14 @@ class MetricsRepository:
     ) -> None:
         conn = get_connection()
         try:
-            conn.execute(
+            conn.cursor().execute(
                 "INSERT INTO traffic_stats (container_name, collected_at, total_requests, errors_4xx, errors_5xx) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (container_name, datetime.now(timezone.utc).isoformat(), total_requests, errors_4xx, errors_5xx),
             )
             conn.commit()
             # Keep only last 7 days of traffic snapshots per container
-            conn.execute(
+            conn.cursor().execute(
                 "DELETE FROM traffic_stats WHERE container_name = ? AND collected_at < ?",
                 (container_name, (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()),
             )
@@ -36,7 +36,7 @@ class MetricsRepository:
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
         conn = get_connection()
         try:
-            row = conn.execute(
+            row = conn.cursor().execute(
                 "SELECT COALESCE(SUM(total_requests),0), COALESCE(SUM(errors_4xx),0), COALESCE(SUM(errors_5xx),0) "
                 "FROM traffic_stats WHERE container_name = ? AND collected_at >= ?",
                 (container_name, since),
@@ -55,14 +55,14 @@ class MetricsRepository:
     ) -> None:
         conn = get_connection()
         try:
-            conn.execute(
+            conn.cursor().execute(
                 "INSERT INTO uptime_checks (hosting_id, checked_at, is_up, response_ms, status_code) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (hosting_id, datetime.now(timezone.utc).isoformat(), 1 if is_up else 0, response_ms, status_code),
             )
             conn.commit()
             # Keep only last 7 days of uptime checks per hosting
-            conn.execute(
+            conn.cursor().execute(
                 "DELETE FROM uptime_checks WHERE hosting_id = ? AND checked_at < ?",
                 (hosting_id, (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()),
             )
@@ -74,7 +74,7 @@ class MetricsRepository:
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
         conn = get_connection()
         try:
-            row = conn.execute(
+            row = conn.cursor().execute(
                 "SELECT COUNT(*), COALESCE(SUM(is_up), 0) FROM uptime_checks "
                 "WHERE hosting_id = ? AND checked_at >= ?",
                 (hosting_id, since),
@@ -89,7 +89,7 @@ class MetricsRepository:
     def get_recent_uptime_checks(self, hosting_id: int, limit: int = 50) -> List[Dict]:
         conn = get_connection()
         try:
-            rows = conn.execute(
+            rows = conn.cursor().execute(
                 "SELECT checked_at, is_up, response_ms, status_code FROM uptime_checks "
                 "WHERE hosting_id = ? ORDER BY checked_at DESC LIMIT ?",
                 (hosting_id, limit),
@@ -102,7 +102,7 @@ class MetricsRepository:
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
         conn = get_connection()
         try:
-            row = conn.execute(
+            row = conn.cursor().execute(
                 "SELECT AVG(response_ms) FROM uptime_checks "
                 "WHERE hosting_id = ? AND checked_at >= ? AND response_ms IS NOT NULL",
                 (hosting_id, since),
