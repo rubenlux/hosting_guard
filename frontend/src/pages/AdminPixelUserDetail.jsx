@@ -534,259 +534,348 @@ function SiteAnalytics({ siteId, siteEvents }) {
 }
 
 /* ═══════════════════════════════════════════════════════
-   SESSION GROUPING LOGIC
+   SESSION GROUPING + ENRICHMENT
 ═══════════════════════════════════════════════════════ */
-function buildSessions(events) {
-  // Sort oldest→newest for chronological grouping
-  const sorted = [...events].sort((a, b) =>
-    new Date(a.created_at) - new Date(b.created_at)
-  );
+function parseProps(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch { return null; }
+}
 
-  const SESSION_GAP_MS = 30 * 60 * 1000; // 30 min fallback window
+function buildSessions(events) {
+  const sorted = [...events].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  const SESSION_GAP_MS = 30 * 60 * 1000;
   const sessions = [];
-  const sessionMap = {}; // session_id → session index
+  const sessionMap = {};
 
   for (const ev of sorted) {
     const sid = ev.session_id || null;
     const ts  = new Date(ev.created_at).getTime();
 
     if (sid && sessionMap[sid] !== undefined) {
-      // known session_id → append
       sessions[sessionMap[sid]].events.push(ev);
       sessions[sessionMap[sid]].end = ts;
     } else if (sid) {
-      // new session_id
       const idx = sessions.length;
       sessions.push({ id: sid, key: sid, events: [ev], start: ts, end: ts });
       sessionMap[sid] = idx;
     } else {
-      // no session_id → try to attach to last open session by visitor_id or time gap
       const vid = ev.visitor_id;
       let attached = false;
       if (vid) {
         for (let i = sessions.length - 1; i >= 0; i--) {
           const s = sessions[i];
-          const lastEvVid = s.events[s.events.length - 1]?.visitor_id;
-          if (lastEvVid === vid && ts - s.end < SESSION_GAP_MS) {
-            s.events.push(ev);
-            s.end = ts;
-            attached = true;
-            break;
+          if (s.events[s.events.length - 1]?.visitor_id === vid && ts - s.end < SESSION_GAP_MS) {
+            s.events.push(ev); s.end = ts; attached = true; break;
           }
         }
       }
       if (!attached) {
-        // open new anonymous session
         const key = `anon_${ts}_${Math.random().toString(36).slice(2, 6)}`;
         sessions.push({ id: null, key, events: [ev], start: ts, end: ts });
       }
     }
   }
 
-  // Sort newest first and limit to 50
   return sessions
     .sort((a, b) => b.start - a.start)
     .slice(0, 50)
     .map(s => {
-      const durationSecs = Math.round((s.end - s.start) / 1000);
-      const hasErrors    = s.events.some(e => e.event_type === 'fetch_error' || e.event_type === 'js_error');
-      const isShort      = durationSecs < 10 && s.events.filter(e => e.event_type === 'page_view').length <= 1;
-      const diagnosis = hasErrors ? 'errors' : isShort ? 'bounce' : 'normal';
-      return { ...s, durationSecs, hasErrors, diagnosis };
+      const timeline      = [...s.events].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      const durationSecs  = Math.round((s.end - s.start) / 1000);
+      const hasHardErrors = timeline.some(e => e.event_type === 'fetch_error' || e.event_type === 'js_error');
+      const isShort       = durationSecs < 10 && timeline.filter(e => e.event_type === 'page_view').length <= 1;
+
+      // Severity: critical > warning > healthy
+      const severity = hasHardErrors ? 'critical' : isShort ? 'warning' : 'healthy';
+
+      // Page flow: unique ordered URLs from page_view events
+      const pageFlow = timeline
+        .filter(e => e.event_type === 'page_view' && e.url)
+        .map(e => e.url.replace(/^https?:\/\/[^/]+/, '') || '/')
+        .reduce((acc, u) => { if (!acc.length || acc[acc.length - 1] !== u) acc.push(u); return acc; }, []);
+
+      const refEv = timeline.find(e => e.device || e.browser);
+
+      return { ...s, timeline, durationSecs, hasHardErrors, isShort, severity, pageFlow, refEv };
     });
 }
 
-/* ─── session diagnosis label ─── */
-function SessionDiagnosis({ diagnosis, hasErrors }) {
-  if (hasErrors) return (
-    <span className="inline-flex items-center gap-1 text-[14px] font-semibold px-1.5 py-0.5 rounded border bg-red-500/15 text-red-400 border-red-500/20">
-      <XCircle className="w-2 h-2" /> Con errores
-    </span>
-  );
-  if (diagnosis === 'bounce') return (
-    <span className="inline-flex items-center gap-1 text-[14px] font-semibold px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/20">
-      <AlertTriangle className="w-2 h-2" /> Posible rebote
-    </span>
-  );
+/* ─── severity badge ─── */
+function SeverityBadge({ severity }) {
+  const map = {
+    critical: { label: '🔴 Error crítico', cls: 'bg-red-500/15 text-red-400 border-red-500/25' },
+    warning:  { label: '🟡 Posible rebote', cls: 'bg-amber-500/15 text-amber-400 border-amber-500/25' },
+    healthy:  { label: '🟢 Healthy',        cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25' },
+  };
+  const s = map[severity] || map.healthy;
   return (
-    <span className="inline-flex items-center gap-1 text-[14px] font-semibold px-1.5 py-0.5 rounded border bg-emerald-500/15 text-emerald-400 border-emerald-500/20">
-      <CheckCircle2 className="w-2 h-2" /> Normal
+    <span className={`inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded border ${s.cls}`}>
+      {s.label}
     </span>
+  );
+}
+
+/* ─── page flow strip ─── */
+function PageFlow({ pages }) {
+  if (!pages || pages.length === 0) return null;
+  return (
+    <div className="flex items-center gap-1 flex-wrap mt-1.5">
+      {pages.map((p, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && <span className="text-gray-700 text-xs">→</span>}
+          <span className="text-xs font-mono bg-white/5 text-gray-300 px-1.5 py-0.5 rounded truncate max-w-[140px]" title={p}>{p}</span>
+        </React.Fragment>
+      ))}
+    </div>
   );
 }
 
 /* ─── single event in timeline ─── */
-function TimelineEvent({ ev }) {
+function TimelineEvent({ ev, isLast }) {
   const [open, setOpen] = useState(false);
   const isError = ev.event_type === 'fetch_error' || ev.event_type === 'js_error';
+  const isStart = ev.event_type === 'pixel_init';
+  const isEnd   = ev.event_type === 'page_exit';
+  const props   = parseProps(ev.properties);
+  const hasProps = props && Object.keys(props).length > 0;
+  const hasExtra = hasProps || ev.device || ev.browser || ev.os || ev.session_id;
 
-  // parse properties — admin events have them serialized or as object
-  let props = ev.properties;
-  if (typeof props === 'string') {
-    try { props = JSON.parse(props); } catch { props = null; }
-  }
-  const hasProps = props && typeof props === 'object' && Object.keys(props).length > 0;
+  const dotColor =
+    isError        ? 'bg-red-500 border-red-400 w-3 h-3' :
+    isStart        ? 'bg-blue-500 border-blue-400 w-3 h-3' :
+    isEnd          ? 'bg-purple-500 border-purple-400 w-3 h-3' :
+    ev.event_type === 'page_view' ? 'bg-emerald-500 border-emerald-400' :
+    ev.event_type === 'click'     ? 'bg-amber-500 border-amber-400' :
+    ev.event_type === 'heartbeat' ? 'bg-cyan-400/60 border-cyan-500/40' :
+    'bg-gray-700 border-gray-600';
 
   return (
-    <div className={`group border-l-2 pl-3 pb-3 relative ${isError ? 'border-red-500/60' : 'border-white/10'}`}>
-      {/* dot */}
-      <div className={`absolute -left-[5px] top-0.5 w-2 h-2 rounded-full border ${
-        isError ? 'bg-red-500 border-red-400' :
-        ev.event_type === 'pixel_init' ? 'bg-blue-500 border-blue-400' :
-        ev.event_type === 'heartbeat'  ? 'bg-cyan-500 border-cyan-400' :
-        ev.event_type === 'page_view'  ? 'bg-emerald-500 border-emerald-400' :
-        ev.event_type === 'click'      ? 'bg-amber-500 border-amber-400' :
-        'bg-gray-700 border-gray-600'
-      }`} />
+    <div className={`relative pl-6 pb-2.5 ${isLast ? '' : 'border-l-2'} ${
+      isError ? 'border-red-500/40' : 'border-white/8'
+    } ml-1.5`}>
+      {/* timeline dot */}
+      <div className={`absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full border shrink-0 ${dotColor}`} />
+
+      {/* START / END markers */}
+      {isStart && (
+        <div className="text-xs font-bold text-blue-400 mb-1 tracking-wider">▶ SESSION START</div>
+      )}
+      {isEnd && (
+        <div className="text-xs font-bold text-purple-400 mb-1 tracking-wider">■ SESSION END</div>
+      )}
 
       {/* main row */}
       <div
-        className={`flex items-start gap-2 cursor-pointer ${hasProps ? 'hover:opacity-80' : ''}`}
-        onClick={() => hasProps && setOpen(o => !o)}
+        className={`flex items-start gap-2.5 ${hasExtra ? 'cursor-pointer hover:bg-white/3 rounded px-1 -mx-1' : ''}`}
+        onClick={() => hasExtra && setOpen(o => !o)}
       >
-        <span className="text-[14px] text-gray-600 font-mono shrink-0 pt-0.5 w-16">
+        <span className="text-xs text-gray-600 font-mono shrink-0 pt-0.5 w-[72px] tabular-nums">
           {fmtTs(ev.created_at)}
         </span>
         <EventBadge type={ev.event_type} />
         <div className="flex-1 min-w-0">
           {ev.url && (
-            <span className="text-[14px] text-gray-400 font-mono truncate block" title={ev.url}>
+            <span className="text-sm text-gray-300 font-mono truncate block" title={ev.url}>
               {ev.url.replace(/^https?:\/\/[^/]+/, '') || '/'}
             </span>
           )}
-          {/* fetch_error inline detail */}
-          {ev.event_type === 'fetch_error' && props && (
-            <div className="text-[14px] text-red-400 font-mono mt-0.5">
-              {props.failed_event && <span className="mr-2">failed: {props.failed_event}</span>}
-              {props.error && <span>{props.error}</span>}
+          {/* fetch_error — always expanded inline */}
+          {isError && ev.event_type === 'fetch_error' && (
+            <div className="flex gap-2 mt-0.5">
+              {props?.failed_event && (
+                <span className="text-xs text-red-400 font-mono bg-red-500/10 px-1.5 py-0.5 rounded">
+                  failed: {props.failed_event}
+                </span>
+              )}
+              {props?.error && (
+                <span className="text-xs text-red-500 font-mono">{props.error}</span>
+              )}
             </div>
           )}
-          {/* js_error inline detail */}
           {ev.event_type === 'js_error' && props?.message && (
-            <div className="text-[14px] text-orange-400 font-mono truncate mt-0.5" title={props.message}>
-              {props.message}
+            <div className="text-xs text-orange-400 font-mono truncate mt-0.5" title={props.message}>
+              ⚠ {props.message}
             </div>
           )}
-          {/* UTM inline */}
+          {/* click target */}
+          {ev.event_type === 'click' && props?.text && (
+            <span className="text-xs text-amber-400/70 font-mono mt-0.5 block">
+              "{props.text.slice(0, 60)}"
+            </span>
+          )}
+          {/* scroll depth */}
+          {ev.event_type === 'scroll_depth' && props?.depth != null && (
+            <span className="text-xs text-indigo-400 font-mono mt-0.5">depth: {props.depth}%</span>
+          )}
+          {/* time on page */}
+          {ev.event_type === 'page_exit' && props?.time_on_page != null && (
+            <span className="text-xs text-purple-400 font-mono mt-0.5">
+              tiempo: {fmtSecs(props.time_on_page)}
+            </span>
+          )}
+          {/* performance */}
+          {ev.event_type === 'performance' && props && (
+            <span className="text-xs text-teal-400 font-mono mt-0.5">
+              {props.load_time != null && `load: ${props.load_time}ms`}
+              {props.ttfb      != null && ` · ttfb: ${props.ttfb}ms`}
+            </span>
+          )}
+          {/* heartbeat */}
+          {ev.event_type === 'heartbeat' && props?.time_on_page != null && (
+            <span className="text-xs text-cyan-500/60 font-mono mt-0.5">
+              activo: {fmtSecs(props.time_on_page)}
+            </span>
+          )}
+          {/* UTM */}
           {props?.utm && (
-            <div className="text-[14px] text-purple-400 font-mono mt-0.5">
-              utm: {Object.entries(props.utm).map(([k, v]) => `${k.replace('utm_', '')}=${v}`).join(' · ')}
+            <div className="text-xs text-purple-400 font-mono mt-0.5">
+              {Object.entries(props.utm).map(([k, v]) => `${k.replace('utm_','')}=${v}`).join(' · ')}
             </div>
           )}
         </div>
-        {hasProps && (
-          <span className="text-[14px] text-gray-700 shrink-0 pt-0.5">
-            {open ? '▲' : '▼'}
-          </span>
+        {hasExtra && (
+          <span className="text-xs text-gray-700 shrink-0 pt-0.5">{open ? '▲' : '▼'}</span>
         )}
       </div>
 
-      {/* expanded properties */}
-      {open && hasProps && (
-        <div className="mt-1.5 ml-16 bg-[#111] border border-white/5 rounded-lg p-2.5 text-[14px] font-mono">
-          {/* device / browser / OS */}
+      {/* expanded detail */}
+      {open && hasExtra && (
+        <div className="mt-1.5 ml-[88px] bg-[#111] border border-white/5 rounded-lg p-2.5 text-xs font-mono">
           {(ev.device || ev.browser || ev.os) && (
-            <div className="flex gap-3 mb-2 pb-2 border-b border-white/5 text-gray-500">
-              {ev.device  && <span>device: <span className="text-gray-300">{ev.device}</span></span>}
-              {ev.browser && <span>browser: <span className="text-gray-300">{ev.browser}</span></span>}
-              {ev.os      && <span>os: <span className="text-gray-300">{ev.os}</span></span>}
+            <div className="flex gap-3 mb-2 pb-2 border-b border-white/5 text-gray-500 flex-wrap">
+              {ev.device  && <span>device:<span className="text-gray-300 ml-1">{ev.device}</span></span>}
+              {ev.browser && <span>browser:<span className="text-gray-300 ml-1">{ev.browser}</span></span>}
+              {ev.os      && <span>os:<span className="text-gray-300 ml-1">{ev.os}</span></span>}
             </div>
           )}
-          {/* all properties */}
-          <div className="flex flex-col gap-1">
-            {Object.entries(props).map(([k, v]) => (
-              <div key={k} className="flex gap-2">
-                <span className="text-gray-600 w-28 shrink-0">{k}:</span>
-                <span className="text-gray-300 break-all">
-                  {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-                </span>
-              </div>
-            ))}
-          </div>
+          {(ev.session_id || ev.visitor_id) && (
+            <div className="flex gap-3 mb-2 pb-2 border-b border-white/5 text-gray-600 flex-wrap text-[10px]">
+              {ev.session_id && <span>session:<span className="text-gray-500 ml-1">{ev.session_id}</span></span>}
+              {ev.visitor_id && <span>visitor:<span className="text-gray-500 ml-1">{ev.visitor_id}</span></span>}
+            </div>
+          )}
+          {hasProps && (
+            <div className="flex flex-col gap-1">
+              {Object.entries(props).map(([k, v]) => (
+                <div key={k} className="flex gap-2">
+                  <span className="text-gray-600 w-24 shrink-0">{k}:</span>
+                  <span className="text-gray-300 break-all">
+                    {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-/* ─── single session card ─── */
+/* ─── session card ─── */
 function SessionCard({ session }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen]         = useState(false);
   const [evFilter, setEvFilter] = useState('all');
 
-  const pageViews = session.events.filter(e => e.event_type === 'page_view').length;
-  const errors    = session.events.filter(e => e.event_type === 'fetch_error' || e.event_type === 'js_error').length;
+  const { timeline, severity, pageFlow, durationSecs, refEv } = session;
+  const pageViews = timeline.filter(e => e.event_type === 'page_view').length;
+  const errors    = timeline.filter(e => e.event_type === 'fetch_error' || e.event_type === 'js_error').length;
+  const clicks    = timeline.filter(e => e.event_type === 'click').length;
 
-  // timeline: chronological order
-  const timeline = [...session.events].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   const filtered = evFilter === 'all' ? timeline : timeline.filter(e => {
     if (evFilter === 'errors') return e.event_type === 'fetch_error' || e.event_type === 'js_error';
     return e.event_type === evFilter;
   });
 
-  // Device/browser from first event that has them
-  const refEv = timeline.find(e => e.device || e.browser);
+  const shortId = session.id ? session.id.slice(0, 10) : '(anon)';
 
-  const shortId = session.id
-    ? session.id.slice(0, 8) + '…'
-    : '(anon)';
+  const borderCls =
+    severity === 'critical' ? 'border-red-500/30' :
+    severity === 'warning'  ? 'border-amber-500/20' :
+    'border-white/5';
 
   return (
-    <div className={`rounded-lg border overflow-hidden ${
-      session.hasErrors ? 'border-red-500/20' : 'border-white/5'
-    }`}>
-      {/* session header */}
+    <div className={`rounded-xl border overflow-hidden ${borderCls}`}>
+      {/* ── header ── */}
       <div
-        className="px-3 py-2.5 flex items-center gap-3 cursor-pointer hover:bg-white/3 transition-colors bg-[#0f0f0f]"
+        className={`px-4 py-3 flex items-start gap-3 cursor-pointer hover:bg-white/3 transition-colors ${
+          severity === 'critical' ? 'bg-red-500/5' :
+          severity === 'warning'  ? 'bg-amber-500/5' : 'bg-[#0f0f0f]'
+        }`}
         onClick={() => setOpen(o => !o)}
       >
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[14px] font-mono text-gray-400">{shortId}</span>
-            <SessionDiagnosis diagnosis={session.diagnosis} hasErrors={session.hasErrors} />
-          </div>
-          <div className="flex items-center gap-3 mt-0.5 text-[14px] text-gray-600">
-            <span>{fmtDate(new Date(session.start).toISOString())}</span>
+          {/* row 1: id + badge */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-mono text-gray-500">{shortId}</span>
+            <SeverityBadge severity={severity} />
             {refEv && (
-              <span className="capitalize">{[refEv.device, refEv.browser].filter(Boolean).join(' · ')}</span>
+              <span className="text-xs text-gray-600 capitalize">
+                {[refEv.device, refEv.browser, refEv.os].filter(Boolean).join(' · ')}
+              </span>
             )}
           </div>
+          {/* row 2: page flow */}
+          <PageFlow pages={pageFlow} />
+          {/* row 3: date */}
+          <div className="text-xs text-gray-600 font-mono mt-1">
+            {new Date(session.start).toLocaleString('es-AR', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', second:'2-digit' })}
+          </div>
         </div>
-        <div className="flex items-center gap-4 text-[14px] font-mono shrink-0">
-          <span className="text-gray-500">{fmtSecs(session.durationSecs)}</span>
-          <span className="text-gray-400">{session.events.length} ev.</span>
-          <span className="text-gray-600">{pageViews} pv</span>
-          {errors > 0 && <span className="text-red-400">{errors} err</span>}
+
+        {/* right stats */}
+        <div className="flex flex-col items-end gap-1 shrink-0 text-xs font-mono">
+          <span className="text-gray-400 font-semibold">{fmtSecs(durationSecs)}</span>
+          <div className="flex gap-2 text-gray-600">
+            <span>{timeline.length} ev</span>
+            <span>{pageViews} pv</span>
+            {clicks > 0 && <span>{clicks} clk</span>}
+            {errors > 0 && <span className="text-red-400 font-bold">{errors} err ❌</span>}
+          </div>
         </div>
-        <span className="text-gray-600 text-[14px]">{open ? '▲' : '▼'}</span>
+
+        <span className="text-gray-600 text-sm shrink-0 mt-1">{open ? '▲' : '▼'}</span>
       </div>
 
-      {/* session timeline */}
+      {/* ── timeline ── */}
       {open && (
-        <div className="border-t border-white/5 bg-[#0a0a0a] px-3 pt-3 pb-2">
+        <div className="border-t border-white/5 bg-[#090909] px-4 pt-3 pb-3">
           {/* filter pills */}
-          <div className="flex gap-1.5 mb-3 flex-wrap">
-            {['all', 'errors', 'page_view', 'click'].map(f => (
+          <div className="flex gap-2 mb-3 flex-wrap">
+            {[
+              { id: 'all',      label: `Todo (${timeline.length})` },
+              { id: 'errors',   label: `Errores (${errors})`, cls: errors > 0 ? 'text-red-400 border-red-500/30' : '' },
+              { id: 'page_view',label: `Pages (${pageViews})` },
+              { id: 'click',    label: `Clicks (${clicks})` },
+            ].map(f => (
               <button
-                key={f}
-                onClick={e => { e.stopPropagation(); setEvFilter(f); }}
-                className={`px-2 py-0.5 rounded text-[14px] font-mono border transition-all ${
-                  evFilter === f
+                key={f.id}
+                onClick={e => { e.stopPropagation(); setEvFilter(f.id); }}
+                className={`px-2.5 py-0.5 rounded text-xs font-mono border transition-all ${
+                  evFilter === f.id
                     ? 'bg-white/10 text-white border-white/20'
-                    : 'bg-transparent text-gray-600 border-white/5 hover:text-gray-400'
+                    : `bg-transparent border-white/5 hover:text-white text-gray-600 ${f.cls || ''}`
                 }`}
               >
-                {f === 'errors' ? `solo errores (${errors})` : f}
+                {f.label}
               </button>
             ))}
           </div>
 
-          {/* timeline list */}
+          {/* events */}
           {filtered.length === 0 ? (
-            <div className="text-[14px] text-gray-700 italic py-2">Sin eventos con este filtro.</div>
+            <div className="text-xs text-gray-700 italic py-2">Sin eventos con este filtro.</div>
           ) : (
-            <div className="pl-1">
-              {filtered.map((ev, i) => <TimelineEvent key={ev.event_id || i} ev={ev} />)}
+            <div className="mt-1">
+              {filtered.map((ev, i) => (
+                <TimelineEvent
+                  key={ev.event_id || i}
+                  ev={ev}
+                  isFirst={i === 0}
+                  isLast={i === filtered.length - 1}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -797,23 +886,46 @@ function SessionCard({ session }) {
 
 /* ─── session replay panel ─── */
 function SessionReplay({ siteEvents }) {
-  const [sessionFilter, setSessionFilter] = useState('all');
+  const [severityFilter, setSeverityFilter] = useState('all');
+  const [search, setSearch]                 = useState('');
 
   const sessions = useMemo(() => buildSessions(siteEvents), [siteEvents]);
 
+  const counts = useMemo(() => ({
+    critical: sessions.filter(s => s.severity === 'critical').length,
+    warning:  sessions.filter(s => s.severity === 'warning').length,
+    healthy:  sessions.filter(s => s.severity === 'healthy').length,
+    active:   sessions.filter(s => (Date.now() - s.end) < 3600000).length,
+  }), [sessions]);
+
   const displayed = useMemo(() => {
-    if (sessionFilter === 'all')    return sessions;
-    if (sessionFilter === 'errors') return sessions.filter(s => s.hasErrors);
-    if (sessionFilter === 'active') return sessions.filter(s => {
-      const age = (Date.now() - s.end) / 1000;
-      return age < 3600; // active = last event < 1h ago
-    });
-    return sessions;
-  }, [sessions, sessionFilter]);
+    let list = sessions;
+
+    // severity filter
+    if (severityFilter !== 'all') {
+      if (severityFilter === 'active') list = list.filter(s => (Date.now() - s.end) < 3600000);
+      else list = list.filter(s => s.severity === severityFilter);
+    }
+
+    // search: by URL in page flow, by event type, by error content
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter(s =>
+        s.pageFlow.some(p => p.toLowerCase().includes(q)) ||
+        s.timeline.some(e =>
+          e.event_type?.includes(q) ||
+          (e.url || '').toLowerCase().includes(q) ||
+          JSON.stringify(parseProps(e.properties) || {}).toLowerCase().includes(q)
+        )
+      );
+    }
+
+    return list;
+  }, [sessions, severityFilter, search]);
 
   if (siteEvents.length === 0) {
     return (
-      <div className="text-[14px] text-gray-600 italic py-3">
+      <div className="text-sm text-gray-600 italic py-4">
         Sin eventos en la muestra para reconstruir sesiones.
       </div>
     );
@@ -821,25 +933,28 @@ function SessionReplay({ siteEvents }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-2">
-        <SectionTitle>User Sessions — Session Replay Light</SectionTitle>
-        <span className="text-[14px] text-gray-700 font-mono">{sessions.length} sesiones · máx 50</span>
+      {/* header */}
+      <div className="flex items-center justify-between mb-3">
+        <SectionTitle>User Sessions — Session Replay</SectionTitle>
+        <span className="text-xs text-gray-600 font-mono">{sessions.length} sesiones · máx 50</span>
       </div>
 
-      {/* global filters */}
-      <div className="flex gap-1.5 mb-3">
+      {/* severity filter tabs */}
+      <div className="flex gap-2 mb-3 flex-wrap">
         {[
-          { id: 'all',    label: `Todas (${sessions.length})` },
-          { id: 'errors', label: `Con errores (${sessions.filter(s => s.hasErrors).length})` },
-          { id: 'active', label: 'Activas (<1h)' },
+          { id: 'all',      label: `Todas (${sessions.length})`,    cls: '' },
+          { id: 'critical', label: `🔴 Críticas (${counts.critical})`, cls: counts.critical > 0 ? 'text-red-400 border-red-500/30' : '' },
+          { id: 'warning',  label: `🟡 Rebotes (${counts.warning})`,   cls: '' },
+          { id: 'healthy',  label: `🟢 Healthy (${counts.healthy})`,   cls: '' },
+          { id: 'active',   label: `⚡ Activas (${counts.active})`,    cls: '' },
         ].map(f => (
           <button
             key={f.id}
-            onClick={() => setSessionFilter(f.id)}
-            className={`px-2.5 py-1 rounded text-[14px] font-mono border transition-all ${
-              sessionFilter === f.id
+            onClick={() => setSeverityFilter(f.id)}
+            className={`px-3 py-1 rounded-lg text-xs font-mono border transition-all ${
+              severityFilter === f.id
                 ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/20'
-                : 'bg-white/5 text-gray-600 border-white/5 hover:text-white'
+                : `bg-white/5 border-white/5 hover:text-white text-gray-500 ${f.cls}`
             }`}
           >
             {f.label}
@@ -847,11 +962,27 @@ function SessionReplay({ siteEvents }) {
         ))}
       </div>
 
+      {/* search */}
+      <div className="mb-4">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Buscar por URL, evento, error… (ej: /pricing, fetch_error, NetworkError)"
+          className="w-full bg-[#0d0d0d] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-700 font-mono focus:outline-none focus:border-white/20 transition-colors"
+        />
+        {search && (
+          <div className="text-xs text-gray-600 mt-1 font-mono">
+            {displayed.length} sesión(es) coinciden con "{search}"
+          </div>
+        )}
+      </div>
+
       {/* session list */}
       {displayed.length === 0 ? (
-        <div className="text-[14px] text-gray-600 italic py-3">Sin sesiones con este filtro.</div>
+        <div className="text-sm text-gray-600 italic py-3">Sin sesiones con este filtro.</div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           {displayed.map(s => <SessionCard key={s.key} session={s} />)}
         </div>
       )}
