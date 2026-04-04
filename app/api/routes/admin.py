@@ -48,14 +48,17 @@ async def get_all_hostings_metrics(_: dict = Depends(require_role("admin"))):
     How: single `docker stats --no-stream` call → O(1) vs N per-container calls.
     """
     # --- 1. One docker stats call for all containers ---
-    result = await _run_docker(
-        "docker", "stats", "--no-stream",
-        "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}",
-        timeout=15,
-    )
-
     docker_stats = {}
-    if result.returncode == 0:
+    try:
+        result = await _run_docker(
+            "docker", "stats", "--no-stream",
+            "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}",
+            timeout=15,
+        )
+    except Exception:
+        result = None
+
+    if result is not None and result.returncode == 0:
         for line in result.stdout.strip().splitlines():
             if "|" not in line:
                 continue
@@ -110,22 +113,23 @@ def get_user_full(user_id: int, _: dict = Depends(require_role("admin"))):
     # AI advisory events keyed by tenant_id (= user email in this system)
     tenant_id = profile["email"]
     conn = get_connection()
+    cur = conn.cursor()
     decision_events = [
-        dict(r) for r in conn.execute(
+        dict(r) for r in cur.execute(
             "SELECT event_id, timestamp, overall_status, confidence_level, requires_human_attention "
             "FROM decision_events WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 20",
             (tenant_id,)
         ).fetchall()
     ]
     execution_events = [
-        dict(r) for r in conn.execute(
+        dict(r) for r in cur.execute(
             "SELECT execution_id, timestamp, action_type, status "
             "FROM execution_events WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 20",
             (tenant_id,)
         ).fetchall()
     ]
     human_events = [
-        dict(r) for r in conn.execute(
+        dict(r) for r in cur.execute(
             "SELECT action_event_id, timestamp, action_type, actor, reason "
             "FROM human_action_events WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 20",
             (tenant_id,)
