@@ -163,3 +163,38 @@ def pixel_overview(_: dict = Depends(require_role("admin"))):
 @router.get("/pixel/events")
 def pixel_events(limit: int = 100, offset: int = 0, _: dict = Depends(require_role("admin"))):
     return _pixel_repo.get_all_events_admin(limit=limit, offset=offset)
+
+
+@router.get("/orchestrator/events")
+def get_orchestrator_events(limit: int = 200, _: dict = Depends(require_role("admin"))):
+    """Eventos globales del orquestador (throttle, autoscale, restart) de todos los usuarios."""
+    conn = get_connection()
+    rows = conn.cursor().execute(
+        "SELECT oe.event_id, oe.container_name, oe.user_id, oe.event_type, oe.message, oe.created_at, "
+        "u.email FROM orchestrator_events oe "
+        "LEFT JOIN users u ON oe.user_id = u.user_id "
+        "ORDER BY oe.created_at DESC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/finance/summary")
+def get_finance_summary(_: dict = Depends(require_role("admin"))):
+    """Resumen financiero: saldos, distribución de planes."""
+    users = _user_repo.get_all_users()
+    total_balance = sum(u.get("balance", 0) or 0 for u in users)
+    plans = {}
+    for u in users:
+        p = u.get("plan", "free") or "free"
+        plans[p] = plans.get(p, 0) + 1
+    return {
+        "total_balance": round(total_balance, 2),
+        "users_with_balance": sum(1 for u in users if (u.get("balance") or 0) > 0),
+        "users_with_payment": sum(1 for u in users if u.get("has_payment_method")),
+        "plan_distribution": [{"plan": k, "count": v} for k, v in sorted(plans.items())],
+        "top_balances": sorted(
+            [{"email": u["email"], "balance": u.get("balance") or 0, "plan": u.get("plan","free")} for u in users],
+            key=lambda x: x["balance"], reverse=True
+        )[:10],
+    }

@@ -193,4 +193,14 @@ export const getAdminPixelEvents = async (limit = 100, offset = 0) => {
     return response.data;
 };
 
+export const getAdminOrchestratorEvents = async (limit = 200) => {
+    const response = await api.get(`/admin/orchestrator/events?limit=${limit}`);
+    return response.data;
+};
+
+export const getAdminFinanceSummary = async () => {
+    const response = await api.get('/admin/finance/summary');
+    return response.data;
+};
+
 export default api;
