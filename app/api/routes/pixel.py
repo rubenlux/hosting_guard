@@ -7,7 +7,12 @@ from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import Response
 
 _SITE_ID_RE = re.compile(r'^[a-f0-9\-]{8,36}$')
-from pydantic import BaseModel
+# event_type: solo lowercase letras, números y guión bajo, máx 50 chars
+# Permite todos los eventos actuales (page_view, click, page_exit) y los nuevos
+_EVENT_TYPE_RE = re.compile(r'^[a-z][a-z0-9_]{0,49}$')
+
+from pydantic import BaseModel, field_validator
+from app.api.rate_limit import limiter
 from app.api.security import verify_token, require_role
 from app.infra.audit.pixel_repository import PixelRepository
 
@@ -19,22 +24,28 @@ def _parse_user_agent(ua: str) -> dict:
     if not ua:
         return {"device": "unknown", "browser": "unknown", "os": "unknown"}
     ua_lower = ua.lower()
+
     device = "desktop"
     if any(x in ua_lower for x in ["mobile", "android", "iphone"]):
         device = "mobile"
     elif "tablet" in ua_lower or "ipad" in ua_lower:
         device = "tablet"
+
+    # Edge debe ir antes de Chrome porque Edge UA contiene "chrome"
     browser = "other"
-    for b in ["chrome", "firefox", "safari", "edge", "opera"]:
-        if b in ua_lower:
+    for b, k in [("edge", "edg"), ("chrome", "chrome"), ("firefox", "firefox"),
+                  ("safari", "safari"), ("opera", "opr")]:
+        if k in ua_lower:
             browser = b
             break
+
     os_name = "other"
     for o, k in [("windows", "windows"), ("macos", "mac os"), ("linux", "linux"),
                   ("android", "android"), ("ios", "iphone")]:
         if k in ua_lower:
             os_name = o
             break
+
     return {"device": device, "browser": browser, "os": os_name}
 
 
@@ -42,53 +53,117 @@ def _parse_user_agent(ua: str) -> dict:
 @router.get("/pixel.js")
 async def pixel_script(id: str, request: Request):
     """Sirve el script de tracking."""
-    # Validar id antes de interpolarlo en JS: solo UUIDs / hex con guiones
     if not _SITE_ID_RE.match(id):
         raise HTTPException(status_code=400, detail="Invalid site id")
-    # json.dumps produce un string JS literal correctamente escapado (sin riesgo de injection)
-    safe_id = json.dumps(id)
-    script = f"""
-(function() {{
-  var HG_SITE_ID = {safe_id};
-  var HG_API = 'https://api.hostingguard.lat';
-  var session = sessionStorage.getItem('hg_sid') || Math.random().toString(36).substr(2);
-  sessionStorage.setItem('hg_sid', session);
 
-  function track(event, props) {{
-    var data = {{
-      site_id: HG_SITE_ID,
-      event_type: event,
-      url: window.location.href,
-      referrer: document.referrer,
-      user_agent: navigator.userAgent,
-      session_id: session,
-      properties: props || {{}}
-    }};
-    fetch(HG_API + '/pixel/event', {{
-      method: 'POST',
-      headers: {{'Content-Type': 'application/json'}},
-      body: JSON.stringify(data),
-      keepalive: true
-    }}).catch(function() {{}});
+    safe_id = json.dumps(id)
+    script = f"""(function(){{
+  var S={safe_id},A='https://api.hostingguard.lat',T=Date.now();
+
+  // visitor_id: persiste entre sesiones (localStorage)
+  var vid=localStorage.getItem('hg_vid');
+  if(!vid){{vid=Date.now().toString(36)+Math.random().toString(36).substr(2)+Math.random().toString(36).substr(2);localStorage.setItem('hg_vid',vid);}}
+
+  // session_id: por tab/sesión (sessionStorage)
+  var sid=sessionStorage.getItem('hg_sid');
+  if(!sid){{sid=Math.random().toString(36).substr(2);sessionStorage.setItem('hg_sid',sid);}}
+
+  function _beacon(ev,props){{
+    try{{
+      var d=JSON.stringify({{site_id:S,event_type:ev,url:window.location.href,
+        referrer:document.referrer,user_agent:navigator.userAgent,
+        session_id:sid,visitor_id:vid,properties:props||{{}}}});
+      if(navigator.sendBeacon){{
+        navigator.sendBeacon(A+'/pixel/event',new Blob([d],{{type:'application/json'}}));
+      }}
+    }}catch(e){{}}
   }}
 
-  track('page_view');
+  function send(ev,props){{
+    try{{
+      fetch(A+'/pixel/event',{{
+        method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body:JSON.stringify({{site_id:S,event_type:ev,url:window.location.href,
+          referrer:document.referrer,user_agent:navigator.userAgent,
+          session_id:sid,visitor_id:vid,properties:props||{{}}}}),
+        keepalive:true
+      }}).catch(function(err){{
+        if(ev!=='fetch_error')_beacon('fetch_error',{{failed_event:ev,error:(err&&err.name)||'NetworkError'}});
+      }});
+    }}catch(e){{}}
+  }}
 
-  document.addEventListener('click', function(e) {{
-    var el = e.target.closest('a, button, [data-track]');
-    if (el) track('click', {{ element: el.tagName, text: el.innerText?.substr(0,150) }});
+  // pixel_init: primer evento — confirma que el script se cargó y ejecutó
+  // sv=script version; usa sendBeacon para máxima fiabilidad en carga
+  _beacon('pixel_init',{{sv:2}});
+
+  // UTM: captura de URL o recupera de sessionStorage (persiste en la sesión)
+  function _utms(){{
+    try{{
+      var p=new URLSearchParams(window.location.search),u={{}};
+      ['utm_source','utm_medium','utm_campaign'].forEach(function(k){{var v=p.get(k);if(v)u[k]=v;}});
+      if(Object.keys(u).length){{
+        sessionStorage.setItem('hg_utm',JSON.stringify(u));
+        return u;
+      }}
+      var stored=sessionStorage.getItem('hg_utm');
+      return stored?JSON.parse(stored):null;
+    }}catch(e){{return null;}}
+  }}
+
+  // page_view — incluye UTMs si existen
+  var _pvp={{}},_utm=_utms();
+  if(_utm)_pvp.utm=_utm;
+  send('page_view',_pvp);
+
+  // performance: métricas de carga reales (Navigation Timing API)
+  window.addEventListener('load',function(){{
+    setTimeout(function(){{
+      var t=window.performance&&window.performance.timing;
+      if(t&&t.loadEventEnd>0){{
+        send('performance',{{
+          load_time:t.loadEventEnd-t.navigationStart,
+          dom_ready:t.domContentLoadedEventEnd-t.navigationStart,
+          ttfb:t.responseStart-t.navigationStart
+        }});
+      }}
+    }},0);
   }});
 
-  window.addEventListener('beforeunload', function() {{
-    track('page_exit', {{ time_on_page: Math.round(performance.now() / 1000) }});
+  // click tracking
+  document.addEventListener('click',function(e){{
+    var el=e.target&&e.target.closest?e.target.closest('a,button,[data-track]'):null;
+    if(el)send('click',{{element:el.tagName,text:(el.innerText||'').substr(0,100)}});
   }});
 
-  window.hgTrack = track;
-}})();
-"""
+  // scroll depth: reporta en umbrales 50%, 75%, 90%
+  var marks={{}};
+  document.addEventListener('scroll',function(){{
+    var d=document.documentElement,pct=Math.round((d.scrollTop+window.innerHeight)/d.scrollHeight*100);
+    [50,75,90].forEach(function(m){{if(pct>=m&&!marks[m]){{marks[m]=1;send('scroll_depth',{{depth:m}});}}}});
+  }},{{passive:true}});
+
+  // JS error capture
+  window.addEventListener('error',function(e){{
+    send('js_error',{{message:(e.message||'').substr(0,200),source:(e.filename||'').substr(0,200),line:e.lineno||0}});
+  }});
+
+  // page_exit: visibilitychange + pagehide (más fiable que beforeunload en móvil)
+  var done=0;
+  function exit(){{if(!done){{done=1;send('page_exit',{{time_on_page:Math.round((Date.now()-T)/1000)}});}}}}
+  document.addEventListener('visibilitychange',function(){{if(document.visibilityState==='hidden')exit();}});
+  window.addEventListener('pagehide',exit);
+
+  // heartbeat: cada 60s si el tab está activo (tiempo real en página)
+  setInterval(function(){{if(!document.hidden)send('heartbeat',{{time_on_page:Math.round((Date.now()-T)/1000)}});}},60000);
+
+  // API pública para tracking manual
+  window.hgTrack=send;
+}})();"""
 
     return Response(
-        content=script.strip(),
+        content=script,
         media_type="application/javascript",
         headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache"}
     )
@@ -102,10 +177,43 @@ class PixelEventRequest(BaseModel):
     referrer: Optional[str] = None
     user_agent: Optional[str] = None
     session_id: Optional[str] = None
+    visitor_id: Optional[str] = None
     properties: Optional[dict] = {}
+
+    @field_validator("event_type")
+    @classmethod
+    def validate_event_type(cls, v: str) -> str:
+        if not _EVENT_TYPE_RE.match(v):
+            raise ValueError("event_type inválido — solo lowercase, números y guión bajo, máx 50 chars")
+        return v
+
+    @field_validator("site_id")
+    @classmethod
+    def validate_site_id(cls, v: str) -> str:
+        if not _SITE_ID_RE.match(v):
+            raise ValueError("site_id inválido")
+        return v
+
+    @field_validator("properties")
+    @classmethod
+    def validate_properties(cls, v: dict) -> dict:
+        if not v:
+            return {}
+        # Max 30 keys — silently drop excess
+        keys = list(v.keys())[:30]
+        result = {}
+        for k in keys:
+            val = v[k]
+            # Truncate string values to 500 chars
+            if isinstance(val, str):
+                result[k] = val[:500]
+            else:
+                result[k] = val
+        return result
 
 
 @router.post("/pixel/event")
+@limiter.limit("120/minute")
 async def receive_event(data: PixelEventRequest, request: Request):
     site = pixel_repo.get_site(data.site_id)
     if not site:
@@ -127,6 +235,7 @@ async def receive_event(data: PixelEventRequest, request: Request):
         os=ua_info["os"],
         properties=data.properties,
         session_id=data.session_id,
+        visitor_id=data.visitor_id,
     )
     return Response(status_code=204)
 
@@ -157,13 +266,13 @@ async def list_sites(user: dict = Depends(verify_token)):
 
 
 @router.get("/pixel/sites/{site_id}/stats")
-async def get_stats(site_id: str, user: dict = Depends(verify_token)):
+async def get_stats(site_id: str, days: int = 30, user: dict = Depends(verify_token)):
     site = pixel_repo.get_site(site_id)
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
     if site["user_id"] != user["user_id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Forbidden")
-    return pixel_repo.get_stats(site_id)
+    return pixel_repo.get_stats(site_id, days=days)
 
 
 @router.delete("/pixel/sites/{site_id}")
@@ -177,6 +286,34 @@ async def delete_site(site_id: str, user: dict = Depends(verify_token)):
     return {"status": "deleted"}
 
 
+@router.get("/pixel/sites/{site_id}/health")
+async def get_site_health(site_id: str, user: dict = Depends(verify_token)):
+    """last_seen_at + total eventos. Para soporte: confirmar si el pixel está activo."""
+    site = pixel_repo.get_site(site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if site["user_id"] != user["user_id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    rows = pixel_repo.get_site_health(site["user_id"])
+    match = next((r for r in rows if r["site_id"] == site_id), None)
+    return match or {"site_id": site_id, "last_seen_at": None, "total_events": 0}
+
+
 @router.get("/pixel/admin/stats")
 async def admin_stats(user: dict = Depends(require_role("admin"))):
     return pixel_repo.get_all_stats_admin()
+
+
+@router.get("/pixel/admin/health")
+async def admin_health(user: dict = Depends(require_role("admin"))):
+    """Admin: todos los sites con last_seen_at. Detecta pixels muertos."""
+    return pixel_repo.get_all_sites_health()
+
+
+@router.post("/pixel/admin/cleanup")
+async def admin_cleanup(days: int = 90, user: dict = Depends(require_role("admin"))):
+    """Elimina eventos más viejos que `days` días. Usar con precaución."""
+    if days < 7:
+        raise HTTPException(status_code=400, detail="Mínimo 7 días de retención")
+    deleted = pixel_repo.cleanup_old_events(days=days)
+    return {"deleted": deleted, "retained_days": days}
