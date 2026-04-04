@@ -450,6 +450,332 @@ function SiteAnalytics({ siteId, siteEvents }) {
 }
 
 /* ═══════════════════════════════════════════════════════
+   SESSION GROUPING LOGIC
+═══════════════════════════════════════════════════════ */
+function buildSessions(events) {
+  // Sort oldest→newest for chronological grouping
+  const sorted = [...events].sort((a, b) =>
+    new Date(a.created_at) - new Date(b.created_at)
+  );
+
+  const SESSION_GAP_MS = 30 * 60 * 1000; // 30 min fallback window
+  const sessions = [];
+  const sessionMap = {}; // session_id → session index
+
+  for (const ev of sorted) {
+    const sid = ev.session_id || null;
+    const ts  = new Date(ev.created_at).getTime();
+
+    if (sid && sessionMap[sid] !== undefined) {
+      // known session_id → append
+      sessions[sessionMap[sid]].events.push(ev);
+      sessions[sessionMap[sid]].end = ts;
+    } else if (sid) {
+      // new session_id
+      const idx = sessions.length;
+      sessions.push({ id: sid, key: sid, events: [ev], start: ts, end: ts });
+      sessionMap[sid] = idx;
+    } else {
+      // no session_id → try to attach to last open session by visitor_id or time gap
+      const vid = ev.visitor_id;
+      let attached = false;
+      if (vid) {
+        for (let i = sessions.length - 1; i >= 0; i--) {
+          const s = sessions[i];
+          const lastEvVid = s.events[s.events.length - 1]?.visitor_id;
+          if (lastEvVid === vid && ts - s.end < SESSION_GAP_MS) {
+            s.events.push(ev);
+            s.end = ts;
+            attached = true;
+            break;
+          }
+        }
+      }
+      if (!attached) {
+        // open new anonymous session
+        const key = `anon_${ts}_${Math.random().toString(36).slice(2, 6)}`;
+        sessions.push({ id: null, key, events: [ev], start: ts, end: ts });
+      }
+    }
+  }
+
+  // Sort newest first and limit to 50
+  return sessions
+    .sort((a, b) => b.start - a.start)
+    .slice(0, 50)
+    .map(s => {
+      const durationSecs = Math.round((s.end - s.start) / 1000);
+      const hasErrors    = s.events.some(e => e.event_type === 'fetch_error' || e.event_type === 'js_error');
+      const isShort      = durationSecs < 10 && s.events.filter(e => e.event_type === 'page_view').length <= 1;
+      const diagnosis = hasErrors ? 'errors' : isShort ? 'bounce' : 'normal';
+      return { ...s, durationSecs, hasErrors, diagnosis };
+    });
+}
+
+/* ─── session diagnosis label ─── */
+function SessionDiagnosis({ diagnosis, hasErrors }) {
+  if (hasErrors) return (
+    <span className="inline-flex items-center gap-1 text-[8px] font-semibold px-1.5 py-0.5 rounded border bg-red-500/15 text-red-400 border-red-500/20">
+      <XCircle className="w-2 h-2" /> Con errores
+    </span>
+  );
+  if (diagnosis === 'bounce') return (
+    <span className="inline-flex items-center gap-1 text-[8px] font-semibold px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/20">
+      <AlertTriangle className="w-2 h-2" /> Posible rebote
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center gap-1 text-[8px] font-semibold px-1.5 py-0.5 rounded border bg-emerald-500/15 text-emerald-400 border-emerald-500/20">
+      <CheckCircle2 className="w-2 h-2" /> Normal
+    </span>
+  );
+}
+
+/* ─── single event in timeline ─── */
+function TimelineEvent({ ev }) {
+  const [open, setOpen] = useState(false);
+  const isError = ev.event_type === 'fetch_error' || ev.event_type === 'js_error';
+
+  // parse properties — admin events have them serialized or as object
+  let props = ev.properties;
+  if (typeof props === 'string') {
+    try { props = JSON.parse(props); } catch { props = null; }
+  }
+  const hasProps = props && typeof props === 'object' && Object.keys(props).length > 0;
+
+  return (
+    <div className={`group border-l-2 pl-3 pb-3 relative ${isError ? 'border-red-500/60' : 'border-white/10'}`}>
+      {/* dot */}
+      <div className={`absolute -left-[5px] top-0.5 w-2 h-2 rounded-full border ${
+        isError ? 'bg-red-500 border-red-400' :
+        ev.event_type === 'pixel_init' ? 'bg-blue-500 border-blue-400' :
+        ev.event_type === 'heartbeat'  ? 'bg-cyan-500 border-cyan-400' :
+        ev.event_type === 'page_view'  ? 'bg-emerald-500 border-emerald-400' :
+        ev.event_type === 'click'      ? 'bg-amber-500 border-amber-400' :
+        'bg-gray-700 border-gray-600'
+      }`} />
+
+      {/* main row */}
+      <div
+        className={`flex items-start gap-2 cursor-pointer ${hasProps ? 'hover:opacity-80' : ''}`}
+        onClick={() => hasProps && setOpen(o => !o)}
+      >
+        <span className="text-[8px] text-gray-600 font-mono shrink-0 pt-0.5 w-16">
+          {fmtTs(ev.created_at)}
+        </span>
+        <EventBadge type={ev.event_type} />
+        <div className="flex-1 min-w-0">
+          {ev.url && (
+            <span className="text-[9px] text-gray-400 font-mono truncate block" title={ev.url}>
+              {ev.url.replace(/^https?:\/\/[^/]+/, '') || '/'}
+            </span>
+          )}
+          {/* fetch_error inline detail */}
+          {ev.event_type === 'fetch_error' && props && (
+            <div className="text-[9px] text-red-400 font-mono mt-0.5">
+              {props.failed_event && <span className="mr-2">failed: {props.failed_event}</span>}
+              {props.error && <span>{props.error}</span>}
+            </div>
+          )}
+          {/* js_error inline detail */}
+          {ev.event_type === 'js_error' && props?.message && (
+            <div className="text-[9px] text-orange-400 font-mono truncate mt-0.5" title={props.message}>
+              {props.message}
+            </div>
+          )}
+          {/* UTM inline */}
+          {props?.utm && (
+            <div className="text-[8px] text-purple-400 font-mono mt-0.5">
+              utm: {Object.entries(props.utm).map(([k, v]) => `${k.replace('utm_', '')}=${v}`).join(' · ')}
+            </div>
+          )}
+        </div>
+        {hasProps && (
+          <span className="text-[7px] text-gray-700 shrink-0 pt-0.5">
+            {open ? '▲' : '▼'}
+          </span>
+        )}
+      </div>
+
+      {/* expanded properties */}
+      {open && hasProps && (
+        <div className="mt-1.5 ml-16 bg-[#111] border border-white/5 rounded-lg p-2.5 text-[8px] font-mono">
+          {/* device / browser / OS */}
+          {(ev.device || ev.browser || ev.os) && (
+            <div className="flex gap-3 mb-2 pb-2 border-b border-white/5 text-gray-500">
+              {ev.device  && <span>device: <span className="text-gray-300">{ev.device}</span></span>}
+              {ev.browser && <span>browser: <span className="text-gray-300">{ev.browser}</span></span>}
+              {ev.os      && <span>os: <span className="text-gray-300">{ev.os}</span></span>}
+            </div>
+          )}
+          {/* all properties */}
+          <div className="flex flex-col gap-1">
+            {Object.entries(props).map(([k, v]) => (
+              <div key={k} className="flex gap-2">
+                <span className="text-gray-600 w-28 shrink-0">{k}:</span>
+                <span className="text-gray-300 break-all">
+                  {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── single session card ─── */
+function SessionCard({ session }) {
+  const [open, setOpen] = useState(false);
+  const [evFilter, setEvFilter] = useState('all');
+
+  const pageViews = session.events.filter(e => e.event_type === 'page_view').length;
+  const errors    = session.events.filter(e => e.event_type === 'fetch_error' || e.event_type === 'js_error').length;
+
+  // timeline: chronological order
+  const timeline = [...session.events].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  const filtered = evFilter === 'all' ? timeline : timeline.filter(e => {
+    if (evFilter === 'errors') return e.event_type === 'fetch_error' || e.event_type === 'js_error';
+    return e.event_type === evFilter;
+  });
+
+  // Device/browser from first event that has them
+  const refEv = timeline.find(e => e.device || e.browser);
+
+  const shortId = session.id
+    ? session.id.slice(0, 8) + '…'
+    : '(anon)';
+
+  return (
+    <div className={`rounded-lg border overflow-hidden ${
+      session.hasErrors ? 'border-red-500/20' : 'border-white/5'
+    }`}>
+      {/* session header */}
+      <div
+        className="px-3 py-2.5 flex items-center gap-3 cursor-pointer hover:bg-white/3 transition-colors bg-[#0f0f0f]"
+        onClick={() => setOpen(o => !o)}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-mono text-gray-400">{shortId}</span>
+            <SessionDiagnosis diagnosis={session.diagnosis} hasErrors={session.hasErrors} />
+          </div>
+          <div className="flex items-center gap-3 mt-0.5 text-[8px] text-gray-600">
+            <span>{fmtDate(new Date(session.start).toISOString())}</span>
+            {refEv && (
+              <span className="capitalize">{[refEv.device, refEv.browser].filter(Boolean).join(' · ')}</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-4 text-[9px] font-mono shrink-0">
+          <span className="text-gray-500">{fmtSecs(session.durationSecs)}</span>
+          <span className="text-gray-400">{session.events.length} ev.</span>
+          <span className="text-gray-600">{pageViews} pv</span>
+          {errors > 0 && <span className="text-red-400">{errors} err</span>}
+        </div>
+        <span className="text-gray-600 text-[9px]">{open ? '▲' : '▼'}</span>
+      </div>
+
+      {/* session timeline */}
+      {open && (
+        <div className="border-t border-white/5 bg-[#0a0a0a] px-3 pt-3 pb-2">
+          {/* filter pills */}
+          <div className="flex gap-1.5 mb-3 flex-wrap">
+            {['all', 'errors', 'page_view', 'click'].map(f => (
+              <button
+                key={f}
+                onClick={e => { e.stopPropagation(); setEvFilter(f); }}
+                className={`px-2 py-0.5 rounded text-[7px] font-mono border transition-all ${
+                  evFilter === f
+                    ? 'bg-white/10 text-white border-white/20'
+                    : 'bg-transparent text-gray-600 border-white/5 hover:text-gray-400'
+                }`}
+              >
+                {f === 'errors' ? `solo errores (${errors})` : f}
+              </button>
+            ))}
+          </div>
+
+          {/* timeline list */}
+          {filtered.length === 0 ? (
+            <div className="text-[9px] text-gray-700 italic py-2">Sin eventos con este filtro.</div>
+          ) : (
+            <div className="pl-1">
+              {filtered.map((ev, i) => <TimelineEvent key={ev.event_id || i} ev={ev} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── session replay panel ─── */
+function SessionReplay({ siteEvents }) {
+  const [sessionFilter, setSessionFilter] = useState('all');
+
+  const sessions = useMemo(() => buildSessions(siteEvents), [siteEvents]);
+
+  const displayed = useMemo(() => {
+    if (sessionFilter === 'all')    return sessions;
+    if (sessionFilter === 'errors') return sessions.filter(s => s.hasErrors);
+    if (sessionFilter === 'active') return sessions.filter(s => {
+      const age = (Date.now() - s.end) / 1000;
+      return age < 3600; // active = last event < 1h ago
+    });
+    return sessions;
+  }, [sessions, sessionFilter]);
+
+  if (siteEvents.length === 0) {
+    return (
+      <div className="text-[10px] text-gray-600 italic py-3">
+        Sin eventos en la muestra para reconstruir sesiones.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <SectionTitle>User Sessions — Session Replay Light</SectionTitle>
+        <span className="text-[8px] text-gray-700 font-mono">{sessions.length} sesiones · máx 50</span>
+      </div>
+
+      {/* global filters */}
+      <div className="flex gap-1.5 mb-3">
+        {[
+          { id: 'all',    label: `Todas (${sessions.length})` },
+          { id: 'errors', label: `Con errores (${sessions.filter(s => s.hasErrors).length})` },
+          { id: 'active', label: 'Activas (<1h)' },
+        ].map(f => (
+          <button
+            key={f.id}
+            onClick={() => setSessionFilter(f.id)}
+            className={`px-2.5 py-1 rounded text-[8px] font-mono border transition-all ${
+              sessionFilter === f.id
+                ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/20'
+                : 'bg-white/5 text-gray-600 border-white/5 hover:text-white'
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* session list */}
+      {displayed.length === 0 ? (
+        <div className="text-[9px] text-gray-600 italic py-3">Sin sesiones con este filtro.</div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {displayed.map(s => <SessionCard key={s.key} session={s} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
    SITE PANEL (expandable)
 ═══════════════════════════════════════════════════════ */
 function SitePanel({ site, allEvents }) {
@@ -511,6 +837,11 @@ function SitePanel({ site, allEvents }) {
           {/* 3. Event Stream */}
           <div className="mt-4 pt-4 border-t border-white/5">
             <EventStream siteEvents={siteEvents} />
+          </div>
+
+          {/* 4. Session Replay */}
+          <div className="mt-4 pt-4 border-t border-white/5">
+            <SessionReplay siteEvents={siteEvents} />
           </div>
 
         </div>
