@@ -379,7 +379,9 @@ class PixelRepository:
         conn = _get_connection()
         rows = conn.execute(
             """SELECT e.event_id, e.site_id, e.user_id, e.event_type, e.url,
-                      e.device, e.browser, e.country, e.created_at, s.name as site_name
+                      e.referrer, e.device, e.browser, e.os, e.country,
+                      e.session_id, e.visitor_id, e.properties, e.created_at,
+                      s.name as site_name
                FROM pixel_events e
                LEFT JOIN pixel_sites s ON e.site_id = s.site_id
                ORDER BY e.created_at DESC LIMIT ? OFFSET ?""",

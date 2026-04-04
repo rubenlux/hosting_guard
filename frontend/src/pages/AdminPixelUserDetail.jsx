@@ -180,9 +180,17 @@ function HealthBlock({ site, siteEvents }) {
           <div className={`text-[15px] font-bold font-mono ${fetchErrors.length > 0 ? 'text-red-400' : 'text-gray-600'}`}>
             {fetchErrors.length}
           </div>
-          {fetchErrors.length > 0 && (
-            <div className="text-[8px] text-gray-600 mt-0.5">último: {timeAgo(fetchErrors[0]?.created_at)}</div>
-          )}
+          {fetchErrors.length > 0 && (() => {
+            let p = fetchErrors[0]?.properties;
+            if (typeof p === 'string') { try { p = JSON.parse(p); } catch { p = null; } }
+            return (
+              <div className="mt-1 flex flex-col gap-0.5">
+                <div className="text-[8px] text-gray-600">{fmtTs(fetchErrors[0]?.created_at)}</div>
+                {p?.failed_event && <div className="text-[8px] text-red-400 font-mono">→ {p.failed_event}</div>}
+                {p?.error        && <div className="text-[8px] text-red-500 font-mono">{p.error}</div>}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -243,41 +251,117 @@ function EventStream({ siteEvents }) {
         ))}
       </div>
 
-      {/* Event list */}
+      {/* Event list — each row expandable */}
       {displayed.length === 0 ? (
         <div className="py-4 text-center text-[10px] text-gray-600 italic">
           Sin eventos de tipo "{filter}" en la muestra.
         </div>
       ) : (
-        <div className="flex flex-col divide-y divide-white/5 rounded-lg border border-white/5 overflow-hidden max-h-72 overflow-y-auto">
-          {displayed.map((e, i) => (
-            <div
-              key={e.event_id || i}
-              className={`flex items-start gap-3 px-3 py-2 text-[10px] hover:bg-white/3 transition-colors ${
-                e.event_type === 'fetch_error' ? 'bg-red-500/3' :
-                e.event_type === 'pixel_init'  ? 'bg-blue-500/3' :
-                e.event_type === 'heartbeat'   ? 'bg-cyan-500/3' : ''
-              }`}
-            >
-              <EventBadge type={e.event_type} />
-              <div className="flex-1 min-w-0">
-                {e.url && (
-                  <span className="text-gray-500 truncate block" title={e.url}>
-                    {e.url.replace(/^https?:\/\/[^/]+/, '') || '/'}
-                  </span>
-                )}
-              </div>
-              <div className="text-[8px] text-gray-600 font-mono shrink-0">
-                {fmtTs(e.created_at)}
-              </div>
-            </div>
-          ))}
+        <div className="rounded-lg border border-white/5 overflow-hidden max-h-96 overflow-y-auto">
+          {displayed.map((e, i) => <StreamEvent key={e.event_id || i} ev={e} />)}
         </div>
       )}
 
       <div className="text-[8px] text-gray-700 mt-1.5 text-right font-mono">
-        Mostrando {displayed.length} de {siteEvents.filter(e => filter === 'all' || e.event_type === filter).length} eventos en muestra
+        {displayed.length} de {siteEvents.filter(e => filter === 'all' || e.event_type === filter).length} eventos
       </div>
+    </div>
+  );
+}
+
+/* ─── expandable event row for EventStream ─── */
+function StreamEvent({ ev }) {
+  const [open, setOpen] = useState(false);
+  const isError = ev.event_type === 'fetch_error' || ev.event_type === 'js_error';
+
+  let props = ev.properties;
+  if (typeof props === 'string') { try { props = JSON.parse(props); } catch { props = null; } }
+  const hasProps = props && typeof props === 'object' && Object.keys(props).length > 0;
+  const hasExtra = hasProps || ev.device || ev.browser || ev.os || ev.session_id;
+
+  return (
+    <div className={`border-b border-white/5 last:border-0 ${
+      isError ? 'bg-red-500/4' :
+      ev.event_type === 'pixel_init' ? 'bg-blue-500/3' :
+      ev.event_type === 'heartbeat'  ? 'bg-cyan-500/3' : ''
+    }`}>
+      <div
+        className={`flex items-start gap-3 px-3 py-2 text-[10px] transition-colors ${hasExtra ? 'cursor-pointer hover:bg-white/3' : ''}`}
+        onClick={() => hasExtra && setOpen(o => !o)}
+      >
+        {/* timestamp exact */}
+        <span className="text-[8px] text-gray-600 font-mono shrink-0 pt-0.5 w-16">
+          {fmtTs(ev.created_at)}
+        </span>
+        <EventBadge type={ev.event_type} />
+        <div className="flex-1 min-w-0">
+          {ev.url && (
+            <span className="text-gray-400 truncate block font-mono text-[9px]" title={ev.url}>
+              {ev.url.replace(/^https?:\/\/[^/]+/, '') || '/'}
+            </span>
+          )}
+          {/* fetch_error: inline detail always visible */}
+          {ev.event_type === 'fetch_error' && (
+            <div className="text-[9px] text-red-400 font-mono mt-0.5 flex gap-2">
+              {props?.failed_event && <span>→ {props.failed_event}</span>}
+              {props?.error        && <span className="text-red-500">{props.error}</span>}
+            </div>
+          )}
+          {ev.event_type === 'js_error' && props?.message && (
+            <div className="text-[9px] text-orange-400 font-mono truncate mt-0.5" title={props.message}>
+              {props.message}
+            </div>
+          )}
+          {props?.utm && (
+            <div className="text-[8px] text-purple-400 font-mono mt-0.5">
+              {Object.entries(props.utm).map(([k, v]) => `${k.replace('utm_', '')}=${v}`).join(' · ')}
+            </div>
+          )}
+        </div>
+        {/* session short id */}
+        {ev.session_id && (
+          <span className="text-[7px] text-gray-700 font-mono shrink-0 hidden group-hover:inline">
+            {ev.session_id.slice(0, 6)}
+          </span>
+        )}
+        {hasExtra && (
+          <span className="text-[7px] text-gray-700 shrink-0">{open ? '▲' : '▼'}</span>
+        )}
+      </div>
+
+      {/* expanded detail */}
+      {open && hasExtra && (
+        <div className="mx-3 mb-2 bg-[#111] border border-white/5 rounded-lg p-2.5 text-[8px] font-mono">
+          {/* tech info */}
+          {(ev.device || ev.browser || ev.os) && (
+            <div className="flex gap-3 mb-2 pb-2 border-b border-white/5 text-gray-500 flex-wrap">
+              {ev.device  && <span>device:<span className="text-gray-300 ml-1">{ev.device}</span></span>}
+              {ev.browser && <span>browser:<span className="text-gray-300 ml-1">{ev.browser}</span></span>}
+              {ev.os      && <span>os:<span className="text-gray-300 ml-1">{ev.os}</span></span>}
+            </div>
+          )}
+          {/* session + visitor */}
+          {(ev.session_id || ev.visitor_id) && (
+            <div className="flex gap-3 mb-2 pb-2 border-b border-white/5 text-gray-600 flex-wrap">
+              {ev.session_id  && <span>session:<span className="text-gray-400 ml-1">{ev.session_id}</span></span>}
+              {ev.visitor_id  && <span>visitor:<span className="text-gray-400 ml-1">{ev.visitor_id}</span></span>}
+            </div>
+          )}
+          {/* properties */}
+          {hasProps && (
+            <div className="flex flex-col gap-1">
+              {Object.entries(props).map(([k, v]) => (
+                <div key={k} className="flex gap-2">
+                  <span className="text-gray-600 w-24 shrink-0">{k}:</span>
+                  <span className="text-gray-300 break-all">
+                    {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
