@@ -18,8 +18,11 @@ class UserRepository:
             user_id = cursor.lastrowid
             conn.commit()
             return user_id
-        except sqlite3.IntegrityError:
-            raise ValueError("Email already exists")
+        except Exception as e:
+            conn.rollback()
+            if isinstance(e, sqlite3.IntegrityError) or "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                raise ValueError("Email already exists")
+            raise
 
     def get_user_by_email(self, email: str) -> Optional[Dict]:
         conn = get_connection()

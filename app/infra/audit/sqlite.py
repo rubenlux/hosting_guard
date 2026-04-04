@@ -315,17 +315,21 @@ def _init_sqlite_audit():
 def _init_postgresql_audit():
     conn = get_pg_connection()
     cursor = conn.cursor()
+    try:
+        for statement in _SCHEMA_AUDIT_PG.strip().split(";"):
+            sql = statement.strip()
+            if sql:
+                cursor.execute(sql)
 
-    for statement in _SCHEMA_AUDIT_PG.strip().split(";"):
-        sql = statement.strip()
-        if sql:
+        for sql in _MIGRATIONS_PG:
             cursor.execute(sql)
 
-    for sql in _MIGRATIONS_PG:
-        cursor.execute(sql)
+        for sql in _INDEXES:
+            cursor.execute(sql)
 
-    for sql in _INDEXES:
-        cursor.execute(sql)
-
-    conn.commit()
-    reset_pg_connection()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        reset_pg_connection()
