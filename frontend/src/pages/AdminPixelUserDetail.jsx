@@ -90,7 +90,7 @@ function StatusBadge({ status }) {
   };
   const s = map[status] || map.dead;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[9px] font-semibold uppercase ${s.cls}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[14px] font-semibold uppercase ${s.cls}`}>
       {s.icon}{s.label}
     </span>
   );
@@ -112,7 +112,7 @@ const EVENT_STYLE = {
 function EventBadge({ type }) {
   const cls = EVENT_STYLE[type] || 'bg-white/5 text-gray-400 border border-white/10';
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-mono font-semibold ${cls}`}>
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono font-semibold ${cls}`}>
       {type}
     </span>
   );
@@ -121,16 +121,16 @@ function EventBadge({ type }) {
 function MiniStat({ label, val, color, sub }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <div className="text-[9px] text-gray-600 uppercase tracking-wider">{label}</div>
+      <div className="text-[14px] text-gray-600 uppercase tracking-wider">{label}</div>
       <div className="text-sm font-bold font-mono" style={{ color: color || '#fff' }}>{val ?? '—'}</div>
-      {sub && <div className="text-[8px] text-gray-600 font-mono">{sub}</div>}
+      {sub && <div className="text-[14px] text-gray-600 font-mono">{sub}</div>}
     </div>
   );
 }
 
 function SectionTitle({ children }) {
   return (
-    <div className="text-[9px] uppercase tracking-wider text-gray-600 font-semibold mb-2">{children}</div>
+    <div className="text-xs uppercase tracking-wider text-gray-500 font-semibold mb-3">{children}</div>
   );
 }
 
@@ -138,11 +138,11 @@ function SimpleBar({ label, value, max, color }) {
   const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
   return (
     <div className="flex items-center gap-2">
-      <div className="w-20 text-[9px] text-gray-500 truncate capitalize">{label}</div>
+      <div className="w-20 text-[14px] text-gray-500 truncate capitalize">{label}</div>
       <div className="flex-1 h-3 bg-white/5 rounded overflow-hidden">
         <div className="h-full rounded transition-all" style={{ width: `${pct}%`, background: color || '#00ff88' }} />
       </div>
-      <div className="w-8 text-[9px] font-mono text-gray-400 text-right">{value}</div>
+      <div className="w-8 text-[14px] font-mono text-gray-400 text-right">{value}</div>
     </div>
   );
 }
@@ -168,8 +168,8 @@ function HealthBlock({ site, siteEvents }) {
         </div>
         <div className="bg-[#0d0d0d] rounded-lg border border-white/5 p-3">
           <SectionTitle>Último evento</SectionTitle>
-          <div className="text-[11px] font-mono text-white">{timeAgo(site.last_seen_at)}</div>
-          <div className="text-[8px] text-gray-600 mt-0.5">{fmtDate(site.last_seen_at)}</div>
+          <div className="text-[14px] font-mono text-white">{timeAgo(site.last_seen_at)}</div>
+          <div className="text-[14px] text-gray-600 mt-0.5">{fmtDate(site.last_seen_at)}</div>
         </div>
         <div className="bg-[#0d0d0d] rounded-lg border border-white/5 p-3">
           <SectionTitle>Eventos (10 min)</SectionTitle>
@@ -185,9 +185,9 @@ function HealthBlock({ site, siteEvents }) {
             if (typeof p === 'string') { try { p = JSON.parse(p); } catch { p = null; } }
             return (
               <div className="mt-1 flex flex-col gap-0.5">
-                <div className="text-[8px] text-gray-600">{fmtTs(fetchErrors[0]?.created_at)}</div>
-                {p?.failed_event && <div className="text-[8px] text-red-400 font-mono">→ {p.failed_event}</div>}
-                {p?.error        && <div className="text-[8px] text-red-500 font-mono">{p.error}</div>}
+                <div className="text-[14px] text-gray-600">{fmtTs(fetchErrors[0]?.created_at)}</div>
+                {p?.failed_event && <div className="text-[14px] text-red-400 font-mono">→ {p.failed_event}</div>}
+                {p?.error        && <div className="text-[14px] text-red-500 font-mono">{p.error}</div>}
               </div>
             );
           })()}
@@ -195,11 +195,11 @@ function HealthBlock({ site, siteEvents }) {
       </div>
 
       {/* Diagnostic banner */}
-      <div className={`flex items-start gap-2.5 p-3 rounded-lg border text-[11px] ${diagnostic.cls}`}>
+      <div className={`flex items-start gap-2.5 p-3 rounded-lg border text-[14px] ${diagnostic.cls}`}>
         <div className="shrink-0 mt-0.5">{diagnostic.icon}</div>
         <div>
           <div className="font-semibold">{diagnostic.text}</div>
-          <div className="opacity-70 text-[10px] mt-0.5">{diagnostic.detail}</div>
+          <div className="opacity-70 text-[14px] mt-0.5">{diagnostic.detail}</div>
         </div>
       </div>
     </div>
@@ -225,7 +225,7 @@ function EventStream({ siteEvents }) {
       <div className="flex items-center justify-between mb-2">
         <SectionTitle>Event Stream — Technical Debug</SectionTitle>
         {errorCount > 0 && (
-          <div className="flex items-center gap-1.5 text-[9px] text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded">
+          <div className="flex items-center gap-1.5 text-[14px] text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded">
             <AlertCircle className="w-2.5 h-2.5" />
             {errorCount} fetch_error · último {timeAgo(lastError?.created_at)}
           </div>
@@ -238,7 +238,7 @@ function EventStream({ siteEvents }) {
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`px-2 py-0.5 rounded text-[8px] font-mono transition-all border ${
+            className={`px-2 py-0.5 rounded text-[14px] font-mono transition-all border ${
               filter === f
                 ? (EVENT_STYLE[f] || 'bg-[#00ff88]/15 text-[#00ff88] border-[#00ff88]/20')
                 : 'bg-white/5 text-gray-600 border-white/5 hover:text-white'
@@ -253,16 +253,16 @@ function EventStream({ siteEvents }) {
 
       {/* Event list — each row expandable */}
       {displayed.length === 0 ? (
-        <div className="py-4 text-center text-[10px] text-gray-600 italic">
+        <div className="py-4 text-center text-[14px] text-gray-600 italic">
           Sin eventos de tipo "{filter}" en la muestra.
         </div>
       ) : (
-        <div className="rounded-lg border border-white/5 overflow-hidden max-h-96 overflow-y-auto">
+        <div className="rounded-lg border border-white/5 overflow-hidden">
           {displayed.map((e, i) => <StreamEvent key={e.event_id || i} ev={e} />)}
         </div>
       )}
 
-      <div className="text-[8px] text-gray-700 mt-1.5 text-right font-mono">
+      <div className="text-[14px] text-gray-700 mt-1.5 text-right font-mono">
         {displayed.length} de {siteEvents.filter(e => filter === 'all' || e.event_type === filter).length} eventos
       </div>
     </div>
@@ -286,52 +286,52 @@ function StreamEvent({ ev }) {
       ev.event_type === 'heartbeat'  ? 'bg-cyan-500/3' : ''
     }`}>
       <div
-        className={`flex items-start gap-3 px-3 py-2 text-[10px] transition-colors ${hasExtra ? 'cursor-pointer hover:bg-white/3' : ''}`}
+        className={`flex items-start gap-3 px-3 py-2 text-[14px] transition-colors ${hasExtra ? 'cursor-pointer hover:bg-white/3' : ''}`}
         onClick={() => hasExtra && setOpen(o => !o)}
       >
         {/* timestamp exact */}
-        <span className="text-[8px] text-gray-600 font-mono shrink-0 pt-0.5 w-16">
+        <span className="text-[14px] text-gray-600 font-mono shrink-0 pt-0.5 w-16">
           {fmtTs(ev.created_at)}
         </span>
         <EventBadge type={ev.event_type} />
         <div className="flex-1 min-w-0">
           {ev.url && (
-            <span className="text-gray-400 truncate block font-mono text-[9px]" title={ev.url}>
+            <span className="text-gray-400 truncate block font-mono text-[14px]" title={ev.url}>
               {ev.url.replace(/^https?:\/\/[^/]+/, '') || '/'}
             </span>
           )}
           {/* fetch_error: inline detail always visible */}
           {ev.event_type === 'fetch_error' && (
-            <div className="text-[9px] text-red-400 font-mono mt-0.5 flex gap-2">
+            <div className="text-[14px] text-red-400 font-mono mt-0.5 flex gap-2">
               {props?.failed_event && <span>→ {props.failed_event}</span>}
               {props?.error        && <span className="text-red-500">{props.error}</span>}
             </div>
           )}
           {ev.event_type === 'js_error' && props?.message && (
-            <div className="text-[9px] text-orange-400 font-mono truncate mt-0.5" title={props.message}>
+            <div className="text-[14px] text-orange-400 font-mono truncate mt-0.5" title={props.message}>
               {props.message}
             </div>
           )}
           {props?.utm && (
-            <div className="text-[8px] text-purple-400 font-mono mt-0.5">
+            <div className="text-[14px] text-purple-400 font-mono mt-0.5">
               {Object.entries(props.utm).map(([k, v]) => `${k.replace('utm_', '')}=${v}`).join(' · ')}
             </div>
           )}
         </div>
         {/* session short id */}
         {ev.session_id && (
-          <span className="text-[7px] text-gray-700 font-mono shrink-0 hidden group-hover:inline">
+          <span className="text-[14px] text-gray-700 font-mono shrink-0 hidden group-hover:inline">
             {ev.session_id.slice(0, 6)}
           </span>
         )}
         {hasExtra && (
-          <span className="text-[7px] text-gray-700 shrink-0">{open ? '▲' : '▼'}</span>
+          <span className="text-[14px] text-gray-700 shrink-0">{open ? '▲' : '▼'}</span>
         )}
       </div>
 
       {/* expanded detail */}
       {open && hasExtra && (
-        <div className="mx-3 mb-2 bg-[#111] border border-white/5 rounded-lg p-2.5 text-[8px] font-mono">
+        <div className="mx-3 mb-2 bg-[#111] border border-white/5 rounded-lg p-2.5 text-[14px] font-mono">
           {/* tech info */}
           {(ev.device || ev.browser || ev.os) && (
             <div className="flex gap-3 mb-2 pb-2 border-b border-white/5 text-gray-500 flex-wrap">
@@ -388,7 +388,7 @@ function SiteAnalytics({ siteId, siteEvents }) {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 py-3 text-[10px] text-gray-500">
+      <div className="flex items-center gap-2 py-3 text-[14px] text-gray-500">
         <RefreshCw className="w-3 h-3 animate-spin" /> Cargando analytics…
       </div>
     );
@@ -418,7 +418,7 @@ function SiteAnalytics({ siteId, siteEvents }) {
               <SectionTitle>Top páginas</SectionTitle>
               <div className="flex flex-col gap-1">
                 {stats.top_pages.slice(0, 6).map((p, i) => (
-                  <div key={i} className="flex justify-between text-[10px]">
+                  <div key={i} className="flex justify-between text-[14px]">
                     <span className="text-gray-400 truncate w-44 font-mono" title={p.url}>
                       {p.url?.replace(/^https?:\/\/[^/]+/, '') || '/'}
                     </span>
@@ -433,7 +433,7 @@ function SiteAnalytics({ siteId, siteEvents }) {
               <SectionTitle>Fuentes de tráfico</SectionTitle>
               <div className="flex flex-col gap-1">
                 {stats.top_referrers.slice(0, 6).map((r, i) => (
-                  <div key={i} className="flex justify-between text-[10px]">
+                  <div key={i} className="flex justify-between text-[14px]">
                     <span className="text-gray-400 truncate w-44">{r.referrer || 'Directo'}</span>
                     <span className="font-mono text-white ml-2">{r.count}</span>
                   </div>
@@ -449,7 +449,7 @@ function SiteAnalytics({ siteId, siteEvents }) {
         <div>
           <SectionTitle>Dispositivos (eventos)</SectionTitle>
           {Object.keys(deviceCounts).length === 0 ? (
-            <div className="text-[9px] text-gray-600 italic">Sin datos</div>
+            <div className="text-[14px] text-gray-600 italic">Sin datos</div>
           ) : (
             <div className="flex flex-col gap-1.5">
               {Object.entries(deviceCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => (
@@ -461,7 +461,7 @@ function SiteAnalytics({ siteId, siteEvents }) {
         <div>
           <SectionTitle>Navegadores (eventos)</SectionTitle>
           {Object.keys(browserCounts).length === 0 ? (
-            <div className="text-[9px] text-gray-600 italic">Sin datos</div>
+            <div className="text-[14px] text-gray-600 italic">Sin datos</div>
           ) : (
             <div className="flex flex-col gap-1.5">
               {Object.entries(browserCounts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => (
@@ -473,7 +473,7 @@ function SiteAnalytics({ siteId, siteEvents }) {
         <div>
           <SectionTitle>SO (stats 30d)</SectionTitle>
           {!stats?.by_os?.length ? (
-            <div className="text-[9px] text-gray-600 italic">Sin datos</div>
+            <div className="text-[14px] text-gray-600 italic">Sin datos</div>
           ) : (
             <div className="flex flex-col gap-1.5">
               {stats.by_os.slice(0, 5).map((o, i) => (
@@ -493,7 +493,7 @@ function SiteAnalytics({ siteId, siteEvents }) {
             {stats.by_event_type.map((et, i) => (
               <div key={i} className="flex items-center justify-between bg-[#0d0d0d] rounded px-2.5 py-1.5 border border-white/5">
                 <EventBadge type={et.event_type} />
-                <span className="font-mono text-[11px] text-white">{et.count}</span>
+                <span className="font-mono text-[14px] text-white">{et.count}</span>
               </div>
             ))}
           </div>
@@ -506,7 +506,7 @@ function SiteAnalytics({ siteId, siteEvents }) {
           <SectionTitle>JS Errors detectados</SectionTitle>
           <div className="flex flex-col gap-1">
             {stats.js_errors.map((e, i) => (
-              <div key={i} className="flex justify-between items-start text-[9px] bg-orange-500/5 border border-orange-500/10 rounded px-2 py-1.5">
+              <div key={i} className="flex justify-between items-start text-[14px] bg-orange-500/5 border border-orange-500/10 rounded px-2 py-1.5">
                 <span className="text-orange-400 font-mono truncate flex-1 mr-2" title={e.message}>{e.message || '(sin mensaje)'}</span>
                 <span className="text-gray-500 font-mono shrink-0">{e.count}×</span>
               </div>
@@ -599,17 +599,17 @@ function buildSessions(events) {
 /* ─── session diagnosis label ─── */
 function SessionDiagnosis({ diagnosis, hasErrors }) {
   if (hasErrors) return (
-    <span className="inline-flex items-center gap-1 text-[8px] font-semibold px-1.5 py-0.5 rounded border bg-red-500/15 text-red-400 border-red-500/20">
+    <span className="inline-flex items-center gap-1 text-[14px] font-semibold px-1.5 py-0.5 rounded border bg-red-500/15 text-red-400 border-red-500/20">
       <XCircle className="w-2 h-2" /> Con errores
     </span>
   );
   if (diagnosis === 'bounce') return (
-    <span className="inline-flex items-center gap-1 text-[8px] font-semibold px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/20">
+    <span className="inline-flex items-center gap-1 text-[14px] font-semibold px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/20">
       <AlertTriangle className="w-2 h-2" /> Posible rebote
     </span>
   );
   return (
-    <span className="inline-flex items-center gap-1 text-[8px] font-semibold px-1.5 py-0.5 rounded border bg-emerald-500/15 text-emerald-400 border-emerald-500/20">
+    <span className="inline-flex items-center gap-1 text-[14px] font-semibold px-1.5 py-0.5 rounded border bg-emerald-500/15 text-emerald-400 border-emerald-500/20">
       <CheckCircle2 className="w-2 h-2" /> Normal
     </span>
   );
@@ -644,38 +644,38 @@ function TimelineEvent({ ev }) {
         className={`flex items-start gap-2 cursor-pointer ${hasProps ? 'hover:opacity-80' : ''}`}
         onClick={() => hasProps && setOpen(o => !o)}
       >
-        <span className="text-[8px] text-gray-600 font-mono shrink-0 pt-0.5 w-16">
+        <span className="text-[14px] text-gray-600 font-mono shrink-0 pt-0.5 w-16">
           {fmtTs(ev.created_at)}
         </span>
         <EventBadge type={ev.event_type} />
         <div className="flex-1 min-w-0">
           {ev.url && (
-            <span className="text-[9px] text-gray-400 font-mono truncate block" title={ev.url}>
+            <span className="text-[14px] text-gray-400 font-mono truncate block" title={ev.url}>
               {ev.url.replace(/^https?:\/\/[^/]+/, '') || '/'}
             </span>
           )}
           {/* fetch_error inline detail */}
           {ev.event_type === 'fetch_error' && props && (
-            <div className="text-[9px] text-red-400 font-mono mt-0.5">
+            <div className="text-[14px] text-red-400 font-mono mt-0.5">
               {props.failed_event && <span className="mr-2">failed: {props.failed_event}</span>}
               {props.error && <span>{props.error}</span>}
             </div>
           )}
           {/* js_error inline detail */}
           {ev.event_type === 'js_error' && props?.message && (
-            <div className="text-[9px] text-orange-400 font-mono truncate mt-0.5" title={props.message}>
+            <div className="text-[14px] text-orange-400 font-mono truncate mt-0.5" title={props.message}>
               {props.message}
             </div>
           )}
           {/* UTM inline */}
           {props?.utm && (
-            <div className="text-[8px] text-purple-400 font-mono mt-0.5">
+            <div className="text-[14px] text-purple-400 font-mono mt-0.5">
               utm: {Object.entries(props.utm).map(([k, v]) => `${k.replace('utm_', '')}=${v}`).join(' · ')}
             </div>
           )}
         </div>
         {hasProps && (
-          <span className="text-[7px] text-gray-700 shrink-0 pt-0.5">
+          <span className="text-[14px] text-gray-700 shrink-0 pt-0.5">
             {open ? '▲' : '▼'}
           </span>
         )}
@@ -683,7 +683,7 @@ function TimelineEvent({ ev }) {
 
       {/* expanded properties */}
       {open && hasProps && (
-        <div className="mt-1.5 ml-16 bg-[#111] border border-white/5 rounded-lg p-2.5 text-[8px] font-mono">
+        <div className="mt-1.5 ml-16 bg-[#111] border border-white/5 rounded-lg p-2.5 text-[14px] font-mono">
           {/* device / browser / OS */}
           {(ev.device || ev.browser || ev.os) && (
             <div className="flex gap-3 mb-2 pb-2 border-b border-white/5 text-gray-500">
@@ -742,23 +742,23 @@ function SessionCard({ session }) {
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[9px] font-mono text-gray-400">{shortId}</span>
+            <span className="text-[14px] font-mono text-gray-400">{shortId}</span>
             <SessionDiagnosis diagnosis={session.diagnosis} hasErrors={session.hasErrors} />
           </div>
-          <div className="flex items-center gap-3 mt-0.5 text-[8px] text-gray-600">
+          <div className="flex items-center gap-3 mt-0.5 text-[14px] text-gray-600">
             <span>{fmtDate(new Date(session.start).toISOString())}</span>
             {refEv && (
               <span className="capitalize">{[refEv.device, refEv.browser].filter(Boolean).join(' · ')}</span>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-4 text-[9px] font-mono shrink-0">
+        <div className="flex items-center gap-4 text-[14px] font-mono shrink-0">
           <span className="text-gray-500">{fmtSecs(session.durationSecs)}</span>
           <span className="text-gray-400">{session.events.length} ev.</span>
           <span className="text-gray-600">{pageViews} pv</span>
           {errors > 0 && <span className="text-red-400">{errors} err</span>}
         </div>
-        <span className="text-gray-600 text-[9px]">{open ? '▲' : '▼'}</span>
+        <span className="text-gray-600 text-[14px]">{open ? '▲' : '▼'}</span>
       </div>
 
       {/* session timeline */}
@@ -770,7 +770,7 @@ function SessionCard({ session }) {
               <button
                 key={f}
                 onClick={e => { e.stopPropagation(); setEvFilter(f); }}
-                className={`px-2 py-0.5 rounded text-[7px] font-mono border transition-all ${
+                className={`px-2 py-0.5 rounded text-[14px] font-mono border transition-all ${
                   evFilter === f
                     ? 'bg-white/10 text-white border-white/20'
                     : 'bg-transparent text-gray-600 border-white/5 hover:text-gray-400'
@@ -783,7 +783,7 @@ function SessionCard({ session }) {
 
           {/* timeline list */}
           {filtered.length === 0 ? (
-            <div className="text-[9px] text-gray-700 italic py-2">Sin eventos con este filtro.</div>
+            <div className="text-[14px] text-gray-700 italic py-2">Sin eventos con este filtro.</div>
           ) : (
             <div className="pl-1">
               {filtered.map((ev, i) => <TimelineEvent key={ev.event_id || i} ev={ev} />)}
@@ -813,7 +813,7 @@ function SessionReplay({ siteEvents }) {
 
   if (siteEvents.length === 0) {
     return (
-      <div className="text-[10px] text-gray-600 italic py-3">
+      <div className="text-[14px] text-gray-600 italic py-3">
         Sin eventos en la muestra para reconstruir sesiones.
       </div>
     );
@@ -823,7 +823,7 @@ function SessionReplay({ siteEvents }) {
     <div>
       <div className="flex items-center justify-between mb-2">
         <SectionTitle>User Sessions — Session Replay Light</SectionTitle>
-        <span className="text-[8px] text-gray-700 font-mono">{sessions.length} sesiones · máx 50</span>
+        <span className="text-[14px] text-gray-700 font-mono">{sessions.length} sesiones · máx 50</span>
       </div>
 
       {/* global filters */}
@@ -836,7 +836,7 @@ function SessionReplay({ siteEvents }) {
           <button
             key={f.id}
             onClick={() => setSessionFilter(f.id)}
-            className={`px-2.5 py-1 rounded text-[8px] font-mono border transition-all ${
+            className={`px-2.5 py-1 rounded text-[14px] font-mono border transition-all ${
               sessionFilter === f.id
                 ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/20'
                 : 'bg-white/5 text-gray-600 border-white/5 hover:text-white'
@@ -849,7 +849,7 @@ function SessionReplay({ siteEvents }) {
 
       {/* session list */}
       {displayed.length === 0 ? (
-        <div className="text-[9px] text-gray-600 italic py-3">Sin sesiones con este filtro.</div>
+        <div className="text-[14px] text-gray-600 italic py-3">Sin sesiones con este filtro.</div>
       ) : (
         <div className="flex flex-col gap-2">
           {displayed.map(s => <SessionCard key={s.key} session={s} />)}
@@ -880,21 +880,21 @@ function SitePanel({ site, allEvents }) {
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
-            <span className="text-[12px] font-medium text-white">{site.name}</span>
+            <span className="text-[14px] font-medium text-white">{site.name}</span>
             {site.domain && (
-              <span className="text-[9px] text-gray-500 font-mono bg-white/5 px-1.5 py-0.5 rounded">
+              <span className="text-[14px] text-gray-500 font-mono bg-white/5 px-1.5 py-0.5 rounded">
                 {site.domain}
               </span>
             )}
           </div>
-          <div className="text-[8px] text-gray-700 font-mono">{site.site_id}</div>
+          <div className="text-[14px] text-gray-700 font-mono">{site.site_id}</div>
         </div>
         <StatusBadge status={site.status} />
         <div className="text-right shrink-0">
-          <div className="text-[10px] text-white font-mono">{timeAgo(site.last_seen_at)}</div>
-          <div className="text-[8px] text-gray-600">{fmtDate(site.last_seen_at)}</div>
+          <div className="text-[14px] text-white font-mono">{timeAgo(site.last_seen_at)}</div>
+          <div className="text-[14px] text-gray-600">{fmtDate(site.last_seen_at)}</div>
         </div>
-        <div className="text-[10px] text-gray-600 font-mono w-14 text-right shrink-0">
+        <div className="text-[14px] text-gray-600 font-mono w-14 text-right shrink-0">
           {site.total_events} ev.
         </div>
         <div className="shrink-0 text-gray-500">
@@ -904,28 +904,28 @@ function SitePanel({ site, allEvents }) {
 
       {/* Expanded panel */}
       {open && (
-        <div className="px-4 pb-5 pt-1 border-t border-white/5 bg-[#0c0c0c]">
+        <div className="px-5 pb-8 pt-2 border-t border-white/5 bg-[#0c0c0c]">
 
-          {/* 1. Health + diagnostic */}
-          <div className="mt-4">
+          {/* 1. SESSION REPLAY — first, most important for support */}
+          <div className="mt-5">
+            <SessionReplay siteEvents={siteEvents} />
+          </div>
+
+          {/* 2. Event Stream */}
+          <div className="mt-6 pt-5 border-t border-white/5">
+            <EventStream siteEvents={siteEvents} />
+          </div>
+
+          {/* 3. Health + diagnostic */}
+          <div className="mt-6 pt-5 border-t border-white/5">
             <SectionTitle>Pixel Health</SectionTitle>
             <HealthBlock site={site} siteEvents={siteEvents} />
           </div>
 
-          {/* 2. Analytics */}
-          <div className="mt-4 pt-4 border-t border-white/5">
+          {/* 4. Analytics */}
+          <div className="mt-6 pt-5 border-t border-white/5">
             <SectionTitle>Analytics</SectionTitle>
             <SiteAnalytics siteId={site.site_id} siteEvents={siteEvents} />
-          </div>
-
-          {/* 3. Event Stream */}
-          <div className="mt-4 pt-4 border-t border-white/5">
-            <EventStream siteEvents={siteEvents} />
-          </div>
-
-          {/* 4. Session Replay */}
-          <div className="mt-4 pt-4 border-t border-white/5">
-            <SessionReplay siteEvents={siteEvents} />
           </div>
 
         </div>
@@ -998,8 +998,8 @@ export default function AdminPixelUserDetail() {
               <ShieldCheck className="w-4 h-4 text-[#00ff88]" />
             </div>
             <div>
-              <div className="text-[11px] font-bold tracking-widest text-white uppercase">Admin Console</div>
-              <div className="text-[9px] text-[#00ff88] font-mono tracking-widest">KINETIC COMMAND</div>
+              <div className="text-[14px] font-bold tracking-widest text-white uppercase">Admin Console</div>
+              <div className="text-[14px] text-[#00ff88] font-mono tracking-widest">KINETIC COMMAND</div>
             </div>
           </div>
         </div>
@@ -1007,39 +1007,39 @@ export default function AdminPixelUserDetail() {
         <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
           <button
             onClick={() => navigate('/admin')}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[11px] font-medium text-gray-500 hover:bg-white/5 hover:text-white border border-transparent transition-all text-left"
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] font-medium text-gray-500 hover:bg-white/5 hover:text-white border border-transparent transition-all text-left"
           >
             <ArrowRight className="w-3.5 h-3.5 shrink-0 rotate-180" />
             Admin
           </button>
           <button
             onClick={() => navigate('/admin/pixel-users')}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[11px] font-medium text-gray-400 hover:bg-white/5 hover:text-white border border-transparent transition-all text-left"
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] font-medium text-gray-400 hover:bg-white/5 hover:text-white border border-transparent transition-all text-left"
           >
             <ArrowRight className="w-3.5 h-3.5 shrink-0 rotate-180" />
             Pixel Users
           </button>
-          <div className="mt-1 px-3 py-2.5 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20 text-[11px] font-medium text-[#00ff88] truncate leading-tight">
+          <div className="mt-1 px-3 py-2.5 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20 text-[14px] font-medium text-[#00ff88] truncate leading-tight">
             {loading ? '…' : (userInfo?.email || `User #${user_id}`)}
           </div>
 
           {/* Quick info */}
           {!loading && (
             <div className="mt-4 px-3 flex flex-col gap-2">
-              <div className="flex justify-between text-[10px]">
+              <div className="flex justify-between text-[14px]">
                 <span className="text-gray-600">Sites</span>
                 <span className="text-white font-mono">{sites.length}</span>
               </div>
-              <div className="flex justify-between text-[10px]">
+              <div className="flex justify-between text-[14px]">
                 <span className="text-gray-600">Activos</span>
                 <span className="text-emerald-400 font-mono">{sites.filter(s => s.status === 'active').length}</span>
               </div>
-              <div className="flex justify-between text-[10px]">
+              <div className="flex justify-between text-[14px]">
                 <span className="text-gray-600">Eventos muestra</span>
                 <span className="text-gray-400 font-mono">{userEventCount}</span>
               </div>
               {userFetchErrors > 0 && (
-                <div className="flex justify-between text-[10px]">
+                <div className="flex justify-between text-[14px]">
                   <span className="text-red-500">Fetch errors</span>
                   <span className="text-red-400 font-mono">{userFetchErrors}</span>
                 </div>
@@ -1055,14 +1055,14 @@ export default function AdminPixelUserDetail() {
         {/* Header */}
         <header className="h-14 shrink-0 flex items-center justify-between px-6 border-b border-white/5 bg-[#0d0d0d]">
           <div className="flex items-center gap-3">
-            <h1 className="text-[13px] font-semibold text-white truncate max-w-xs">
+            <h1 className="text-[14px] font-semibold text-white truncate max-w-xs">
               {loading ? 'Cargando…' : (userInfo?.email || `User #${user_id}`)}
             </h1>
-            <span className="text-[10px] text-gray-500 font-mono">
+            <span className="text-[14px] text-gray-500 font-mono">
               {sites.length} sites · {sites.filter(s => s.status === 'active').length} activos
             </span>
             {userFetchErrors > 0 && !loading && (
-              <span className="flex items-center gap-1 text-[9px] text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full">
+              <span className="flex items-center gap-1 text-[14px] text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full">
                 <AlertCircle className="w-2.5 h-2.5" />
                 {userFetchErrors} fetch errors
               </span>
@@ -1084,21 +1084,21 @@ export default function AdminPixelUserDetail() {
           {!loading && sites.length > 0 && (
             <div className="grid grid-cols-4 gap-4">
               <div className="bg-[#111] rounded-xl border border-white/5 p-4">
-                <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-2">Sites</div>
+                <div className="text-[14px] text-gray-500 uppercase tracking-wider mb-2">Sites</div>
                 <div className="text-2xl font-bold font-mono text-[#00aaff]">{sites.length}</div>
               </div>
               <div className="bg-[#111] rounded-xl border border-white/5 p-4">
-                <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-2">Activos</div>
+                <div className="text-[14px] text-gray-500 uppercase tracking-wider mb-2">Activos</div>
                 <div className="text-2xl font-bold font-mono text-emerald-400">{sites.filter(s => s.status === 'active').length}</div>
               </div>
               <div className="bg-[#111] rounded-xl border border-white/5 p-4">
-                <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-2">Total eventos (DB)</div>
+                <div className="text-[14px] text-gray-500 uppercase tracking-wider mb-2">Total eventos (DB)</div>
                 <div className="text-2xl font-bold font-mono text-[#ffaa00]">
                   {sites.reduce((sum, s) => sum + (s.total_events || 0), 0).toLocaleString()}
                 </div>
               </div>
               <div className="bg-[#111] rounded-xl border border-white/5 p-4">
-                <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-2">Fetch errors (muestra)</div>
+                <div className="text-[14px] text-gray-500 uppercase tracking-wider mb-2">Fetch errors (muestra)</div>
                 <div className={`text-2xl font-bold font-mono ${userFetchErrors > 0 ? 'text-red-400' : 'text-gray-600'}`}>
                   {userFetchErrors}
                 </div>
@@ -1107,10 +1107,10 @@ export default function AdminPixelUserDetail() {
           )}
 
           {/* Sites list */}
-          <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+          <div className="bg-[#111] rounded-xl border border-white/5">
             <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-white">Sites de Pixel</span>
-              <span className="text-[9px] text-gray-600">
+              <span className="text-[14px] font-semibold text-white">Sites de Pixel</span>
+              <span className="text-[14px] text-gray-600">
                 Expandir para ver health, analytics y event stream
               </span>
             </div>
@@ -1125,7 +1125,7 @@ export default function AdminPixelUserDetail() {
               </div>
             ) : (
               <>
-                <div className="px-4 py-2 bg-[#0d0d0d] border-b border-white/5 flex items-center gap-4 text-[8px] uppercase tracking-wider text-gray-700">
+                <div className="px-4 py-2 bg-[#0d0d0d] border-b border-white/5 flex items-center gap-4 text-[14px] uppercase tracking-wider text-gray-700">
                   <div className="flex-1">Site / Domain / ID</div>
                   <div className="w-20 text-center">Status</div>
                   <div className="w-32 text-right">Último evento</div>

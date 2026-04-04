@@ -18,7 +18,7 @@ function StatusBadge({ status }) {
   };
   const s = map[status] || map.dead;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[9px] font-semibold uppercase ${s.cls}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[14px] font-semibold uppercase ${s.cls}`}>
       {s.icon}{s.label}
     </span>
   );
@@ -29,7 +29,7 @@ function Initials({ email }) {
   const colors = ['bg-blue-600', 'bg-purple-600', 'bg-emerald-600', 'bg-amber-600', 'bg-rose-600'];
   const color = colors[(email?.charCodeAt(0) || 0) % colors.length];
   return (
-    <div className={`w-7 h-7 rounded-full ${color} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+    <div className={`w-7 h-7 rounded-full ${color} flex items-center justify-center text-[14px] font-bold text-white shrink-0`}>
       {letters}
     </div>
   );
@@ -112,8 +112,8 @@ export default function AdminPixelUsers() {
               <ShieldCheck className="w-4 h-4 text-[#00ff88]" />
             </div>
             <div>
-              <div className="text-[11px] font-bold tracking-widest text-white uppercase">Admin Console</div>
-              <div className="text-[9px] text-[#00ff88] font-mono tracking-widest">KINETIC COMMAND</div>
+              <div className="text-[14px] font-bold tracking-widest text-white uppercase">Admin Console</div>
+              <div className="text-[14px] text-[#00ff88] font-mono tracking-widest">KINETIC COMMAND</div>
             </div>
           </div>
         </div>
@@ -121,12 +121,12 @@ export default function AdminPixelUsers() {
         <nav className="flex-1 px-3 py-4 flex flex-col gap-0.5">
           <button
             onClick={() => navigate('/admin')}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[12px] font-medium text-gray-400 hover:bg-white/5 hover:text-white border border-transparent transition-all text-left"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[14px] font-medium text-gray-400 hover:bg-white/5 hover:text-white border border-transparent transition-all text-left"
           >
             <ArrowRight className="w-4 h-4 shrink-0 rotate-180" />
             Volver al Admin
           </button>
-          <div className="mt-2 px-3 py-2.5 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20 flex items-center gap-3 text-[12px] font-medium text-[#00ff88]">
+          <div className="mt-2 px-3 py-2.5 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20 flex items-center gap-3 text-[14px] font-medium text-[#00ff88]">
             <Users className="w-4 h-4 shrink-0" />
             Pixel Users
           </div>
@@ -137,8 +137,8 @@ export default function AdminPixelUsers() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <header className="h-14 shrink-0 flex items-center justify-between px-6 border-b border-white/5 bg-[#0d0d0d]">
           <div className="flex items-center gap-3">
-            <h1 className="text-[13px] font-semibold text-white">Pixel Users</h1>
-            <span className="text-[10px] text-gray-500 font-mono">
+            <h1 className="text-[14px] font-semibold text-white">Pixel Users</h1>
+            <span className="text-[14px] text-gray-500 font-mono">
               {rows.length} usuarios con pixel · {health.length} sites registrados
             </span>
           </div>
@@ -161,7 +161,7 @@ export default function AdminPixelUsers() {
               { label: 'Sites muertos',        val: health.filter(s => s.status === 'dead').length,        color: '#ff6b6b' },
             ].map((s, i) => (
               <div key={i} className="bg-[#111] rounded-xl border border-white/5 p-4">
-                <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-2">{s.label}</div>
+                <div className="text-[14px] text-gray-500 uppercase tracking-wider mb-2">{s.label}</div>
                 <div className="text-2xl font-bold font-mono" style={{ color: s.color }}>
                   {loading ? <div className="w-10 h-6 bg-white/5 rounded animate-pulse" /> : s.val}
                 </div>
@@ -171,7 +171,7 @@ export default function AdminPixelUsers() {
 
           {/* Users with pixel table */}
           <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
-            <div className="px-4 py-3 border-b border-white/5 text-[11px] font-semibold text-white">
+            <div className="px-4 py-3 border-b border-white/5 text-[14px] font-semibold text-white">
               Usuarios con Pixel instalado
             </div>
             {loading ? (
@@ -183,11 +183,11 @@ export default function AdminPixelUsers() {
                 Ningún usuario tiene sites de pixel registrados.
               </div>
             ) : (
-              <table className="w-full text-[11px]">
+              <table className="w-full text-[14px]">
                 <thead>
                   <tr className="border-b border-white/5">
                     {['Usuario', 'Sites', 'Status', 'Último evento', ''].map(h => (
-                      <th key={h} className="text-left px-4 py-3 text-[9px] uppercase tracking-wider text-gray-500 font-medium">{h}</th>
+                      <th key={h} className="text-left px-4 py-3 text-[14px] uppercase tracking-wider text-gray-500 font-medium">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -206,7 +206,7 @@ export default function AdminPixelUsers() {
                       </td>
                       <td className="px-4 py-3 font-mono text-gray-300">{row.site_count}</td>
                       <td className="px-4 py-3"><StatusBadge status={row.worst_status} /></td>
-                      <td className="px-4 py-3 text-gray-500 font-mono text-[10px]">{fmtDate(row.last_seen_at)}</td>
+                      <td className="px-4 py-3 text-gray-500 font-mono text-[14px]">{fmtDate(row.last_seen_at)}</td>
                       <td className="px-4 py-3 text-right">
                         <ArrowRight className="w-3.5 h-3.5 text-gray-600 ml-auto" />
                       </td>
@@ -220,14 +220,14 @@ export default function AdminPixelUsers() {
           {/* Users without pixel */}
           {noPixel.length > 0 && (
             <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/5 text-[11px] font-semibold text-gray-500">
+              <div className="px-4 py-3 border-b border-white/5 text-[14px] font-semibold text-gray-500">
                 Sin pixel instalado ({noPixel.length})
               </div>
               <div className="divide-y divide-white/5">
                 {noPixel.map(u => (
                   <div key={u.user_id} className="px-4 py-2.5 flex items-center gap-3">
                     <Initials email={u.email} />
-                    <span className="text-[11px] text-gray-500">{u.email}</span>
+                    <span className="text-[14px] text-gray-500">{u.email}</span>
                   </div>
                 ))}
               </div>
