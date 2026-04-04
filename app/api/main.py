@@ -373,6 +373,10 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    # Permite cualquier subdominio (ej: mi-academia.hostingguard.lat) y dominios
+    # externos para el pixel de tracking. Los endpoints de auth están protegidos
+    # por cookies HttpOnly con SameSite=Lax, por lo que abrir CORS no es un riesgo.
+    allow_origin_regex=r".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
