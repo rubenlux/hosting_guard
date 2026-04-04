@@ -40,6 +40,7 @@ const NAV = [
   { id: 'users',         label: 'User Management',  icon: Users },
   { id: 'hostings',      label: 'Hosting',          icon: Globe },
   { id: 'pixel',         label: 'Pixel Analytics',  icon: BarChart3 },
+  { id: 'pixel-users',   label: 'Pixel Users',      icon: Users,     path: '/admin/pixel-users' },
   { id: 'orchestrator',  label: 'Orchestrator',     icon: Bot },
   { id: 'finance',       label: 'Finance',          icon: DollarSign },
   { id: 'audit',         label: 'Audit Log',        icon: FileText },
@@ -293,10 +294,10 @@ export default function AdminDashboard() {
         </div>
 
         <nav className="flex-1 px-3 py-4 flex flex-col gap-0.5 overflow-y-auto">
-          {NAV.map(({ id, label, icon: Icon }) => (
+          {NAV.map(({ id, label, icon: Icon, path }) => (
             <button
               key={id}
-              onClick={() => setSection(id)}
+              onClick={() => path ? navigate(path) : setSection(id)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[12px] font-medium transition-all text-left ${
                 section === id
                   ? 'bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20'

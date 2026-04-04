@@ -203,4 +203,14 @@ export const getAdminFinanceSummary = async () => {
     return response.data;
 };
 
+export const getAdminPixelHealth = async () => {
+    const response = await api.get('/pixel/admin/health');
+    return response.data;
+};
+
+export const getPixelSiteStats = async (siteId, days = 30) => {
+    const response = await api.get(`/pixel/sites/${siteId}/stats?days=${days}`);
+    return response.data;
+};
+
 export default api;

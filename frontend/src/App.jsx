@@ -9,6 +9,8 @@ import HostingCreationForm from './components/HostingCreationForm';
 import Footer from './components/Footer';
 import Dashboard from './pages/Dashboard';
 import AdminUserDetail from './pages/AdminUserDetail';
+import AdminPixelUsers from './pages/AdminPixelUsers';
+import AdminPixelUserDetail from './pages/AdminPixelUserDetail';
 import { useAuth } from './hooks/useAuth';
 
 const PrivateRoute = ({ children }) => {
@@ -49,8 +51,10 @@ function App() {
           <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Home />} />
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/pixel"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
-          <Route path="/admin"          element={<AdminRoute><Dashboard /></AdminRoute>} />
-          <Route path="/admin/users/:id" element={<AdminRoute><AdminUserDetail /></AdminRoute>} />
+          <Route path="/admin"                         element={<AdminRoute><Dashboard /></AdminRoute>} />
+          <Route path="/admin/users/:id"              element={<AdminRoute><AdminUserDetail /></AdminRoute>} />
+          <Route path="/admin/pixel-users"            element={<AdminRoute><AdminPixelUsers /></AdminRoute>} />
+          <Route path="/admin/pixel-users/:user_id"   element={<AdminRoute><AdminPixelUserDetail /></AdminRoute>} />
         </Routes>
       </main>
       {!user && <Footer />}
