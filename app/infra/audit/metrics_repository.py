@@ -37,11 +37,16 @@ class MetricsRepository:
         conn = get_connection()
         try:
             row = conn.cursor().execute(
-                "SELECT COALESCE(SUM(total_requests),0), COALESCE(SUM(errors_4xx),0), COALESCE(SUM(errors_5xx),0) "
+                "SELECT COALESCE(SUM(total_requests),0) AS total, "
+                "COALESCE(SUM(errors_4xx),0) AS e4xx, "
+                "COALESCE(SUM(errors_5xx),0) AS e5xx "
                 "FROM traffic_stats WHERE container_name = ? AND collected_at >= ?",
                 (container_name, since),
             ).fetchone()
-            total, e4xx, e5xx = (row[0], row[1], row[2]) if row else (0, 0, 0)
+            if row:
+                total, e4xx, e5xx = row["total"], row["e4xx"], row["e5xx"]
+            else:
+                total, e4xx, e5xx = 0, 0, 0
             return {"total_requests": total, "errors_4xx": e4xx, "errors_5xx": e5xx}
         finally:
             release_connection()
@@ -75,11 +80,12 @@ class MetricsRepository:
         conn = get_connection()
         try:
             row = conn.cursor().execute(
-                "SELECT COUNT(*), COALESCE(SUM(is_up), 0) FROM uptime_checks "
-                "WHERE hosting_id = ? AND checked_at >= ?",
+                "SELECT COUNT(*) AS total, COALESCE(SUM(is_up), 0) AS up_count "
+                "FROM uptime_checks WHERE hosting_id = ? AND checked_at >= ?",
                 (hosting_id, since),
             ).fetchone()
-            total, up = (row[0], row[1]) if row else (0, 0)
+            total = row["total"] if row else 0
+            up = row["up_count"] if row else 0
             if total == 0:
                 return None  # no data yet
             return round((up / total) * 100, 1)
@@ -103,11 +109,11 @@ class MetricsRepository:
         conn = get_connection()
         try:
             row = conn.cursor().execute(
-                "SELECT AVG(response_ms) FROM uptime_checks "
+                "SELECT AVG(response_ms) AS avg_ms FROM uptime_checks "
                 "WHERE hosting_id = ? AND checked_at >= ? AND response_ms IS NOT NULL",
                 (hosting_id, since),
             ).fetchone()
-            val = row[0] if row else None
+            val = row["avg_ms"] if row else None
             return round(val, 1) if val is not None else None
         finally:
             release_connection()

@@ -37,13 +37,13 @@ class TenantConfigRepository:
         # obtener siguiente versión incremental
         cur.execute(
             """
-            SELECT MAX(version) FROM tenant_configs
+            SELECT MAX(version) AS max_version FROM tenant_configs
             WHERE tenant_id = ? AND kind = ?
             """,
             (tenant_id, kind),
         )
         row = cur.fetchone()
-        next_version = (row[0] or 0) + 1 if row else 1
+        next_version = (row["max_version"] or 0) + 1 if row else 1
 
         cfg = TenantConfigVersion(
             config_id=str(uuid.uuid4()),
