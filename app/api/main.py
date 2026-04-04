@@ -40,6 +40,9 @@ from app.observability.metrics import (
     DECISIONS_TOTAL,
     HUMAN_ACTIONS_TOTAL,
 )
+from app.services.expiration_job import check_and_expire_free_hostings
+from app.services.traffic_collector import collect_traffic
+from app.services.health_checker import check_all_hostings
 
 # Configuración de logging para auditoría
 logger = logging.getLogger("hosting_guard_audit")
@@ -47,7 +50,6 @@ logging.basicConfig(level=logging.INFO)
 
 async def expiration_scheduler():
     """Corre el job de expiración cada 12 horas."""
-    from app.services.expiration_job import check_and_expire_free_hostings
     while True:
         try:
             loop = asyncio.get_running_loop()
@@ -59,7 +61,6 @@ async def expiration_scheduler():
 
 async def traffic_scheduler():
     """Recoge métricas de tráfico nginx cada 5 minutos."""
-    from app.services.traffic_collector import collect_traffic
     logger.info("traffic_scheduler: iniciado — primera ejecución inmediata")
     while True:
         try:
@@ -73,7 +74,6 @@ async def traffic_scheduler():
 
 async def health_scheduler():
     """Health check de contenedores cada 5 minutos."""
-    from app.services.health_checker import check_all_hostings
     logger.info("health_scheduler: iniciado — primera ejecución inmediata")
     while True:
         try:
