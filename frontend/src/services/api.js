@@ -213,4 +213,19 @@ export const getPixelSiteStats = async (siteId, days = 30) => {
     return response.data;
 };
 
+export const listFiles = async (hostingId, path = '') => {
+    const response = await api.get(`/files/${hostingId}`, { params: { path } });
+    return response.data;
+};
+
+export const readFile = async (hostingId, path) => {
+    const response = await api.get(`/files/${hostingId}/read`, { params: { path } });
+    return response.data;
+};
+
+export const saveFile = async (hostingId, path, content) => {
+    const response = await api.post(`/files/${hostingId}/save`, { path, content });
+    return response.data;
+};
+
 export default api;

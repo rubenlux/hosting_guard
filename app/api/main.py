@@ -110,9 +110,9 @@ user_repo = UserRepository()
 
 # Importar y registrar sub-routers
 from app.api.routes.pixel import router as pixel_router
+from app.api.routes.files import router as files_router
 app.include_router(pixel_router)
-
-# Si el router de hosting.py no está registrado, asegúrate de importarlo en algún archivo (e.g. rutas o middleware), para el usuario, este archivo ahora carga pixel_router.
+app.include_router(files_router)
 
 
 _IS_PRODUCTION = APP_ENV == "production"

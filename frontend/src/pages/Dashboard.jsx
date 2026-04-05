@@ -37,7 +37,8 @@ import LogsModal from '../components/LogsModal';
 import ZipUploadModal from '../components/ZipUploadModal';
 import PixelAnalytics from '../components/PixelAnalytics';
 import AdminDashboard from './AdminDashboard';
-import { AlertTriangle, Upload } from "lucide-react"
+import FileManager from '../components/FileManager';
+import { AlertTriangle, Upload, FolderOpen } from "lucide-react"
 
 const Dashboard = () => {
   const { user, logoutAction, setUser } = useAuth();
@@ -57,6 +58,8 @@ const Dashboard = () => {
   const [selectedHosting, setSelectedHosting] = useState(null);
   const [showUpload, setShowUpload] = useState(false);
   const [selectedUploadHosting, setSelectedUploadHosting] = useState(null);
+  const [showFiles, setShowFiles] = useState(false);
+  const [selectedFilesHosting, setSelectedFilesHosting] = useState(null);
   const [currentLogs, setCurrentLogs] = useState('');
   const [lastLogsTimestamp, setLastLogsTimestamp] = useState(null);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -491,6 +494,16 @@ const Dashboard = () => {
                                   >
                                     <Upload className="w-3.5 h-3.5" />
                                   </button>
+                                  {/* Botón Archivos — solo para ZIP upload y GitHub (no WordPress) */}
+                                  {!h.container_name?.includes('_wp_') && (
+                                    <button
+                                      onClick={() => { setSelectedFilesHosting(h); setShowFiles(true); }}
+                                      title="Gestor de archivos"
+                                      className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-blue-500/20 hover:text-blue-400 flex items-center justify-center transition-all"
+                                    >
+                                      <FolderOpen className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
                                   <button
                                     onClick={() => handleAction(h.hosting_id, stopHosting)}
                                     title="Detener"
@@ -666,6 +679,13 @@ const Dashboard = () => {
         onClose={() => { setShowUpload(false); setSelectedUploadHosting(null); }}
         hosting={selectedUploadHosting}
       />
+
+      {showFiles && selectedFilesHosting && (
+        <FileManager
+          hosting={selectedFilesHosting}
+          onClose={() => { setShowFiles(false); setSelectedFilesHosting(null); }}
+        />
+      )}
     </div>
   );
 };
