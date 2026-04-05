@@ -37,7 +37,7 @@ import LogsModal from '../components/LogsModal';
 import ZipUploadModal from '../components/ZipUploadModal';
 import PixelAnalytics from '../components/PixelAnalytics';
 import AdminDashboard from './AdminDashboard';
-import FileManager from '../components/FileManager';
+import MonacoFileEditor from '../components/MonacoFileEditor';
 import { AlertTriangle, Upload, FolderOpen } from "lucide-react"
 
 const Dashboard = () => {
@@ -681,7 +681,7 @@ const Dashboard = () => {
       />
 
       {showFiles && selectedFilesHosting && (
-        <FileManager
+        <MonacoFileEditor
           hosting={selectedFilesHosting}
           onClose={() => { setShowFiles(false); setSelectedFilesHosting(null); }}
         />
