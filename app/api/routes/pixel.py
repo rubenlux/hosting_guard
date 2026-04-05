@@ -128,44 +128,59 @@ async def pixel_script(id: str, request: Request):
   _trackPageView();
 
   // ── SPA route tracking ────────────────────────────────────────────────────
-  // Intercepta history.pushState y replaceState para detectar navegación SPA
-  // (React Router, Vue Router, Next.js, Nuxt, etc.) sin depender de eventos
-  // de recarga completa. También escucha popstate para el botón atrás/adelante.
+  // Estrategia de triple cobertura:
+  //   1. Patch de pushState/replaceState (React Router, Vue Router, Nuxt…)
+  //   2. popstate (botón atrás/adelante)
+  //   3. Polling 500ms como fallback universal (Next.js App Router, Remix,
+  //      frameworks que capturan pushState antes de que cargue este script)
+  // _onNav centraliza todos los efectos secundarios de un cambio de ruta.
 
-  function _patchHistory(method){{
-    var orig=history[method];
-    history[method]=function(){{
-      var prevUrl=window.location.href;
-      orig.apply(this,arguments);
-      var newUrl=window.location.href;
-      if(newUrl!==prevUrl){{
-        _lastUrl=newUrl;
-        // Pequeño delay para que el DOM se actualice antes de leer el título
-        setTimeout(function(){{_trackPageView(prevUrl);}},0);
-      }}
-    }};
+  function _onNav(prevUrl){{
+    _resetScrollMarks();
+    setTimeout(function(){{_trackPageView(prevUrl);}},0);
   }}
 
-  try{{
-    _patchHistory('pushState');
-    _patchHistory('replaceState');
-  }}catch(e){{}}
+  // Patch idempotente: no envuelve dos veces si el script se ejecuta más de una vez
+  ['pushState','replaceState'].forEach(function(method){{
+    var orig=history[method];
+    if(orig._hg)return;                // ya parcheado, salir
+    var patched=function(){{
+      var prev=location.href;
+      orig.apply(this,arguments);
+      var next=location.href;
+      if(next!==prev){{_lastUrl=next;_onNav(prev);}}
+    }};
+    patched._hg=1;                     // marca para idempotencia
+    history[method]=patched;
+  }});
 
   // popstate: botón atrás/adelante del browser
   window.addEventListener('popstate',function(){{
-    var newUrl=window.location.href;
-    if(newUrl!==_lastUrl){{
+    var next=location.href;
+    if(next!==_lastUrl){{
       var prev=_lastUrl;
-      _lastUrl=newUrl;
-      setTimeout(function(){{_trackPageView(prev);}},0);
+      _lastUrl=next;
+      _onNav(prev);
     }}
   }});
 
   // hashchange: apps legacy que usan hash routing (#/pricing)
   window.addEventListener('hashchange',function(e){{
-    _lastUrl=window.location.href;
-    setTimeout(function(){{_trackPageView(e.oldURL);}},0);
+    _lastUrl=location.href;
+    _onNav(e.oldURL||_lastUrl);
   }});
+
+  // Fallback polling: captura cambios de URL que escapan a todos los métodos
+  // anteriores (Next.js App Router, Remix, routers custom, etc.)
+  // Usa setInterval sin clearInterval intencional — vive toda la sesión.
+  setInterval(function(){{
+    var cur=location.href;
+    if(cur!==_lastUrl){{
+      var prev=_lastUrl;
+      _lastUrl=cur;
+      _onNav(prev);
+    }}
+  }},500);
 
   // ── Performance: carga real (solo en navegación inicial) ──────────────────
   window.addEventListener('load',function(){{
@@ -193,10 +208,9 @@ async def pixel_script(id: str, request: Request):
   }});
 
   // ── Scroll depth: 25%, 50%, 75%, 90% ─────────────────────────────────────
-  // Se resetea al cambiar de ruta para medir cada página independientemente.
+  // Se resetea en cada cambio de ruta (vía _onNav) para medir cada página.
   var marks={{}};
   function _resetScrollMarks(){{marks={{}};}}
-  window.addEventListener('popstate',_resetScrollMarks);
   document.addEventListener('scroll',function(){{
     var d=document.documentElement,pct=Math.round((d.scrollTop+window.innerHeight)/d.scrollHeight*100);
     [25,50,75,90].forEach(function(m){{if(pct>=m&&!marks[m]){{marks[m]=1;send('scroll_depth',{{depth:m}});}}}});
