@@ -58,6 +58,11 @@ async def pixel_script(id: str, request: Request):
 
     safe_id = json.dumps(id)
     script = f"""(function(){{
+  // Guard: evita que el script se inicialice más de una vez por sesión de tab.
+  // En SPAs con SSR o lazy-loading, el <script> puede ejecutarse múltiples veces.
+  if(window.__hg_init)return;
+  window.__hg_init=1;
+
   var S={safe_id},A='https://api.hostingguard.lat',T=Date.now();
 
   // visitor_id: persiste entre sesiones (localStorage)
@@ -68,14 +73,14 @@ async def pixel_script(id: str, request: Request):
   var sid=sessionStorage.getItem('hg_sid');
   if(!sid){{sid=Math.random().toString(36).substr(2);sessionStorage.setItem('hg_sid',sid);}}
 
+  // ── Transport ─────────────────────────────────────────────────────────────
+
   function _beacon(ev,props){{
     try{{
       var d=JSON.stringify({{site_id:S,event_type:ev,url:window.location.href,
         referrer:document.referrer,user_agent:navigator.userAgent,
         session_id:sid,visitor_id:vid,properties:props||{{}}}});
-      if(navigator.sendBeacon){{
-        navigator.sendBeacon(A+'/pixel/event',new Blob([d],{{type:'application/json'}}));
-      }}
+      if(navigator.sendBeacon)navigator.sendBeacon(A+'/pixel/event',new Blob([d],{{type:'application/json'}}));
     }}catch(e){{}}
   }}
 
@@ -94,30 +99,75 @@ async def pixel_script(id: str, request: Request):
     }}catch(e){{}}
   }}
 
-  // pixel_init: primer evento — confirma que el script se cargó y ejecutó
-  // sv=script version; usa sendBeacon para máxima fiabilidad en carga
-  _beacon('pixel_init',{{sv:2}});
+  // ── pixel_init: una sola vez por sesión de tab ────────────────────────────
+  _beacon('pixel_init',{{sv:3}});
 
-  // UTM: captura de URL o recupera de sessionStorage (persiste en la sesión)
+  // ── UTM: captura de URL o recupera de sessionStorage ─────────────────────
   function _utms(){{
     try{{
       var p=new URLSearchParams(window.location.search),u={{}};
       ['utm_source','utm_medium','utm_campaign'].forEach(function(k){{var v=p.get(k);if(v)u[k]=v;}});
-      if(Object.keys(u).length){{
-        sessionStorage.setItem('hg_utm',JSON.stringify(u));
-        return u;
-      }}
+      if(Object.keys(u).length){{sessionStorage.setItem('hg_utm',JSON.stringify(u));return u;}}
       var stored=sessionStorage.getItem('hg_utm');
       return stored?JSON.parse(stored):null;
     }}catch(e){{return null;}}
   }}
 
-  // page_view — incluye UTMs si existen
-  var _pvp={{}},_utm=_utms();
-  if(_utm)_pvp.utm=_utm;
-  send('page_view',_pvp);
+  // ── page_view helper ──────────────────────────────────────────────────────
+  // Registra una vista de página con URL actual, referrer y UTMs.
+  // Se llama tanto en carga inicial como en cada cambio de ruta SPA.
+  var _lastUrl=window.location.href;
 
-  // performance: métricas de carga reales (Navigation Timing API)
+  function _trackPageView(ref){{
+    var pvp={{}},utm=_utms();
+    if(utm)pvp.utm=utm;
+    if(ref)pvp.referrer_override=ref;
+    send('page_view',pvp);
+  }}
+
+  _trackPageView();
+
+  // ── SPA route tracking ────────────────────────────────────────────────────
+  // Intercepta history.pushState y replaceState para detectar navegación SPA
+  // (React Router, Vue Router, Next.js, Nuxt, etc.) sin depender de eventos
+  // de recarga completa. También escucha popstate para el botón atrás/adelante.
+
+  function _patchHistory(method){{
+    var orig=history[method];
+    history[method]=function(){{
+      var prevUrl=window.location.href;
+      orig.apply(this,arguments);
+      var newUrl=window.location.href;
+      if(newUrl!==prevUrl){{
+        _lastUrl=newUrl;
+        // Pequeño delay para que el DOM se actualice antes de leer el título
+        setTimeout(function(){{_trackPageView(prevUrl);}},0);
+      }}
+    }};
+  }}
+
+  try{{
+    _patchHistory('pushState');
+    _patchHistory('replaceState');
+  }}catch(e){{}}
+
+  // popstate: botón atrás/adelante del browser
+  window.addEventListener('popstate',function(){{
+    var newUrl=window.location.href;
+    if(newUrl!==_lastUrl){{
+      var prev=_lastUrl;
+      _lastUrl=newUrl;
+      setTimeout(function(){{_trackPageView(prev);}},0);
+    }}
+  }});
+
+  // hashchange: apps legacy que usan hash routing (#/pricing)
+  window.addEventListener('hashchange',function(e){{
+    _lastUrl=window.location.href;
+    setTimeout(function(){{_trackPageView(e.oldURL);}},0);
+  }});
+
+  // ── Performance: carga real (solo en navegación inicial) ──────────────────
   window.addEventListener('load',function(){{
     setTimeout(function(){{
       var t=window.performance&&window.performance.timing;
@@ -131,34 +181,44 @@ async def pixel_script(id: str, request: Request):
     }},0);
   }});
 
-  // click tracking
+  // ── Click tracking ────────────────────────────────────────────────────────
+  // Captura: links, botones, elementos con data-track.
+  // href: para saber adónde iba el usuario (útil en funnel analysis).
   document.addEventListener('click',function(e){{
     var el=e.target&&e.target.closest?e.target.closest('a,button,[data-track]'):null;
-    if(el)send('click',{{element:el.tagName,text:(el.innerText||'').substr(0,100)}});
+    if(!el)return;
+    var props={{element:el.tagName,text:(el.innerText||'').substr(0,100)}};
+    if(el.tagName==='A'&&el.href)props.href=el.href.replace(/^https?:\/\/[^/]+/,'').substr(0,200);
+    send('click',props);
   }});
 
-  // scroll depth: reporta en umbrales 50%, 75%, 90%
+  // ── Scroll depth: 25%, 50%, 75%, 90% ─────────────────────────────────────
+  // Se resetea al cambiar de ruta para medir cada página independientemente.
   var marks={{}};
+  function _resetScrollMarks(){{marks={{}};}}
+  window.addEventListener('popstate',_resetScrollMarks);
   document.addEventListener('scroll',function(){{
     var d=document.documentElement,pct=Math.round((d.scrollTop+window.innerHeight)/d.scrollHeight*100);
-    [50,75,90].forEach(function(m){{if(pct>=m&&!marks[m]){{marks[m]=1;send('scroll_depth',{{depth:m}});}}}});
+    [25,50,75,90].forEach(function(m){{if(pct>=m&&!marks[m]){{marks[m]=1;send('scroll_depth',{{depth:m}});}}}});
   }},{{passive:true}});
 
-  // JS error capture
+  // ── JS error capture ──────────────────────────────────────────────────────
   window.addEventListener('error',function(e){{
     send('js_error',{{message:(e.message||'').substr(0,200),source:(e.filename||'').substr(0,200),line:e.lineno||0}});
   }});
 
-  // page_exit: visibilitychange + pagehide (más fiable que beforeunload en móvil)
+  // ── page_exit: visibilitychange + pagehide ────────────────────────────────
+  // En SPAs el exit real es cuando el tab se oculta o cierra, no en cada ruta.
   var done=0;
   function exit(){{if(!done){{done=1;send('page_exit',{{time_on_page:Math.round((Date.now()-T)/1000)}});}}}}
   document.addEventListener('visibilitychange',function(){{if(document.visibilityState==='hidden')exit();}});
   window.addEventListener('pagehide',exit);
 
-  // heartbeat: cada 60s si el tab está activo (tiempo real en página)
+  // ── Heartbeat: cada 60s si el tab está activo ─────────────────────────────
   setInterval(function(){{if(!document.hidden)send('heartbeat',{{time_on_page:Math.round((Date.now()-T)/1000)}});}},60000);
 
-  // API pública para tracking manual
+  // ── API pública para tracking manual ─────────────────────────────────────
+  // Uso: hgTrack('purchase', {{ value: 99, plan: 'pro' }})
   window.hgTrack=send;
 }})();"""
 
