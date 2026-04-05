@@ -991,6 +991,288 @@ function SessionReplay({ siteEvents }) {
 }
 
 /* ═══════════════════════════════════════════════════════
+   FUNNEL ANALYSIS
+═══════════════════════════════════════════════════════ */
+function buildFunnel(sessions) {
+  // 1. Collect all page flows
+  const flowCounts = {};           // "/ → /pricing" → count
+  const stepCounts = {};           // "/pricing" → how many sessions reached this URL
+  const totalSessions = sessions.length;
+
+  // Count unique URLs visited per session for step counts
+  sessions.forEach(s => {
+    const seen = new Set();
+    s.pageFlow.forEach(url => {
+      if (!seen.has(url)) {
+        seen.add(url);
+        stepCounts[url] = (stepCounts[url] || 0) + 1;
+      }
+    });
+
+    // Build all sequential 2-step transitions in this session
+    for (let i = 0; i < s.pageFlow.length - 1; i++) {
+      const key = `${s.pageFlow[i]} → ${s.pageFlow[i + 1]}`;
+      flowCounts[key] = (flowCounts[key] || 0) + 1;
+    }
+  });
+
+  // 2. Top entry pages (first page in session)
+  const entryCounts = {};
+  sessions.forEach(s => {
+    if (s.pageFlow.length > 0) {
+      const entry = s.pageFlow[0];
+      entryCounts[entry] = (entryCounts[entry] || 0) + 1;
+    }
+  });
+
+  // 3. Top exits (last page in session, only multi-page sessions)
+  const exitCounts = {};
+  sessions.forEach(s => {
+    if (s.pageFlow.length > 1) {
+      const exit = s.pageFlow[s.pageFlow.length - 1];
+      exitCounts[exit] = (exitCounts[exit] || 0) + 1;
+    }
+  });
+
+  // 4. Top transitions sorted
+  const topTransitions = Object.entries(flowCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  // 5. Top pages by reach
+  const topPages = Object.entries(stepCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  // 6. Top entries
+  const topEntries = Object.entries(entryCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+
+  // 7. Top exits
+  const topExits = Object.entries(exitCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+
+  // 8. Drop-off: sessions that reached A but NOT B (for top 3 transitions)
+  const dropoffs = topTransitions.slice(0, 3).map(([flow, count]) => {
+    const [from] = flow.split(' → ');
+    const reached = stepCounts[from] || 0;
+    const continued = count;
+    const dropped = reached - continued;
+    const dropRate = reached > 0 ? Math.round((dropped / reached) * 100) : 0;
+    return { from, continued, dropped, dropRate, reached };
+  });
+
+  return { topTransitions, topPages, topEntries, topExits, dropoffs, totalSessions };
+}
+
+function FunnelBar({ label, value, max, pct, color, sub }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-28 text-xs font-mono text-gray-400 truncate shrink-0" title={label}>{label}</div>
+      <div className="flex-1 h-4 bg-white/5 rounded overflow-hidden">
+        <div
+          className="h-full rounded transition-all"
+          style={{ width: `${Math.max((value / max) * 100, 2)}%`, background: color || '#00ff88' }}
+        />
+      </div>
+      <div className="w-10 text-xs font-mono text-white text-right shrink-0">{value}</div>
+      {pct != null && (
+        <div className="w-10 text-xs font-mono text-gray-600 text-right shrink-0">{pct}%</div>
+      )}
+      {sub && <div className="text-xs text-gray-600">{sub}</div>}
+    </div>
+  );
+}
+
+function FunnelAnalysis({ siteEvents }) {
+  const [tab, setTab] = useState('flow');
+
+  const sessions = useMemo(() => buildSessions(siteEvents), [siteEvents]);
+
+  const funnel = useMemo(() => {
+    const sessionsWithFlow = sessions.filter(s => s.pageFlow.length > 0);
+    if (sessionsWithFlow.length === 0) return null;
+    return buildFunnel(sessionsWithFlow);
+  }, [sessions]);
+
+  if (!funnel) {
+    return (
+      <div className="text-sm text-gray-600 italic py-3">
+        Sin datos de navegación para construir el funnel.
+      </div>
+    );
+  }
+
+  const maxPage = Math.max(...funnel.topPages.map(([, c]) => c), 1);
+  const maxTrans = Math.max(...funnel.topTransitions.map(([, c]) => c), 1);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <SectionTitle>Funnel de Navegación</SectionTitle>
+        <span className="text-xs text-gray-600 font-mono">
+          {funnel.totalSessions} sesiones analizadas
+        </span>
+      </div>
+
+      {/* tab selector */}
+      <div className="flex gap-2 mb-4 border-b border-white/5 pb-3">
+        {[
+          { id: 'flow',    label: 'Flujos (→)' },
+          { id: 'pages',   label: 'Páginas alcanzadas' },
+          { id: 'dropoff', label: 'Drop-off' },
+          { id: 'entry',   label: 'Entradas / Salidas' },
+        ].map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-3 py-1 rounded-lg text-xs font-mono border transition-all ${
+              tab === t.id
+                ? 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/20'
+                : 'bg-white/5 border-white/5 text-gray-500 hover:text-white'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Flujos ── */}
+      {tab === 'flow' && (
+        <div className="flex flex-col gap-2">
+          <div className="text-xs text-gray-600 mb-2">
+            Transiciones más frecuentes entre páginas en una misma sesión.
+          </div>
+          {funnel.topTransitions.length === 0 ? (
+            <div className="text-xs text-gray-600 italic">Sin sesiones multi-página.</div>
+          ) : funnel.topTransitions.map(([flow, count], i) => (
+            <div key={i} className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {flow.split(' → ').map((p, j, arr) => (
+                    <React.Fragment key={j}>
+                      <span className="text-xs font-mono bg-white/5 text-gray-300 px-2 py-0.5 rounded truncate max-w-[120px]" title={p}>{p}</span>
+                      {j < arr.length - 1 && <span className="text-gray-600 text-xs shrink-0">→</span>}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="w-20 h-2 bg-white/5 rounded overflow-hidden">
+                  <div className="h-full rounded bg-[#00ff88]" style={{ width: `${(count / maxTrans) * 100}%` }} />
+                </div>
+                <span className="text-xs font-mono text-white w-6 text-right">{count}×</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Páginas alcanzadas ── */}
+      {tab === 'pages' && (
+        <div className="flex flex-col gap-2">
+          <div className="text-xs text-gray-600 mb-2">
+            Sesiones que visitaron cada página (sin duplicar por sesión).
+          </div>
+          {funnel.topPages.map(([url, count], i) => (
+            <FunnelBar
+              key={i}
+              label={url}
+              value={count}
+              max={maxPage}
+              pct={Math.round((count / funnel.totalSessions) * 100)}
+              color={i === 0 ? '#00ff88' : i < 3 ? '#00aaff' : '#555'}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ── Drop-off ── */}
+      {tab === 'dropoff' && (
+        <div className="flex flex-col gap-4">
+          <div className="text-xs text-gray-600 mb-1">
+            Usuarios que llegaron a una página pero NO continuaron a la siguiente.
+          </div>
+          {funnel.dropoffs.length === 0 ? (
+            <div className="text-xs text-gray-600 italic">Sin transiciones para analizar drop-off.</div>
+          ) : funnel.dropoffs.map((d, i) => (
+            <div key={i} className="bg-[#0d0d0d] rounded-xl border border-white/5 p-4">
+              <div className="text-sm font-mono text-white mb-2">{d.from}</div>
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div>
+                  <div className="text-xs text-gray-600 mb-0.5">Llegaron</div>
+                  <div className="text-lg font-bold font-mono text-[#00aaff]">{d.reached}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-600 mb-0.5">Continuaron</div>
+                  <div className="text-lg font-bold font-mono text-emerald-400">{d.continued}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-600 mb-0.5">Drop-off</div>
+                  <div className={`text-lg font-bold font-mono ${d.dropRate > 60 ? 'text-red-400' : d.dropRate > 30 ? 'text-amber-400' : 'text-gray-400'}`}>
+                    {d.dropRate}%
+                  </div>
+                </div>
+              </div>
+              <div className="h-2 bg-white/5 rounded overflow-hidden">
+                <div
+                  className="h-full rounded transition-all"
+                  style={{
+                    width: `${100 - d.dropRate}%`,
+                    background: d.dropRate > 60 ? '#ef4444' : d.dropRate > 30 ? '#f59e0b' : '#00ff88',
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Entradas / Salidas ── */}
+      {tab === 'entry' && (
+        <div className="grid grid-cols-2 gap-6">
+          <div>
+            <div className="text-xs text-gray-500 uppercase tracking-wider mb-3">🚪 Páginas de entrada</div>
+            <div className="flex flex-col gap-2">
+              {funnel.topEntries.map(([url, count], i) => (
+                <FunnelBar
+                  key={i}
+                  label={url}
+                  value={count}
+                  max={Math.max(...funnel.topEntries.map(([, c]) => c), 1)}
+                  pct={Math.round((count / funnel.totalSessions) * 100)}
+                  color="#00aaff"
+                />
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500 uppercase tracking-wider mb-3">🚶 Páginas de salida</div>
+            <div className="flex flex-col gap-2">
+              {funnel.topExits.map(([url, count], i) => (
+                <FunnelBar
+                  key={i}
+                  label={url}
+                  value={count}
+                  max={Math.max(...funnel.topExits.map(([, c]) => c), 1)}
+                  pct={Math.round((count / funnel.totalSessions) * 100)}
+                  color="#ff6b6b"
+                />
+              ))}
+              {funnel.topExits.length === 0 && (
+                <div className="text-xs text-gray-600 italic">Sin sesiones multi-página.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
    SITE PANEL (expandable)
 ═══════════════════════════════════════════════════════ */
 function SitePanel({ site, allEvents }) {
@@ -1040,6 +1322,11 @@ function SitePanel({ site, allEvents }) {
           {/* 1. SESSION REPLAY — first, most important for support */}
           <div className="mt-5">
             <SessionReplay siteEvents={siteEvents} />
+          </div>
+
+          {/* 2. FUNNEL ANALYSIS */}
+          <div className="mt-6 pt-5 border-t border-white/5">
+            <FunnelAnalysis siteEvents={siteEvents} />
           </div>
 
           {/* 2. Event Stream */}
