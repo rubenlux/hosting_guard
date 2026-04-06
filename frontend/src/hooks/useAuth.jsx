@@ -97,12 +97,16 @@ export const AuthProvider = ({ children }) => {
    * Called when the admin exits support mode (banner "Salir" button or timer expiry).
    * Clears the support cookie and reloads the admin's own session.
    */
-  const deactivateSupportSession = async () => {
-    try { await api.post('/support/deactivate'); } catch { /* ignore */ }
+  /**
+   * Called when the support banner "Salir" button fires.
+   * The banner already handled: session close + /support/deactivate.
+   * Here we just clean up React state and redirect.
+   */
+  const deactivateSupportSession = async (_resolutionData) => {
+    // Cookie was already cleared by SupportBanner before calling this.
     setSupportSession(null);
+    sessionStorage.removeItem('support_session_id');
 
-    // If support was started by a staff member, redirect back to their dashboard.
-    // Staff have a staff_token but no access_token, so GET /me would return 401.
     const origin = sessionStorage.getItem('support_origin');
     sessionStorage.removeItem('support_origin');
     if (origin === 'staff') {

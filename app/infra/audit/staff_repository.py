@@ -133,6 +133,7 @@ class StaffRepository:
         target_hosting_id: Optional[int] = None,
         duration_seconds: Optional[int] = None,
         ip_address: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> int:
         conn = get_connection()
         cursor = conn.cursor()
@@ -140,8 +141,8 @@ class StaffRepository:
             cursor.execute(
                 """INSERT INTO staff_activity_log
                    (staff_id, action_type, target_user_id, target_hosting_id,
-                    description, duration_seconds, ip_address, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    description, duration_seconds, ip_address, session_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     staff_id,
                     action_type,
@@ -150,6 +151,7 @@ class StaffRepository:
                     description,
                     duration_seconds,
                     ip_address,
+                    session_id,
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )

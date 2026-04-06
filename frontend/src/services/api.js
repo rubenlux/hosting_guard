@@ -249,6 +249,37 @@ export const getSupportSessions = async () => {
     return response.data;
 };
 
+export const getSessionDetail = async (sessionId) => {
+    const response = await api.get(`/admin/impersonate/sessions/${sessionId}`);
+    return response.data;
+};
+
+export const closeSession = async (sessionId, result, resolutionNotes, actionTaken) => {
+    const response = await api.post(`/admin/impersonate/${sessionId}/close`, {
+        result,
+        resolution_notes: resolutionNotes,
+        action_taken: actionTaken,
+    });
+    return response.data;
+};
+
+export const closeStaffSession = async (sessionId, result, resolutionNotes, actionTaken) => {
+    const response = await api.post(`/admin/impersonate/staff/${sessionId}/close`, {
+        result,
+        resolution_notes: resolutionNotes,
+        action_taken: actionTaken,
+    });
+    return response.data;
+};
+
+export const startSupportSessionWithIssue = async (userId, issueDescription, origin = 'manual') => {
+    const response = await api.post(`/admin/impersonate/staff/${userId}`, {
+        issue_description: issueDescription,
+        origin,
+    });
+    return response.data;
+};
+
 export const revokeSupportSession = async (sessionId) => {
     const response = await api.delete(`/admin/impersonate/${sessionId}`);
     return response.data;

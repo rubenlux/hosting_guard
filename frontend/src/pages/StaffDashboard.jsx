@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import {
   getStaffMe, staffLogout, getStaffClients, getMyActivity,
-  staffStartSupportSession,
+  startSupportSessionWithIssue,
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import { useStaffTracking } from '../hooks/useStaffTracking';
@@ -122,6 +122,7 @@ export default function StaffDashboard() {
   const [search, setSearch]       = useState('');
   const [loading, setLoading]     = useState(true);
   const [supporting, setSupporting] = useState(null);
+  const [issueModal, setIssueModal] = useState(null);  // client object
   const [error, setError]         = useState(null);
 
   const load = useCallback(async () => {
@@ -157,26 +158,29 @@ export default function StaffDashboard() {
     navigate('/staff/login');
   };
 
-  const handleSupport = async (client) => {
-    if (!window.confirm(`¿Iniciar sesión de soporte para ${client.email}?\n\nDuración: 15 minutos. Quedará registrado.`)) return;
+  // Step 1: open the issue modal
+  const handleSupport = (client) => setIssueModal(client);
+
+  // Step 2: called by IssueModal with issue + origin
+  const handleSupportConfirm = async (client, issueDescription, origin) => {
+    setIssueModal(null);
     setSupporting(client.user_id);
     try {
-      // 1. Obtener el token de soporte del backend (verifica permisos, crea sesión)
-      const data = await staffStartSupportSession(client.user_id);
+      // 1. Create session with full context (issue, origin, agent)
+      const data = await startSupportSessionWithIssue(client.user_id, issueDescription, origin);
 
-      // 2. Activar el support_token cookie Y actualizar el contexto de auth en un solo paso.
-      //    activateSupportSession llama a POST /support/activate (setea la cookie HttpOnly)
-      //    y luego GET /me con el nuevo cookie → setUser(clientData), setSupportSession({...})
-      //    Esto es CRÍTICO: sin actualizar useAuth el PrivateRoute ve user=null y redirige a '/'
+      // 2. Activate support_token AND update auth context in one step.
+      //    CRITICAL: without this, PrivateRoute sees user=null → redirects to landing page.
       await activateSupportSession(data.token);
 
       track('support_session_start', {
         target_user_id: client.user_id,
-        description: `Sesión de soporte iniciada para ${client.email}`,
+        description: `Sesión iniciada para ${client.email} — ${issueDescription || 'sin motivo'}`,
       });
 
-      // Mark origin so that "Salir del modo soporte" returns here, not to login page
+      // Store session metadata so the exit modal can close the session
       sessionStorage.setItem('support_origin', 'staff');
+      sessionStorage.setItem('support_session_id', data.session_id || '');
       navigate('/dashboard');
     } catch (err) {
       alert(err?.response?.data?.detail || 'Error iniciando sesión de soporte');
@@ -203,8 +207,83 @@ export default function StaffDashboard() {
     );
   }
 
+  // ── Issue modal (shown before activating support session) ─────────────────
+  const IssueModal = ({ client, onConfirm, onCancel }) => {
+    const [issue, setIssue]   = useState('');
+    const [origin, setOrigin] = useState('client_request');
+    return (
+      <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6">
+        <div className="bg-[#0d0d0d] border border-amber-500/30 rounded-2xl w-full max-w-sm p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-amber-500/15 flex items-center justify-center">
+              <Shield className="w-4 h-4 text-amber-400" />
+            </div>
+            <div>
+              <div className="text-[12px] font-bold text-white">Iniciar sesión de soporte</div>
+              <div className="text-[10px] text-gray-500 font-mono">{client.email}</div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[9px] uppercase tracking-wider text-gray-500 mb-1.5">
+              Motivo / problema reportado
+            </label>
+            <textarea
+              value={issue}
+              onChange={e => setIssue(e.target.value)}
+              placeholder='Ej: "El sitio no carga", "Error 502", "Quiere cambiar el diseño"...'
+              rows={3}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white
+                placeholder-gray-600 outline-none focus:border-amber-500/50 resize-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[9px] uppercase tracking-wider text-gray-500 mb-1.5">
+              Origen
+            </label>
+            <select
+              value={origin}
+              onChange={e => setOrigin(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white
+                outline-none focus:border-amber-500/50"
+            >
+              <option value="client_request">Cliente solicitó soporte</option>
+              <option value="manual">Iniciativa del equipo</option>
+              <option value="ai_advisory">Alerta IA / Advisory</option>
+              <option value="scheduled">Mantenimiento programado</option>
+            </select>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={onCancel}
+              className="flex-1 py-2 rounded-lg text-[11px] bg-white/5 text-gray-400 hover:bg-white/10 transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => onConfirm(client, issue.trim(), origin)}
+              className="flex-1 py-2 rounded-lg text-[11px] font-bold bg-amber-500/20 text-amber-400
+                hover:bg-amber-500/30 transition-colors"
+            >
+              Iniciar soporte
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
+      {issueModal && (
+        <IssueModal
+          client={issueModal}
+          onConfirm={handleSupportConfirm}
+          onCancel={() => setIssueModal(null)}
+        />
+      )}
 
       {/* Header */}
       <header className="border-b border-white/5 bg-[#0d0d0d]">
