@@ -100,7 +100,18 @@ export const AuthProvider = ({ children }) => {
   const deactivateSupportSession = async () => {
     try { await api.post('/support/deactivate'); } catch { /* ignore */ }
     setSupportSession(null);
-    // Restore admin's own /me
+
+    // If support was started by a staff member, redirect back to their dashboard.
+    // Staff have a staff_token but no access_token, so GET /me would return 401.
+    const origin = sessionStorage.getItem('support_origin');
+    sessionStorage.removeItem('support_origin');
+    if (origin === 'staff') {
+      setUser(null);
+      window.location.href = '/staff/dashboard';
+      return;
+    }
+
+    // Admin: restore own session via /me
     try {
       const me = await api.get('/me');
       setUser({ ...me.data, role: me.data.role?.toLowerCase() ?? 'user' });

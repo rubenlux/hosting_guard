@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import {
   getStaffMe, staffLogout, getStaffClients, getMyActivity,
-  staffStartSupportSession, activateSupportSession,
+  staffStartSupportSession,
 } from '../services/api';
 import { useStaffTracking } from '../hooks/useStaffTracking';
 
@@ -171,6 +171,8 @@ export default function StaffDashboard() {
         target_user_id: client.user_id,
         description: `Sesión de soporte iniciada para ${client.email}`,
       });
+      // Mark origin so that "Salir del modo soporte" returns here, not to login
+      sessionStorage.setItem('support_origin', 'staff');
       navigate('/dashboard');
     } catch (err) {
       alert(err?.response?.data?.detail || 'Error iniciando sesión de soporte');

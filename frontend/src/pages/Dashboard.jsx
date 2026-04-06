@@ -705,7 +705,7 @@ const Dashboard = () => {
       {showFiles && selectedFilesHosting && (
         <MonacoFileEditor
           hosting={selectedFilesHosting}
-          readOnly={isSupportSession}
+          readOnly={false}
           onClose={() => { setShowFiles(false); setSelectedFilesHosting(null); }}
         />
       )}

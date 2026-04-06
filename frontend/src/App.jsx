@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
 import HowItWorks from './components/HowItWorks';
@@ -29,7 +29,6 @@ const AdminRoute = ({ children }) => {
   return children;
 };
 
-
 const Home = () => (
   <>
     <Hero />
@@ -42,6 +41,18 @@ const Home = () => (
 
 function App() {
   const { user, loading } = useAuth();
+  const location = useLocation();
+
+  // Staff routes are fully independent — they use staff_token (not access_token).
+  // Render them outside the normal auth flow so the Navbar/Footer never appear.
+  if (location.pathname.startsWith('/staff/')) {
+    return (
+      <Routes>
+        <Route path="/staff/login"     element={<StaffLogin />} />
+        <Route path="/staff/dashboard" element={<StaffDashboard />} />
+      </Routes>
+    );
+  }
 
   if (loading) return null;
 
@@ -57,7 +68,7 @@ function App() {
           <Route path="/admin/users/:id"              element={<AdminRoute><AdminUserDetail /></AdminRoute>} />
           <Route path="/admin/pixel-users"            element={<AdminRoute><AdminPixelUsers /></AdminRoute>} />
           <Route path="/admin/pixel-users/:user_id"   element={<AdminRoute><AdminPixelUserDetail /></AdminRoute>} />
-          {/* Staff routes — autenticación independiente vía staff_token cookie */}
+          {/* Fallback staff routes (shouldn't normally be needed but keeps router happy) */}
           <Route path="/staff/login"     element={<StaffLogin />} />
           <Route path="/staff/dashboard" element={<StaffDashboard />} />
         </Routes>
