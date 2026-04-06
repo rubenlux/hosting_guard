@@ -1,6 +1,11 @@
 import asyncio
 import subprocess
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
+
 from app.api.security import require_role
 from app.infra.audit.user_repository import UserRepository
 from app.infra.audit.hosting_repository import HostingRepository
@@ -181,6 +186,158 @@ def get_orchestrator_events(limit: int = 200, _: dict = Depends(require_role("ad
         (limit,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Admin hosting actions — sin filtro por user_id
+# ---------------------------------------------------------------------------
+
+class TerminateRequest(BaseModel):
+    reason: str          # obligatorio — quedará en el audit log
+
+
+def _get_ip(request: Request) -> str:
+    for h in ("X-Real-IP", "X-Forwarded-For"):
+        v = request.headers.get(h)
+        if v:
+            return v.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+@router.post("/hostings/{hosting_id}/restart")
+async def admin_restart_hosting(
+    hosting_id: int,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Admin reinicia cualquier hosting sin necesitar sesión de soporte."""
+    hosting = _hosting_repo.get_hosting_any(hosting_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting no encontrado")
+    result = await _run_docker("docker", "restart", hosting["container_name"], timeout=20)
+    _hosting_repo.log_orchestrator_event(
+        hosting["container_name"], hosting["user_id"],
+        "admin_restart",
+        f"Reiniciado por admin {admin['email']} desde {_get_ip(request)}",
+    )
+    return {"ok": True, "status": "restarting", "container": hosting["container_name"]}
+
+
+@router.post("/hostings/{hosting_id}/stop")
+async def admin_stop_hosting(
+    hosting_id: int,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Admin detiene cualquier hosting."""
+    hosting = _hosting_repo.get_hosting_any(hosting_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting no encontrado")
+    await _run_docker("docker", "stop", hosting["container_name"], timeout=20)
+    _hosting_repo.update_hosting_status(hosting_id, "stopped")
+    _hosting_repo.log_orchestrator_event(
+        hosting["container_name"], hosting["user_id"],
+        "admin_stop",
+        f"Detenido por admin {admin['email']} desde {_get_ip(request)}",
+    )
+    return {"ok": True, "status": "stopped", "container": hosting["container_name"]}
+
+
+@router.post("/hostings/{hosting_id}/start")
+async def admin_start_hosting(
+    hosting_id: int,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Admin inicia cualquier hosting detenido."""
+    hosting = _hosting_repo.get_hosting_any(hosting_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting no encontrado")
+    await _run_docker("docker", "start", hosting["container_name"], timeout=20)
+    _hosting_repo.update_hosting_status(hosting_id, "active")
+    _hosting_repo.log_orchestrator_event(
+        hosting["container_name"], hosting["user_id"],
+        "admin_start",
+        f"Iniciado por admin {admin['email']} desde {_get_ip(request)}",
+    )
+    return {"ok": True, "status": "active", "container": hosting["container_name"]}
+
+
+@router.get("/hostings/{hosting_id}/logs")
+async def admin_get_logs(
+    hosting_id: int,
+    since: Optional[str] = None,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Admin accede a los logs de cualquier hosting."""
+    import re
+    _SINCE_REGEX = re.compile(r'^\d+[smhd]$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$')
+    hosting = _hosting_repo.get_hosting_any(hosting_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting no encontrado")
+    if since and not _SINCE_REGEX.match(since):
+        raise HTTPException(status_code=400, detail="Formato de 'since' inválido. Ej: '5m', '2h'.")
+
+    cmd = ["docker", "logs"]
+    if since:
+        cmd += ["--since", since]
+    else:
+        cmd += ["--tail", "100"]
+    cmd.append(hosting["container_name"])
+
+    result = await _run_docker(*cmd, timeout=10)
+    logs = result.stdout or result.stderr or ""
+    return {"logs": logs, "container": hosting["container_name"]}
+
+
+@router.delete("/hostings/{hosting_id}/terminate")
+async def admin_terminate_hosting(
+    hosting_id: int,
+    body: TerminateRequest,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """
+    Terminación forzada por el admin (uso indebido, spam, TOS violation, etc.).
+    Elimina el contenedor Docker + el registro en DB.
+    Queda registrado en orchestrator_events con la razón.
+    """
+    hosting = _hosting_repo.get_hosting_any(hosting_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting no encontrado")
+
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Se requiere una razón para la terminación.")
+
+    container = hosting["container_name"]
+
+    # 1. Detener y eliminar el contenedor
+    await _run_docker("docker", "rm", "-f", container, timeout=15)
+
+    # 2. Si es WordPress, eliminar también el contenedor de DB
+    if "_wp_" in container:
+        db_container = container.replace("_wp_", "_db_", 1)
+        await _run_docker("docker", "rm", "-f", db_container, timeout=15)
+
+    # 3. Registrar en el audit log ANTES de borrar el registro
+    _hosting_repo.log_orchestrator_event(
+        container, hosting["user_id"],
+        "admin_terminate",
+        f"TERMINADO por admin {admin['email']} | Razón: {reason} | IP: {_get_ip(request)}",
+    )
+
+    # 4. Eliminar el registro de hostings
+    _hosting_repo.admin_delete_hosting(hosting_id)
+
+    return {
+        "ok": True,
+        "terminated": hosting_id,
+        "container": container,
+        "reason": reason,
+        "admin": admin["email"],
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.get("/finance/summary")

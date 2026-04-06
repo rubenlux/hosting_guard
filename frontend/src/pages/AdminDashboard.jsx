@@ -7,6 +7,7 @@ import {
   TrendingUp, MousePointer, Eye, Timer, ArrowRight,
   HeadsetIcon, ShieldAlert, Ban, UserCog, PlusCircle,
   ToggleLeft, ToggleRight, ChevronDown, Pencil, Trash2,
+  Terminal, RotateCcw, Play, Square,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
@@ -14,6 +15,8 @@ import {
   getAdminOrchestratorEvents, getAdminFinanceSummary,
   startSupportSession, getSupportSessions, revokeSupportSession,
   listStaff, createStaff, updateStaff, deactivateStaff,
+  adminRestartHosting, adminStopHosting, adminStartHosting,
+  adminGetHostingLogs, adminTerminateHosting,
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import StaffAnalytics from '../components/StaffAnalytics';
@@ -376,7 +379,7 @@ export default function AdminDashboard() {
                 ))}
               </div>
               {tab === 'users'    && <UsersTable    users={users}       loading={loading} navigate={navigate} />}
-              {tab === 'hostings' && <HostingsTable hostings={hostings} loading={loading} metricsMap={metricsMap} />}
+              {tab === 'hostings' && <HostingsTable hostings={hostings} loading={loading} metricsMap={metricsMap} onReload={fetchAll} />}
               {tab === 'pixel'    && <PixelLog      events={filteredPixel.slice(0,50)} loading={loading} filter={pixelFilter} setFilter={setPixelFilter} />}
             </>)}
 
@@ -384,7 +387,7 @@ export default function AdminDashboard() {
             {section === 'users' && <UsersTable users={users} loading={loading} navigate={navigate} />}
 
             {/* ══ HOSTING ══ */}
-            {section === 'hostings' && <HostingsTable hostings={hostings} loading={loading} metricsMap={metricsMap} />}
+            {section === 'hostings' && <HostingsTable hostings={hostings} loading={loading} metricsMap={metricsMap} onReload={fetchAll} />}
 
             {/* ══ PIXEL ANALYTICS ══ */}
             {section === 'pixel' && (
@@ -836,37 +839,238 @@ function SupportSessionsPanel() {
   );
 }
 
-function HostingsTable({ hostings, loading, metricsMap }) {
+function HostingsTable({ hostings, loading, metricsMap, onReload }) {
+  const [actioning, setActioning] = useState(null);   // hosting_id being acted on
+  const [logsModal, setLogsModal] = useState(null);   // { hosting, logs }
+  const [terminateModal, setTerminate] = useState(null); // hosting
+
+  const act = async (hosting, fn, label) => {
+    if (!window.confirm(`¿${label} el hosting "${hosting.name}" (${hosting.container_name})?`)) return;
+    setActioning(hosting.hosting_id);
+    try {
+      await fn(hosting.hosting_id);
+      onReload?.();
+    } catch (err) {
+      alert(err?.response?.data?.detail || `Error al ${label.toLowerCase()}`);
+    } finally {
+      setActioning(null);
+    }
+  };
+
+  const viewLogs = async (hosting) => {
+    setActioning(hosting.hosting_id);
+    try {
+      const data = await adminGetHostingLogs(hosting.hosting_id);
+      setLogsModal({ hosting, logs: data.logs || '(sin logs)' });
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Error obteniendo logs');
+    } finally {
+      setActioning(null);
+    }
+  };
+
+  const cols = ['Nombre','Estado','Plan','CPU','RAM','Uptime 24h','Tráfico 24h','Subdominio','Acciones'];
+
   return (
-    <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
-      <table className="w-full text-[11px]">
-        <thead>
-          <tr className="border-b border-white/5">
-            {['Nombre','Estado','Plan','CPU','RAM','Uptime 24h','Tráfico 24h','Subdominio'].map(h => (
-              <th key={h} className="text-left px-4 py-3 text-[9px] uppercase tracking-wider text-gray-500 font-medium">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {loading ? <tr><td colSpan={8} className="p-10 text-center"><RefreshCw className="w-4 h-4 animate-spin mx-auto text-gray-600" /></td></tr>
-          : hostings.length === 0 ? <tr><td colSpan={8} className="p-10 text-center text-gray-600 italic text-xs">Sin hostings.</td></tr>
-          : hostings.map(h => {
-            const m = metricsMap[h.container_name] || {};
-            return (
-              <tr key={h.hosting_id} className="border-b border-white/5 hover:bg-white/3 transition-colors">
-                <td className="px-4 py-3 text-white font-medium">{h.name}</td>
-                <td className="px-4 py-3"><div className={`flex items-center gap-1.5 font-medium ${STATUS_COLOR[h.status]||'text-gray-400'}`}>{STATUS_ICON[h.status]||null}{h.status}</div></td>
-                <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${PLAN_STYLE[h.plan]||'bg-white/5 text-gray-400'}`}>{h.plan}</span></td>
-                <td className="px-4 py-3 font-mono text-emerald-400">{m.docker?.cpu ?? '—'}</td>
-                <td className="px-4 py-3 font-mono text-blue-400">{m.docker?.mem_pct ?? '—'}</td>
-                <td className="px-4 py-3 font-mono text-amber-400">{m.uptime_pct != null ? `${m.uptime_pct.toFixed(1)}%` : '—'}</td>
-                <td className="px-4 py-3 font-mono text-gray-400">{m.traffic_24h?.total_requests != null ? `${m.traffic_24h.total_requests} req` : '—'}</td>
-                <td className="px-4 py-3 text-gray-500 font-mono text-[10px]">{h.subdomain}</td>
+    <>
+      <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="border-b border-white/5">
+                {cols.map(c => (
+                  <th key={c} className="text-left px-4 py-3 text-[9px] uppercase tracking-wider text-gray-500 font-medium whitespace-nowrap">{c}</th>
+                ))}
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={cols.length} className="p-10 text-center"><RefreshCw className="w-4 h-4 animate-spin mx-auto text-gray-600" /></td></tr>
+              ) : hostings.length === 0 ? (
+                <tr><td colSpan={cols.length} className="p-10 text-center text-gray-600 italic text-xs">Sin hostings.</td></tr>
+              ) : hostings.map(h => {
+                const m = metricsMap[h.container_name] || {};
+                const busy = actioning === h.hosting_id;
+                const isStopped = h.status === 'stopped' || h.status === 'expired';
+                return (
+                  <tr key={h.hosting_id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="text-white font-medium">{h.name}</div>
+                      <div className="text-[9px] text-gray-600 font-mono mt-0.5">{h.container_name}</div>
+                    </td>
+                    <td className="px-4 py-3"><div className={`flex items-center gap-1.5 font-medium ${STATUS_COLOR[h.status]||'text-gray-400'}`}>{STATUS_ICON[h.status]||null}{h.status}</div></td>
+                    <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${PLAN_STYLE[h.plan]||'bg-white/5 text-gray-400'}`}>{h.plan}</span></td>
+                    <td className="px-4 py-3 font-mono text-emerald-400">{m.docker?.cpu ?? '—'}</td>
+                    <td className="px-4 py-3 font-mono text-blue-400">{m.docker?.mem_pct ?? '—'}</td>
+                    <td className="px-4 py-3 font-mono text-amber-400">{m.uptime_pct != null ? `${m.uptime_pct.toFixed(1)}%` : '—'}</td>
+                    <td className="px-4 py-3 font-mono text-gray-400">{m.traffic_24h?.total_requests != null ? `${m.traffic_24h.total_requests} req` : '—'}</td>
+                    <td className="px-4 py-3 text-gray-500 font-mono text-[10px]">{h.subdomain}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5">
+                        {/* Logs */}
+                        <button
+                          onClick={() => viewLogs(h)}
+                          disabled={busy}
+                          title="Ver logs"
+                          className="p-1.5 rounded hover:bg-white/10 text-gray-500 hover:text-purple-400 transition-colors disabled:opacity-40"
+                        >
+                          {busy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Terminal className="w-3.5 h-3.5" />}
+                        </button>
+                        {/* Restart */}
+                        <button
+                          onClick={() => act(h, adminRestartHosting, 'Reiniciar')}
+                          disabled={busy || isStopped}
+                          title="Reiniciar"
+                          className="p-1.5 rounded hover:bg-amber-500/10 text-gray-500 hover:text-amber-400 transition-colors disabled:opacity-40"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        </button>
+                        {/* Stop / Start */}
+                        {isStopped ? (
+                          <button
+                            onClick={() => act(h, adminStartHosting, 'Iniciar')}
+                            disabled={busy}
+                            title="Iniciar"
+                            className="p-1.5 rounded hover:bg-emerald-500/10 text-gray-500 hover:text-emerald-400 transition-colors disabled:opacity-40"
+                          >
+                            <Play className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => act(h, adminStopHosting, 'Detener')}
+                            disabled={busy}
+                            title="Detener"
+                            className="p-1.5 rounded hover:bg-orange-500/10 text-gray-500 hover:text-orange-400 transition-colors disabled:opacity-40"
+                          >
+                            <Square className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {/* Terminate */}
+                        <button
+                          onClick={() => setTerminate(h)}
+                          disabled={busy}
+                          title="Terminar (uso indebido / spam)"
+                          className="p-1.5 rounded hover:bg-red-500/10 text-gray-600 hover:text-red-400 transition-colors disabled:opacity-40"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Logs modal */}
+      {logsModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6" onClick={() => setLogsModal(null)}>
+          <div className="bg-[#0d0d0d] border border-white/10 rounded-2xl w-full max-w-3xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-white/5">
+              <Terminal className="w-4 h-4 text-purple-400" />
+              <span className="text-[12px] font-bold text-white">{logsModal.hosting.name} — Logs</span>
+              <button onClick={() => setLogsModal(null)} className="ml-auto text-gray-600 hover:text-white text-lg leading-none">×</button>
+            </div>
+            <pre className="flex-1 overflow-auto p-5 text-[10px] text-gray-300 font-mono leading-relaxed whitespace-pre-wrap">
+              {logsModal.logs}
+            </pre>
+          </div>
+        </div>
+      )}
+
+      {/* Terminate modal */}
+      {terminateModal && (
+        <TerminateModal
+          hosting={terminateModal}
+          onConfirm={async (reason) => {
+            await adminTerminateHosting(terminateModal.hosting_id, reason);
+            setTerminate(null);
+            onReload?.();
+          }}
+          onCancel={() => setTerminate(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function TerminateModal({ hosting, onConfirm, onCancel }) {
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!reason.trim()) { setErr('La razón es obligatoria.'); return; }
+    if (!window.confirm(`⚠️ ACCIÓN IRREVERSIBLE\n\nEsto eliminará "${hosting.name}" y su contenedor Docker permanentemente.\n\n¿Confirmar?`)) return;
+    setSaving(true);
+    try {
+      await onConfirm(reason.trim());
+    } catch (ex) {
+      setErr(ex?.response?.data?.detail || 'Error terminando hosting');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6">
+      <form onSubmit={submit} className="bg-[#0d0d0d] border border-red-500/30 rounded-2xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-red-500/15 flex items-center justify-center">
+            <Trash2 className="w-4 h-4 text-red-400" />
+          </div>
+          <div>
+            <div className="text-[12px] font-bold text-white">Terminar hosting</div>
+            <div className="text-[10px] text-gray-500">{hosting.name} · {hosting.container_name}</div>
+          </div>
+        </div>
+
+        <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-3 text-[10px] text-red-400">
+          Esta acción elimina el contenedor Docker y el registro de forma <strong>permanente e irreversible</strong>.
+          Queda registrado en el audit log con tu email y razón.
+        </div>
+
+        {err && <div className="text-[11px] text-red-400">{err}</div>}
+
+        <div>
+          <label className="block text-[9px] uppercase tracking-wider text-gray-500 mb-1.5">
+            Razón de terminación <span className="text-red-400">*</span>
+          </label>
+          <select
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white outline-none focus:border-red-500/50 mb-2"
+          >
+            <option value="">— Selecciona una razón —</option>
+            <option value="Uso indebido / spam">Uso indebido / spam</option>
+            <option value="Violación de términos de servicio">Violación de términos de servicio</option>
+            <option value="Actividad maliciosa / phishing">Actividad maliciosa / phishing</option>
+            <option value="Contenido prohibido">Contenido prohibido</option>
+            <option value="Solicitud del cliente">Solicitud del cliente</option>
+            <option value="Falta de pago">Falta de pago</option>
+          </select>
+          <textarea
+            placeholder="Descripción adicional (opcional)..."
+            value={reason.startsWith('Otro:') ? reason.slice(5) : ''}
+            onChange={e => setReason(e.target.value ? `Otro: ${e.target.value}` : '')}
+            rows={2}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600 outline-none focus:border-red-500/50 resize-none"
+          />
+        </div>
+
+        <div className="flex gap-2 pt-1">
+          <button type="submit" disabled={saving || !reason}
+            className="flex-1 py-2 rounded-xl text-[11px] font-bold bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-40">
+            {saving ? 'Terminando...' : 'Confirmar terminación'}
+          </button>
+          <button type="button" onClick={onCancel}
+            className="px-4 py-2 rounded-xl text-[11px] text-gray-500 bg-white/5 hover:text-white transition-colors">
+            Cancelar
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

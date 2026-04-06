@@ -39,10 +39,26 @@ class HostingRepository:
         row = cursor.fetchone()
         return dict(row) if row else None
 
+    def get_hosting_any(self, hosting_id: int) -> Optional[Dict]:
+        """Admin-only: obtiene un hosting sin filtrar por user_id."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM hostings WHERE hosting_id = ?", (hosting_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
     def delete_hosting(self, hosting_id: int, user_id: int) -> bool:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM hostings WHERE hosting_id = ? AND user_id = ?", (hosting_id, user_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def admin_delete_hosting(self, hosting_id: int) -> bool:
+        """Admin-only: elimina un hosting sin filtrar por user_id (uso indebido/spam)."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM hostings WHERE hosting_id = ?", (hosting_id,))
         conn.commit()
         return cursor.rowcount > 0
 

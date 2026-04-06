@@ -178,6 +178,32 @@ export const getAdminHostingsMetrics = async () => {
     return response.data;
 };
 
+export const adminRestartHosting = async (hostingId) => {
+    const response = await api.post(`/admin/hostings/${hostingId}/restart`);
+    return response.data;
+};
+
+export const adminStopHosting = async (hostingId) => {
+    const response = await api.post(`/admin/hostings/${hostingId}/stop`);
+    return response.data;
+};
+
+export const adminStartHosting = async (hostingId) => {
+    const response = await api.post(`/admin/hostings/${hostingId}/start`);
+    return response.data;
+};
+
+export const adminGetHostingLogs = async (hostingId, since = null) => {
+    const params = since ? { since } : {};
+    const response = await api.get(`/admin/hostings/${hostingId}/logs`, { params });
+    return response.data;
+};
+
+export const adminTerminateHosting = async (hostingId, reason) => {
+    const response = await api.delete(`/admin/hostings/${hostingId}/terminate`, { data: { reason } });
+    return response.data;
+};
+
 export const getAdminUserFull = async (userId) => {
     const response = await api.get(`/admin/users/${userId}/full`);
     return response.data;
