@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Shield, Users, Activity, LogOut, Search, RefreshCw,
@@ -9,6 +9,7 @@ import {
   getStaffMe, staffLogout, getStaffClients, getMyActivity,
   staffStartSupportSession,
 } from '../services/api';
+import { useAuth } from '../hooks/useAuth';
 import { useStaffTracking } from '../hooks/useStaffTracking';
 
 // ---------------------------------------------------------------------------
@@ -112,6 +113,7 @@ function ClientRow({ client, canSupport, onSupport, supporting }) {
 
 export default function StaffDashboard() {
   const navigate = useNavigate();
+  const { activateSupportSession } = useAuth();
   const { track } = useStaffTracking();
 
   const [staff, setStaff]         = useState(null);
@@ -159,19 +161,21 @@ export default function StaffDashboard() {
     if (!window.confirm(`¿Iniciar sesión de soporte para ${client.email}?\n\nDuración: 15 minutos. Quedará registrado.`)) return;
     setSupporting(client.user_id);
     try {
+      // 1. Obtener el token de soporte del backend (verifica permisos, crea sesión)
       const data = await staffStartSupportSession(client.user_id);
-      // Activar el support_token
-      await fetch(`${import.meta.env.VITE_API_URL || 'https://api.hostingguard.lat'}/support/activate`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: data.token }),
-      });
+
+      // 2. Activar el support_token cookie Y actualizar el contexto de auth en un solo paso.
+      //    activateSupportSession llama a POST /support/activate (setea la cookie HttpOnly)
+      //    y luego GET /me con el nuevo cookie → setUser(clientData), setSupportSession({...})
+      //    Esto es CRÍTICO: sin actualizar useAuth el PrivateRoute ve user=null y redirige a '/'
+      await activateSupportSession(data.token);
+
       track('support_session_start', {
         target_user_id: client.user_id,
         description: `Sesión de soporte iniciada para ${client.email}`,
       });
-      // Mark origin so that "Salir del modo soporte" returns here, not to login
+
+      // Mark origin so that "Salir del modo soporte" returns here, not to login page
       sessionStorage.setItem('support_origin', 'staff');
       navigate('/dashboard');
     } catch (err) {
