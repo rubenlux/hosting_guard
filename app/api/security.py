@@ -151,14 +151,31 @@ def require_role(*roles: str) -> Callable:
     """
     Dependency factory para proteger endpoints por rol.
     Uso: user=Depends(require_role("admin"))
+
+    Si hay un support_token activo pero con el rol equivocado (ej: admin consultando
+    sus propios endpoints mientras el support_token de karina todavía está en la cookie),
+    hace fallback al access_token normal para autorizar la request.
     """
-    def _check(payload: dict = Depends(verify_token)) -> dict:
-        if payload.get("role") not in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Se requiere uno de los roles: {', '.join(roles)}",
-            )
-        return payload
+    def _check(request: Request, payload: dict = Depends(verify_token)) -> dict:
+        if payload.get("role") in roles:
+            return payload
+
+        # Fallback: soporte activo con rol insuficiente → intentar con access_token
+        if payload.get("is_support_session"):
+            token = request.cookies.get("access_token")
+            if token:
+                try:
+                    admin_payload = _decode_and_validate(token)
+                    if admin_payload.get("role") in roles:
+                        admin_payload["is_support_session"] = False
+                        return admin_payload
+                except HTTPException:
+                    pass
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Se requiere uno de los roles: {', '.join(roles)}",
+        )
     return _check
 
 

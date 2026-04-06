@@ -714,17 +714,32 @@ function UsersTable({ users, loading, navigate }) {
 }
 
 function SupportSessionsPanel() {
-  const [data, setData]       = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [data, setData]         = useState(null);
+  const [loading, setLoading]   = useState(false);
   const [revoking, setRevoking] = useState(null);
+  const [loadError, setLoadError] = useState(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    try { setData(await getSupportSessions()); } catch { /* ignore */ }
-    finally { setLoading(false); }
-  };
+    setLoadError(null);
+    try {
+      const result = await getSupportSessions();
+      setData(result);
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err?.message || 'Error al cargar sesiones';
+      setLoadError(msg);
+      console.error('[SupportSessionsPanel]', msg, err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  // Load on mount and auto-refresh every 30s
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, [load]);
 
   const handleRevoke = async (sessionId) => {
     if (!window.confirm('¿Revocar esta sesión de soporte ahora?')) return;
@@ -774,7 +789,12 @@ function SupportSessionsPanel() {
       )}
 
       <div className="max-h-48 overflow-y-auto">
-        {history.length === 0 ? (
+        {loadError ? (
+          <div className="p-4 text-[11px] text-red-400 flex items-center gap-2">
+            <span>⚠ Error: {loadError}</span>
+            <button onClick={load} className="underline hover:no-underline">Reintentar</button>
+          </div>
+        ) : history.length === 0 ? (
           <div className="p-6 text-center text-[11px] text-gray-600 italic">Sin historial de sesiones.</div>
         ) : (
           <table className="w-full text-[10px]">
