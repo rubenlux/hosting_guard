@@ -66,11 +66,13 @@ def start_support_session(
     )
 
     # JWT especial: sub = target user, impersonated_by = admin, mode = support
+    # caller_role indica quién inició la sesión (para control de permisos en endpoints)
     payload = {
         "user_id":         user_id,
         "email":           target["email"],
         "role":            target.get("role", "user"),
         "mode":            "support",
+        "caller_role":     "admin",          # el que inició es admin
         "impersonated_by": admin["user_id"],
         "admin_email":     admin["email"],
         "session_id":      session_id,
@@ -159,6 +161,7 @@ def staff_start_support_session(
         "email":           target["email"],
         "role":            target.get("role", "user"),
         "mode":            "support",
+        "caller_role":     "support",        # el que inició es staff/support
         "impersonated_by": staff["staff_id"],
         "admin_email":     staff["email"],
         "session_id":      session_id,

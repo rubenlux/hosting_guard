@@ -10,7 +10,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
-from app.api.security import verify_token, require_not_support
+from app.api.security import verify_token, require_support_write
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.user_repository import UserRepository
 
@@ -256,7 +256,7 @@ async def list_hostings(skip: int = 0, limit: int = 50, user: dict = Depends(ver
     return hostings_list
 
 @router.delete("/delete-hosting/{hosting_id}")
-async def delete_hosting(hosting_id: int, user: dict = Depends(require_not_support)):
+async def delete_hosting(hosting_id: int, user: dict = Depends(require_support_write)):
     user_id = user.get("user_id")
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
 

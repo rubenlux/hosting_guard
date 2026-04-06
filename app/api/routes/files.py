@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from app.api.security import verify_token, require_not_support
+from app.api.security import verify_token, require_support_write
 from app.infra.audit.hosting_repository import HostingRepository
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -134,7 +134,7 @@ class SaveRequest(BaseModel):
 def save_file(
     hosting_id: int,
     body: SaveRequest,
-    user: dict = Depends(require_not_support),
+    user: dict = Depends(require_support_write),
 ):
     """
     Guarda contenido en un archivo.
@@ -178,7 +178,7 @@ def save_file(
 def delete_file(
     hosting_id: int,
     path: str = Query(..., description="Ruta relativa al archivo a eliminar"),
-    user: dict = Depends(require_not_support),
+    user: dict = Depends(require_support_write),
 ):
     """Elimina un archivo (no directorios)."""
     hosting = _get_hosting(hosting_id, user["user_id"])

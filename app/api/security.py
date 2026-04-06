@@ -135,15 +135,32 @@ def verify_token(request: Request) -> dict:
 
 def require_not_support(user: dict = Depends(verify_token)) -> dict:
     """
-    Blocks destructive operations during a support session.
-    Use as a dependency on endpoints that must not run in support mode:
-        user = Depends(require_not_support)
+    Blocks SENSITIVE account mutations during a support session (topup, password, email).
+    Technical ops (file edit/delete, hosting restart/delete) are intentionally NOT blocked
+    here — support/admin staff must be able to perform them on behalf of the client.
     """
     if user.get("is_support_session"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acción no permitida en modo soporte. Solo lectura.",
+            detail="Acción no permitida en modo soporte: operación financiera o de cuenta.",
         )
+    return user
+
+
+def require_support_write(user: dict = Depends(verify_token)) -> dict:
+    """
+    Used on technical write endpoints (file save/delete, hosting delete).
+    - Regular users (no support session): allowed.
+    - Support sessions started by admin or support role: allowed.
+    - Support sessions started by billing/readonly: blocked.
+    """
+    if user.get("is_support_session"):
+        caller = user.get("caller_role", "")
+        if caller not in ("admin", "support"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Acción no permitida. Tu rol de soporte no incluye escritura técnica.",
+            )
     return user
 
 
