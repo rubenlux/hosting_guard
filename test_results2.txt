@@ -1,0 +1,23 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.0.1, pluggy-1.6.0
+rootdir: C:\Users\ruben\Desktop\hosting_guard
+configfile: pyproject.toml
+plugins: anyio-4.12.0, cov-7.0.0
+collected 41 items
+
+tests\test_login_and_routes.py ..........................                [ 63%]
+tests\test_staff_support_flow.py ...............                         [100%]
+
+============================== warnings summary ===============================
+tests/test_login_and_routes.py: 27 warnings
+tests/test_staff_support_flow.py: 14 warnings
+  C:\Program Files\Python312\Lib\site-packages\starlette\testclient.py:484: DeprecationWarning: Setting per-request cookies=<...> is being deprecated, because the expected behaviour on cookie persistence is ambiguous. Set cookies directly on the client instance instead.
+    return super().request(
+
+tests/test_login_and_routes.py: 27 warnings
+tests/test_staff_support_flow.py: 19 warnings
+  C:\Program Files\Python312\Lib\site-packages\jose\jwt.py:311: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = timegm(datetime.utcnow().utctimetuple())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+====================== 41 passed, 87 warnings in 40.05s =======================

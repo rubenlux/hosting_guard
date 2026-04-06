@@ -1,0 +1,289 @@
+.....FF....FFF.FFFFFFFFFF.                                               [100%]
+================================== FAILURES ===================================
+____________________ TestUserLogin.test_admin_login_works _____________________
+tests\test_login_and_routes.py:120: in test_admin_login_works
+    assert r.status_code == 200
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+WARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+WARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+_______________ TestUserLogin.test_me_after_login_returns_user ________________
+tests\test_login_and_routes.py:127: in test_me_after_login_returns_user
+    assert me.status_code == 200
+E   assert 401 == 200
+E    +  where 401 = <Response [401 Unauthorized]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+WARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+INFO:httpx:HTTP Request: GET http://testserver/me "HTTP/1.1 401 Unauthorized"
+------------------------------ Captured log call ------------------------------
+WARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+INFO     httpx:_client.py:1025 HTTP Request: GET http://testserver/me "HTTP/1.1 401 Unauthorized"
+_________ TestImpersonateRoutes.test_sessions_list_no_route_conflict __________
+tests\test_login_and_routes.py:178: in test_sessions_list_no_route_conflict
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+WARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+WARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+_______ TestImpersonateRoutes.test_sessions_list_returns_expected_shape _______
+tests\test_login_and_routes.py:187: in test_sessions_list_returns_expected_shape
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+WARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+WARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+__ TestImpersonateRoutes.test_session_detail_nonexistent_returns_404_not_422 __
+tests\test_login_and_routes.py:199: in test_session_detail_nonexistent_returns_404_not_422
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+WARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+WARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+____________ TestSessionAnalytics.test_session_appears_in_history _____________
+tests\test_login_and_routes.py:266: in test_session_appears_in_history
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+INFO:httpx:HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Support session created: b2bdf7b8-ea10-45de-a830-74be29ecb5b5 (admin=1 \u2192 user=2, issue='El sitio no carga')\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nWARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:50 Support session created: b2bdf7b8-ea10-45de-a830-74be29ecb5b5 (admin=1 \u2192 user=2, issue='El sitio no carga')\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nWARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+______________ TestSessionAnalytics.test_summary_counts_sessions ______________
+tests\test_login_and_routes.py:275: in test_summary_counts_sessions
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+INFO:httpx:HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Support session created: 3c061dfe-c961-48e2-b142-1c0819f4f4eb (admin=1 \u2192 user=2, issue='El sitio no carga')\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Session 3c061dfe-c961-48e2-b142-1c0819f4f4eb closed: result=resolved\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/3c061dfe-c961-48e2-b142-1c0819f4f4eb/close "HTTP/1.1 200 OK"\nWARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:50 Support session created: 3c061dfe-c961-48e2-b142-1c0819f4f4eb (admin=1 \u2192 user=2, issue='El sitio no carga')\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:91 Session 3c061dfe-c961-48e2-b142-1c0819f4f4eb closed: result=resolved\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/3c061dfe-c961-48e2-b142-1c0819f4f4eb/close "HTTP/1.1 200 OK"\nWARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+_________ TestSessionAnalytics.test_session_detail_returns_full_data __________
+tests\test_login_and_routes.py:284: in test_session_detail_returns_full_data
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+INFO:httpx:HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Support session created: 6694e126-e0e5-40c4-ada4-f11d56fcdd3e (admin=1 \u2192 user=2, issue='El sitio no carga')\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Session 6694e126-e0e5-40c4-ada4-f11d56fcdd3e closed: result=resolved\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/6694e126-e0e5-40c4-ada4-f11d56fcdd3e/close "HTTP/1.1 200 OK"\nWARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:50 Support session created: 6694e126-e0e5-40c4-ada4-f11d56fcdd3e (admin=1 \u2192 user=2, issue='El sitio no carga')\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:91 Session 6694e126-e0e5-40c4-ada4-f11d56fcdd3e closed: result=resolved\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/6694e126-e0e5-40c4-ada4-f11d56fcdd3e/close "HTTP/1.1 200 OK"\nWARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+__________ TestSessionAnalytics.test_session_detail_has_target_email __________
+tests\test_login_and_routes.py:303: in test_session_detail_has_target_email
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+INFO:httpx:HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Support session created: 6cb186e1-356d-4e82-a80e-3ceace9a4469 (admin=1 \u2192 user=2, issue='El sitio no carga')\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nWARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:50 Support session created: 6cb186e1-356d-4e82-a80e-3ceace9a4469 (admin=1 \u2192 user=2, issue='El sitio no carga')\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nWARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+____________ TestSessionAnalytics.test_closed_session_has_ended_at ____________
+tests\test_login_and_routes.py:312: in test_closed_session_has_ended_at
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+INFO:httpx:HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Support session created: 5c5b8828-54a5-425a-a470-3a6799582f09 (admin=1 \u2192 user=2, issue='El sitio no carga')\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Session 5c5b8828-54a5-425a-a470-3a6799582f09 closed: result=resolved\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/5c5b8828-54a5-425a-a470-3a6799582f09/close "HTTP/1.1 200 OK"\nWARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:50 Support session created: 5c5b8828-54a5-425a-a470-3a6799582f09 (admin=1 \u2192 user=2, issue='El sitio no carga')\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:91 Session 5c5b8828-54a5-425a-a470-3a6799582f09 closed: result=resolved\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/5c5b8828-54a5-425a-a470-3a6799582f09/close "HTTP/1.1 200 OK"\nWARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+______________ TestSessionAnalytics.test_session_with_issue_info ______________
+tests\test_login_and_routes.py:330: in test_session_with_issue_info
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+INFO:httpx:HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Support session created: b1d1cc77-2975-42dd-9711-e8ebaeabc330 (admin=1 \u2192 user=2, issue='Error 500 en producci\xf3n')\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nWARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:50 Support session created: b1d1cc77-2975-42dd-9711-e8ebaeabc330 (admin=1 \u2192 user=2, issue='Error 500 en producci\xf3n')\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nWARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+_____________ TestAdminCloseSession.test_admin_can_close_session ______________
+tests\test_login_and_routes.py:352: in test_admin_can_close_session
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+INFO:httpx:HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Support session created: ee48c619-4883-4c74-8cf6-0b23a576601d (admin=1 \u2192 user=2, issue=None)\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nWARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:50 Support session created: ee48c619-4883-4c74-8cf6-0b23a576601d (admin=1 \u2192 user=2, issue=None)\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nWARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+_________ TestAdminCloseSession.test_close_invalid_result_returns_400 _________
+tests\test_login_and_routes.py:369: in test_close_invalid_result_returns_400
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+INFO:httpx:HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO:app.infra.audit.support_repository:Support session created: 96f90ec1-26ef-4a00-afbb-d1875ebdd95d (admin=1 \u2192 user=2, issue=None)\nINFO:httpx:HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nWARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/staff/login "HTTP/1.1 200 OK"\nINFO     app.infra.audit.support_repository:support_repository.py:50 Support session created: 96f90ec1-26ef-4a00-afbb-d1875ebdd95d (admin=1 \u2192 user=2, issue=None)\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/admin/impersonate/staff/2 "HTTP/1.1 200 OK"\nWARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+______ TestAdminCloseSession.test_close_nonexistent_session_returns_404 _______
+tests\test_login_and_routes.py:378: in test_close_nonexistent_session_returns_404
+    admin_ck = _admin_cookies(setup)
+               ^^^^^^^^^^^^^^^^^^^^^
+tests\test_login_and_routes.py:80: in _admin_cookies
+    assert r.status_code == 200, f"admin login failed: {r.text}"
+E   AssertionError: admin login failed: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+WARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+WARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+______ TestLoginResilience.test_login_works_when_staff_table_would_error ______
+tests\test_login_and_routes.py:408: in test_login_works_when_staff_table_would_error
+    assert r.status_code == 200, \
+E   AssertionError: Login should work even when staff_accounts fails, got 429: {"detail":"Rate limit exceeded"}
+E   assert 429 == 200
+E    +  where 429 = <Response [429 Too Many Requests]>.status_code
+---------------------------- Captured stderr setup ----------------------------
+INFO:app.infra.audit.staff_repository:Staff account created: soporte@t.com (role=support, by admin=0)
+----------------------------- Captured log setup ------------------------------
+INFO     app.infra.audit.staff_repository:staff_repository.py:48 Staff account created: soporte@t.com (role=support, by admin=0)
+---------------------------- Captured stderr call -----------------------------
+WARNING:slowapi:ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO:httpx:HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+------------------------------ Captured log call ------------------------------
+WARNING  slowapi:extension.py:510 ratelimit 5 per 1 minute (testclient) exceeded at endpoint: /login
+INFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/login "HTTP/1.1 429 Too Many Requests"
+============================== warnings summary ===============================
+tests/test_login_and_routes.py: 15 warnings
+  C:\Program Files\Python312\Lib\site-packages\starlette\testclient.py:484: DeprecationWarning: Setting per-request cookies=<...> is being deprecated, because the expected behaviour on cookie persistence is ambiguous. Set cookies directly on the client instance instead.
+    return super().request(
+
+tests/test_login_and_routes.py: 14 warnings
+  C:\Program Files\Python312\Lib\site-packages\jose\jwt.py:311: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = timegm(datetime.utcnow().utctimetuple())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_login_and_routes.py::TestUserLogin::test_admin_login_works
+FAILED tests/test_login_and_routes.py::TestUserLogin::test_me_after_login_returns_user
+FAILED tests/test_login_and_routes.py::TestImpersonateRoutes::test_sessions_list_no_route_conflict
+FAILED tests/test_login_and_routes.py::TestImpersonateRoutes::test_sessions_list_returns_expected_shape
+FAILED tests/test_login_and_routes.py::TestImpersonateRoutes::test_session_detail_nonexistent_returns_404_not_422
+FAILED tests/test_login_and_routes.py::TestSessionAnalytics::test_session_appears_in_history
+FAILED tests/test_login_and_routes.py::TestSessionAnalytics::test_summary_counts_sessions
+FAILED tests/test_login_and_routes.py::TestSessionAnalytics::test_session_detail_returns_full_data
+FAILED tests/test_login_and_routes.py::TestSessionAnalytics::test_session_detail_has_target_email
+FAILED tests/test_login_and_routes.py::TestSessionAnalytics::test_closed_session_has_ended_at
+FAILED tests/test_login_and_routes.py::TestSessionAnalytics::test_session_with_issue_info
+FAILED tests/test_login_and_routes.py::TestAdminCloseSession::test_admin_can_close_session
+FAILED tests/test_login_and_routes.py::TestAdminCloseSession::test_close_invalid_result_returns_400
+FAILED tests/test_login_and_routes.py::TestAdminCloseSession::test_close_nonexistent_session_returns_404
+FAILED tests/test_login_and_routes.py::TestLoginResilience::test_login_works_when_staff_table_would_error
+15 failed, 11 passed, 29 warnings in 23.37s
