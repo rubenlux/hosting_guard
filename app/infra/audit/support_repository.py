@@ -1,8 +1,11 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from app.infra.audit.sqlite import get_connection
+
+logger = logging.getLogger(__name__)
 
 
 class SupportSessionRepository:
@@ -18,20 +21,32 @@ class SupportSessionRepository:
         session_id = str(uuid.uuid4())
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            """INSERT INTO support_sessions
-               (session_id, admin_id, target_user_id, created_at, expires_at, ip_address)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                session_id,
-                admin_id,
-                target_user_id,
-                datetime.now(timezone.utc).isoformat(),
-                expires_at.isoformat(),
-                ip_address,
-            ),
-        )
-        conn.commit()
+        try:
+            cursor.execute(
+                """INSERT INTO support_sessions
+                   (session_id, admin_id, target_user_id, created_at, expires_at, ip_address)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    session_id,
+                    admin_id,
+                    target_user_id,
+                    datetime.now(timezone.utc).isoformat(),
+                    expires_at.isoformat(),
+                    ip_address,
+                ),
+            )
+            conn.commit()
+            logger.info(
+                "Support session created: %s (admin=%s → user=%s)",
+                session_id, admin_id, target_user_id,
+            )
+        except Exception as exc:
+            logger.error("Failed to save support session %s: %s", session_id, exc)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
         return session_id
 
     def revoke_session(self, session_id: str, admin_id: int) -> bool:
