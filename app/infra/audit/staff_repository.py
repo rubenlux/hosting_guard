@@ -9,8 +9,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from app.infra.audit.sqlite import get_connection
+from app.infra.db import BACKEND
 
 logger = logging.getLogger(__name__)
+
+# Placeholder correcto según el backend activo
+_PH = "%s" if BACKEND == "postgresql" else "?"
 
 
 class StaffRepository:
@@ -29,11 +33,12 @@ class StaffRepository:
     ) -> int:
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         try:
             cursor.execute(
-                """INSERT INTO staff_accounts
+                f"""INSERT INTO staff_accounts
                    (admin_id, email, password_hash, full_name, role, is_active, created_at)
-                   VALUES (?, ?, ?, ?, ?, 1, ?)""",
+                   VALUES ({p},{p},{p},{p},{p},1,{p})""",
                 (
                     admin_id,
                     email,
@@ -44,6 +49,11 @@ class StaffRepository:
                 ),
             )
             staff_id = cursor.lastrowid
+            # PostgreSQL devuelve lastrowid sólo si se usa RETURNING; fallback:
+            if staff_id is None and BACKEND == "postgresql":
+                cursor.execute(f"SELECT staff_id FROM staff_accounts WHERE email = {p}", (email,))
+                row = cursor.fetchone()
+                staff_id = row[0] if row else None
             conn.commit()
             logger.info("Staff account created: %s (role=%s, by admin=%s)", email, role, admin_id)
             return staff_id
@@ -56,14 +66,14 @@ class StaffRepository:
     def get_staff_by_email(self, email: str) -> Optional[Dict]:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM staff_accounts WHERE email = ?", (email,))
+        cursor.execute(f"SELECT * FROM staff_accounts WHERE email = {_PH}", (email,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
     def get_staff_by_id(self, staff_id: int) -> Optional[Dict]:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM staff_accounts WHERE staff_id = ?", (staff_id,))
+        cursor.execute(f"SELECT * FROM staff_accounts WHERE staff_id = {_PH}", (staff_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
@@ -82,11 +92,12 @@ class StaffRepository:
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return False
-        sets = ", ".join(f"{k} = ?" for k in updates)
+        p = _PH
+        sets = ", ".join(f"{k} = {p}" for k in updates)
         values = list(updates.values()) + [staff_id]
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute(f"UPDATE staff_accounts SET {sets} WHERE staff_id = ?", values)
+        cursor.execute(f"UPDATE staff_accounts SET {sets} WHERE staff_id = {p}", values)
         conn.commit()
         return cursor.rowcount > 0
 
@@ -95,7 +106,7 @@ class StaffRepository:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE staff_accounts SET is_active = 0 WHERE staff_id = ?",
+            f"UPDATE staff_accounts SET is_active = 0 WHERE staff_id = {_PH}",
             (staff_id,),
         )
         conn.commit()
@@ -106,7 +117,7 @@ class StaffRepository:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE staff_accounts SET password_hash = ? WHERE staff_id = ?",
+            f"UPDATE staff_accounts SET password_hash = {_PH} WHERE staff_id = {_PH}",
             (password_hash, staff_id),
         )
         conn.commit()
@@ -115,7 +126,7 @@ class StaffRepository:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE staff_accounts SET last_login_at = ? WHERE staff_id = ?",
+            f"UPDATE staff_accounts SET last_login_at = {_PH} WHERE staff_id = {_PH}",
             (datetime.now(timezone.utc).isoformat(), staff_id),
         )
         conn.commit()
@@ -137,12 +148,13 @@ class StaffRepository:
     ) -> int:
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         try:
             cursor.execute(
-                """INSERT INTO staff_activity_log
+                f"""INSERT INTO staff_activity_log
                    (staff_id, action_type, target_user_id, target_hosting_id,
                     description, duration_seconds, ip_address, session_id, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES ({p},{p},{p},{p},{p},{p},{p},{p},{p})""",
                 (
                     staff_id,
                     action_type,
@@ -156,6 +168,8 @@ class StaffRepository:
                 ),
             )
             log_id = cursor.lastrowid
+            if log_id is None and BACKEND == "postgresql":
+                log_id = 0  # PostgreSQL: not critical, activity was saved
             conn.commit()
             return log_id
         except Exception as exc:
@@ -169,12 +183,13 @@ class StaffRepository:
     def get_activity_for_staff(self, staff_id: int, limit: int = 100) -> List[Dict]:
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """SELECT l.*, u.email AS target_email
+            f"""SELECT l.*, u.email AS target_email
                FROM staff_activity_log l
                LEFT JOIN users u ON l.target_user_id = u.user_id
-               WHERE l.staff_id = ?
-               ORDER BY l.created_at DESC LIMIT ?""",
+               WHERE l.staff_id = {p}
+               ORDER BY l.created_at DESC LIMIT {p}""",
             (staff_id, limit),
         )
         return [dict(row) for row in cursor.fetchall()]
@@ -182,13 +197,14 @@ class StaffRepository:
     def get_all_activity(self, limit: int = 500) -> List[Dict]:
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """SELECT l.*, s.email AS staff_email, s.full_name AS staff_name,
+            f"""SELECT l.*, s.email AS staff_email, s.full_name AS staff_name,
                       s.role AS staff_role, u.email AS target_email
                FROM staff_activity_log l
                JOIN staff_accounts s ON l.staff_id = s.staff_id
                LEFT JOIN users u ON l.target_user_id = u.user_id
-               ORDER BY l.created_at DESC LIMIT ?""",
+               ORDER BY l.created_at DESC LIMIT {p}""",
             (limit,),
         )
         return [dict(row) for row in cursor.fetchall()]
@@ -198,8 +214,9 @@ class StaffRepository:
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """SELECT
+            f"""SELECT
                  s.staff_id, s.email, s.full_name, s.role, s.is_active,
                  s.last_login_at,
                  COUNT(l.log_id)                                                      AS total_actions,
@@ -213,8 +230,8 @@ class StaffRepository:
                  MAX(l.created_at)                                                    AS last_activity_at
                FROM staff_accounts s
                LEFT JOIN staff_activity_log l
-                 ON s.staff_id = l.staff_id AND l.created_at >= ?
-               GROUP BY s.staff_id
+                 ON s.staff_id = l.staff_id AND l.created_at >= {p}
+               GROUP BY s.staff_id, s.email, s.full_name, s.role, s.is_active, s.last_login_at
                ORDER BY total_actions DESC""",
             (since,),
         )
@@ -225,8 +242,7 @@ class StaffRepository:
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         conn = get_connection()
         cursor = conn.cursor()
-        # SQLite: strftime('%H', created_at)  |  PostgreSQL: EXTRACT(HOUR FROM created_at::timestamptz)
-        from app.infra.db import BACKEND
+        p = _PH
         if BACKEND == "postgresql":
             hour_expr = "EXTRACT(HOUR FROM created_at::timestamptz)::INTEGER"
         else:
@@ -234,7 +250,7 @@ class StaffRepository:
         cursor.execute(
             f"""SELECT {hour_expr} AS hour, COUNT(*) AS events
                 FROM staff_activity_log
-                WHERE staff_id = ? AND created_at >= ?
+                WHERE staff_id = {p} AND created_at >= {p}
                 GROUP BY hour ORDER BY hour""",
             (staff_id, since),
         )

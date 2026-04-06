@@ -1,11 +1,20 @@
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from app.infra.audit.sqlite import get_connection
+from app.infra.db import BACKEND
 
 logger = logging.getLogger(__name__)
+
+# Placeholder correcto según el backend
+_PH = "%s" if BACKEND == "postgresql" else "?"
+
+
+def _now_interval(days: int) -> str:
+    """ISO string N days ago (compatible SQLite & PostgreSQL)."""
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
 
 class SupportSessionRepository:
@@ -26,12 +35,13 @@ class SupportSessionRepository:
         session_id = str(uuid.uuid4())
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         try:
             cursor.execute(
-                """INSERT INTO support_sessions
+                f"""INSERT INTO support_sessions
                    (session_id, admin_id, target_user_id, created_at, expires_at,
                     ip_address, issue_description, origin, session_type, initiated_by, staff_agent)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES ({p},{p},{p},{p},{p},{p},{p},{p},{p},{p},{p})""",
                 (
                     session_id,
                     admin_id,
@@ -73,10 +83,11 @@ class SupportSessionRepository:
         """
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """UPDATE support_sessions
-               SET ended_at = ?, result = ?, resolution_notes = ?, action_taken = ?
-               WHERE session_id = ?""",
+            f"""UPDATE support_sessions
+               SET ended_at = {p}, result = {p}, resolution_notes = {p}, action_taken = {p}
+               WHERE session_id = {p}""",
             (
                 datetime.now(timezone.utc).isoformat(),
                 result,
@@ -94,9 +105,10 @@ class SupportSessionRepository:
     def revoke_session(self, session_id: str, admin_id: int) -> bool:
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """UPDATE support_sessions SET revoked_at = ?
-               WHERE session_id = ? AND admin_id = ? AND revoked_at IS NULL""",
+            f"""UPDATE support_sessions SET revoked_at = {p}
+               WHERE session_id = {p} AND admin_id = {p} AND revoked_at IS NULL""",
             (datetime.now(timezone.utc).isoformat(), session_id, admin_id),
         )
         conn.commit()
@@ -108,12 +120,13 @@ class SupportSessionRepository:
         """Sessions not yet expired and not revoked."""
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         now = datetime.now(timezone.utc).isoformat()
         cursor.execute(
-            """SELECT s.*, u_target.email AS target_email
+            f"""SELECT s.*, u_target.email AS target_email
                FROM support_sessions s
                LEFT JOIN users u_target ON s.target_user_id = u_target.user_id
-               WHERE s.revoked_at IS NULL AND s.expires_at > ?
+               WHERE s.revoked_at IS NULL AND s.expires_at > {p}
                ORDER BY s.created_at DESC""",
             (now,),
         )
@@ -123,8 +136,9 @@ class SupportSessionRepository:
         """Full history — active + expired + revoked, enriched with initiator name."""
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """SELECT s.*,
+            f"""SELECT s.*,
                       u_target.email AS target_email,
                       COALESCE(sa.full_name, u_admin.email, 'Sistema') AS initiator_name,
                       COALESCE(sa.email, u_admin.email)                AS initiator_email,
@@ -135,7 +149,7 @@ class SupportSessionRepository:
                                        AND s.initiated_by = 'admin'
                LEFT JOIN staff_accounts sa ON s.admin_id = sa.staff_id
                                            AND s.initiated_by = 'staff'
-               ORDER BY s.created_at DESC LIMIT ?""",
+               ORDER BY s.created_at DESC LIMIT {p}""",
             (limit,),
         )
         return [dict(row) for row in cursor.fetchall()]
@@ -144,8 +158,9 @@ class SupportSessionRepository:
         """Full session detail with initiator info."""
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """SELECT s.*,
+            f"""SELECT s.*,
                       u_target.email AS target_email,
                       u_target.plan  AS target_plan,
                       COALESCE(sa.full_name, u_admin.email, 'Sistema') AS initiator_name,
@@ -157,7 +172,7 @@ class SupportSessionRepository:
                                        AND s.initiated_by = 'admin'
                LEFT JOIN staff_accounts sa ON s.admin_id = sa.staff_id
                                            AND s.initiated_by = 'staff'
-               WHERE s.session_id = ?""",
+               WHERE s.session_id = {p}""",
             (session_id,),
         )
         row = cursor.fetchone()
@@ -167,11 +182,12 @@ class SupportSessionRepository:
         """All staff_activity_log entries linked to this session."""
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """SELECT l.*, sa.full_name AS staff_name, sa.email AS staff_email
+            f"""SELECT l.*, sa.full_name AS staff_name, sa.email AS staff_email
                FROM staff_activity_log l
                LEFT JOIN staff_accounts sa ON l.staff_id = sa.staff_id
-               WHERE l.session_id = ?
+               WHERE l.session_id = {p}
                ORDER BY l.created_at ASC""",
             (session_id,),
         )
@@ -181,14 +197,16 @@ class SupportSessionRepository:
         """Sessions initiated by a specific staff member."""
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
+        since = _now_interval(days)
         cursor.execute(
-            """SELECT s.*, u_target.email AS target_email
+            f"""SELECT s.*, u_target.email AS target_email
                FROM support_sessions s
                LEFT JOIN users u_target ON s.target_user_id = u_target.user_id
-               WHERE s.admin_id = ? AND s.initiated_by = 'staff'
-                 AND s.created_at >= datetime('now', ? || ' days')
-               ORDER BY s.created_at DESC LIMIT ?""",
-            (staff_id, f"-{days}", limit),
+               WHERE s.admin_id = {p} AND s.initiated_by = 'staff'
+                 AND s.created_at >= {p}
+               ORDER BY s.created_at DESC LIMIT {p}""",
+            (staff_id, since, limit),
         )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -196,8 +214,9 @@ class SupportSessionRepository:
         """History of sessions targeting a specific user (shown to the client)."""
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """SELECT s.session_id, s.created_at, s.expires_at, s.revoked_at,
+            f"""SELECT s.session_id, s.created_at, s.expires_at, s.revoked_at,
                       s.issue_description, s.result, s.ended_at,
                       COALESCE(sa.full_name, u_admin.email, 'Sistema') AS admin_email
                FROM support_sessions s
@@ -205,31 +224,29 @@ class SupportSessionRepository:
                                        AND s.initiated_by = 'admin'
                LEFT JOIN staff_accounts sa ON s.admin_id = sa.staff_id
                                            AND s.initiated_by = 'staff'
-               WHERE s.target_user_id = ?
-               ORDER BY s.created_at DESC LIMIT ?""",
+               WHERE s.target_user_id = {p}
+               ORDER BY s.created_at DESC LIMIT {p}""",
             (user_id, limit),
         )
         return [dict(row) for row in cursor.fetchall()]
 
     def get_sessions_summary(self, days: int = 30) -> Dict:
-        """Aggregate stats for the analytics dashboard."""
+        """Aggregate stats for the analytics dashboard — compatible SQLite & PostgreSQL."""
         conn = get_connection()
         cursor = conn.cursor()
-        since = f"-{days} days"
+        p = _PH
+        since = _now_interval(days)
+        now   = datetime.now(timezone.utc).isoformat()
         cursor.execute(
-            """SELECT
+            f"""SELECT
                  COUNT(*) AS total,
-                 SUM(CASE WHEN result = 'resolved' THEN 1 ELSE 0 END) AS resolved,
+                 SUM(CASE WHEN result = 'resolved'   THEN 1 ELSE 0 END) AS resolved,
                  SUM(CASE WHEN result = 'unresolved' THEN 1 ELSE 0 END) AS unresolved,
-                 SUM(CASE WHEN result = 'escalated' THEN 1 ELSE 0 END) AS escalated,
-                 SUM(CASE WHEN ended_at IS NULL AND expires_at > datetime('now') THEN 1 ELSE 0 END) AS active,
-                 AVG(CASE
-                   WHEN ended_at IS NOT NULL
-                   THEN (julianday(ended_at) - julianday(created_at)) * 86400
-                 END) AS avg_duration_seconds
+                 SUM(CASE WHEN result = 'escalated'  THEN 1 ELSE 0 END) AS escalated,
+                 SUM(CASE WHEN ended_at IS NULL AND expires_at > {p} THEN 1 ELSE 0 END) AS active
                FROM support_sessions
-               WHERE created_at >= datetime('now', ?)""",
-            (since,),
+               WHERE created_at >= {p}""",
+            (now, since),
         )
         row = cursor.fetchone()
         return dict(row) if row else {}
