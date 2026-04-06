@@ -11,6 +11,8 @@ import Dashboard from './pages/Dashboard';
 import AdminUserDetail from './pages/AdminUserDetail';
 import AdminPixelUsers from './pages/AdminPixelUsers';
 import AdminPixelUserDetail from './pages/AdminPixelUserDetail';
+import StaffLogin from './pages/StaffLogin';
+import StaffDashboard from './pages/StaffDashboard';
 import { useAuth } from './hooks/useAuth';
 
 const PrivateRoute = ({ children }) => {
@@ -55,6 +57,9 @@ function App() {
           <Route path="/admin/users/:id"              element={<AdminRoute><AdminUserDetail /></AdminRoute>} />
           <Route path="/admin/pixel-users"            element={<AdminRoute><AdminPixelUsers /></AdminRoute>} />
           <Route path="/admin/pixel-users/:user_id"   element={<AdminRoute><AdminPixelUserDetail /></AdminRoute>} />
+          {/* Staff routes — autenticación independiente vía staff_token cookie */}
+          <Route path="/staff/login"     element={<StaffLogin />} />
+          <Route path="/staff/dashboard" element={<StaffDashboard />} />
         </Routes>
       </main>
       {!user && <Footer />}

@@ -5,15 +5,18 @@ import {
   LogOut, Zap, Bell, Settings, CheckCircle2,
   XCircle, Clock, DollarSign, FileText, Bot,
   TrendingUp, MousePointer, Eye, Timer, ArrowRight,
-  HeadsetIcon, ShieldAlert, Ban,
+  HeadsetIcon, ShieldAlert, Ban, UserCog, PlusCircle,
+  ToggleLeft, ToggleRight, ChevronDown, Pencil, Trash2,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
   getAdminPixelEvents, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
   startSupportSession, getSupportSessions, revokeSupportSession,
+  listStaff, createStaff, updateStaff, deactivateStaff,
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
+import StaffAnalytics from '../components/StaffAnalytics';
 
 /* ─── helpers ─────────────────────────────────────────────── */
 function groupBy(arr, key) {
@@ -45,6 +48,7 @@ const NAV = [
   { id: 'pixel-users',   label: 'Pixel Users',      icon: Users,     path: '/admin/pixel-users' },
   { id: 'orchestrator',  label: 'Orchestrator',     icon: Bot },
   { id: 'finance',       label: 'Finance',          icon: DollarSign },
+  { id: 'equipo',        label: 'Equipo',           icon: UserCog },
   { id: 'audit',         label: 'Audit Log',        icon: FileText },
   { id: 'settings',      label: 'Settings',         icon: Settings },
 ];
@@ -554,6 +558,9 @@ export default function AdminDashboard() {
               </div>
             )}
 
+            {/* ══ EQUIPO ══ */}
+            {section === 'equipo' && <EquipoSection />}
+
             {/* ══ SETTINGS ══ */}
             {section === 'settings' && (
               <div className="flex flex-col gap-4">
@@ -899,5 +906,300 @@ function PixelLog({ events, loading, filter, setFilter, compact }) {
         </table>
       </div>
     </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   EQUIPO — Colaboradores + Analytics
+   ═══════════════════════════════════════════════════════════ */
+
+const ROLE_LABELS = { support: 'Soporte', billing: 'Billing', readonly: 'Solo lectura' };
+const ROLE_COLORS = {
+  support:  'bg-amber-500/15 text-amber-400',
+  billing:  'bg-blue-500/15 text-blue-400',
+  readonly: 'bg-white/5 text-gray-500',
+};
+
+function EquipoSection() {
+  const [tab, setTab]           = useState('staff');      // 'staff' | 'analytics'
+  const [staffList, setStaff]   = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [showCreate, setCreate] = useState(false);
+  const [created, setCreated]   = useState(null);  // { email, temp_password }
+  const [editId, setEditId]     = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setStaff(await listStaff()); }
+    catch { /* silent */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="space-y-5">
+      {/* Tab switcher */}
+      <div className="flex items-center gap-1 border-b border-white/5 pb-3">
+        {[
+          { id: 'staff',     label: 'Colaboradores', icon: UserCog },
+          { id: 'analytics', label: 'Analytics',     icon: TrendingUp },
+        ].map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
+              tab === t.id
+                ? 'bg-amber-500/15 text-amber-400'
+                : 'text-gray-500 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <t.icon className="w-3.5 h-3.5" />
+            {t.label}
+          </button>
+        ))}
+        {tab === 'staff' && (
+          <button
+            onClick={() => { setCreate(true); setCreated(null); }}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold
+              bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+          >
+            <PlusCircle className="w-3.5 h-3.5" />
+            Nuevo colaborador
+          </button>
+        )}
+      </div>
+
+      {/* Create form */}
+      {tab === 'staff' && showCreate && (
+        <CreateStaffForm
+          onDone={(result) => { setCreated(result); setCreate(false); load(); }}
+          onCancel={() => setCreate(false)}
+        />
+      )}
+
+      {/* Success box after creation */}
+      {tab === 'staff' && created && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 space-y-2">
+          <div className="text-[11px] font-bold text-emerald-400">✓ Colaborador creado</div>
+          <div className="text-[11px] text-gray-300">
+            Email: <span className="font-mono text-white">{created.email}</span>
+          </div>
+          <div className="text-[11px] text-gray-300 flex items-center gap-2">
+            Contraseña temporal:
+            <code className="font-mono text-amber-300 bg-black/30 px-2 py-0.5 rounded select-all">
+              {created.temp_password}
+            </code>
+          </div>
+          <p className="text-[10px] text-gray-600">
+            Esta contraseña solo se muestra una vez. Compártela de forma segura.
+          </p>
+          <button onClick={() => setCreated(null)} className="text-[10px] text-gray-600 hover:text-white underline">
+            Cerrar
+          </button>
+        </div>
+      )}
+
+      {/* Staff list */}
+      {tab === 'staff' && (
+        <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="border-b border-white/5">
+                {['Colaborador', 'Rol', 'Estado', 'Acciones 30d', 'Último login', 'Opciones'].map(h => (
+                  <th key={h} className="text-left px-4 py-3 text-[9px] uppercase tracking-wider text-gray-600 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={6} className="p-8 text-center"><RefreshCw className="w-4 h-4 animate-spin mx-auto text-gray-600" /></td></tr>
+              ) : staffList.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="p-10 text-center text-gray-600 italic text-[11px]">
+                    Sin colaboradores. Crea el primero con "Nuevo colaborador".
+                  </td>
+                </tr>
+              ) : staffList.map(s => (
+                <React.Fragment key={s.staff_id}>
+                  <tr className={`border-b border-white/5 transition-colors ${editId === s.staff_id ? 'bg-amber-500/5' : 'hover:bg-white/[0.02]'}`}>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold ${s.is_active ? 'bg-amber-500/15 text-amber-400' : 'bg-white/5 text-gray-600'}`}>
+                          {s.full_name?.[0]?.toUpperCase() || '?'}
+                        </div>
+                        <div>
+                          <div className={`text-[11px] font-medium ${s.is_active ? 'text-white' : 'text-gray-600'}`}>{s.full_name}</div>
+                          <div className="text-[10px] text-gray-600">{s.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${ROLE_COLORS[s.role] || 'bg-white/5 text-gray-500'}`}>
+                        {ROLE_LABELS[s.role] || s.role}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {s.is_active
+                        ? <span className="text-emerald-400 text-[10px] font-bold">● Activo</span>
+                        : <span className="text-red-500 text-[10px] font-bold">● Inactivo</span>}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-[11px] text-amber-400">{s.total_actions_30d ?? 0}</td>
+                    <td className="px-4 py-3 text-[10px] text-gray-500">
+                      {s.last_login_at
+                        ? new Date(s.last_login_at).toLocaleString('es-AR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                        : '—'}
+                    </td>
+                    <td className="px-4 py-3 flex items-center gap-2">
+                      <button
+                        onClick={() => setEditId(editId === s.staff_id ? null : s.staff_id)}
+                        className="p-1.5 rounded hover:bg-white/10 text-gray-500 hover:text-white transition-colors"
+                        title="Editar"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm(`¿${s.is_active ? 'Desactivar' : 'Activar'} a ${s.full_name}?`)) return;
+                          await updateStaff(s.staff_id, { is_active: !s.is_active });
+                          load();
+                        }}
+                        className={`p-1.5 rounded transition-colors ${s.is_active ? 'hover:bg-red-500/10 text-gray-500 hover:text-red-400' : 'hover:bg-emerald-500/10 text-gray-500 hover:text-emerald-400'}`}
+                        title={s.is_active ? 'Desactivar' : 'Activar'}
+                      >
+                        {s.is_active ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
+                      </button>
+                    </td>
+                  </tr>
+                  {editId === s.staff_id && (
+                    <tr className="border-b border-white/5 bg-[#0d0d0d]">
+                      <td colSpan={6} className="px-6 py-4">
+                        <EditStaffRow
+                          staff={s}
+                          onSave={async (data) => { await updateStaff(s.staff_id, data); setEditId(null); load(); }}
+                          onCancel={() => setEditId(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Analytics tab */}
+      {tab === 'analytics' && <StaffAnalytics />}
+    </div>
+  );
+}
+
+function CreateStaffForm({ onDone, onCancel }) {
+  const [form, setForm] = useState({ email: '', full_name: '', role: 'support' });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setErr('');
+    try {
+      const result = await createStaff(form);
+      onDone(result);
+    } catch (ex) {
+      setErr(ex?.response?.data?.detail || 'Error creando colaborador');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="bg-[#0d0d0d] border border-white/10 rounded-xl p-5 space-y-4">
+      <div className="text-[11px] font-bold text-white mb-1">Nuevo colaborador</div>
+      {err && <div className="text-[11px] text-red-400">{err}</div>}
+      <div className="grid grid-cols-3 gap-4">
+        <div>
+          <label className="block text-[9px] uppercase tracking-wider text-gray-500 mb-1">Email</label>
+          <input
+            required type="email" value={form.email}
+            onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600 outline-none focus:border-amber-500/50"
+            placeholder="colaborador@empresa.com"
+          />
+        </div>
+        <div>
+          <label className="block text-[9px] uppercase tracking-wider text-gray-500 mb-1">Nombre completo</label>
+          <input
+            required value={form.full_name}
+            onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600 outline-none focus:border-amber-500/50"
+            placeholder="Juan Pérez"
+          />
+        </div>
+        <div>
+          <label className="block text-[9px] uppercase tracking-wider text-gray-500 mb-1">Rol</label>
+          <select
+            value={form.role}
+            onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white outline-none focus:border-amber-500/50"
+          >
+            <option value="support">Soporte — acceso remoto + edición código</option>
+            <option value="billing">Billing — solo facturación</option>
+            <option value="readonly">Solo lectura — dashboards y métricas</option>
+          </select>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button type="submit" disabled={saving}
+          className="px-4 py-2 rounded-lg text-[11px] font-bold bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-colors disabled:opacity-50">
+          {saving ? 'Creando...' : 'Crear colaborador'}
+        </button>
+        <button type="button" onClick={onCancel}
+          className="px-4 py-2 rounded-lg text-[11px] font-bold bg-white/5 text-gray-400 hover:text-white transition-colors">
+          Cancelar
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function EditStaffRow({ staff, onSave, onCancel }) {
+  const [role, setRole] = useState(staff.role);
+  const [name, setName] = useState(staff.full_name);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try { await onSave({ role, full_name: name }); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <form onSubmit={submit} className="flex items-end gap-4">
+      <div>
+        <label className="block text-[9px] uppercase tracking-wider text-gray-600 mb-1">Nombre</label>
+        <input value={name} onChange={e => setName(e.target.value)}
+          className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-[11px] text-white outline-none focus:border-amber-500/50 w-48" />
+      </div>
+      <div>
+        <label className="block text-[9px] uppercase tracking-wider text-gray-600 mb-1">Rol</label>
+        <select value={role} onChange={e => setRole(e.target.value)}
+          className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-[11px] text-white outline-none focus:border-amber-500/50">
+          <option value="support">Soporte</option>
+          <option value="billing">Billing</option>
+          <option value="readonly">Solo lectura</option>
+        </select>
+      </div>
+      <button type="submit" disabled={saving}
+        className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-colors disabled:opacity-50">
+        {saving ? '...' : 'Guardar'}
+      </button>
+      <button type="button" onClick={onCancel}
+        className="px-3 py-1.5 rounded-lg text-[11px] text-gray-500 hover:text-white bg-white/5 transition-colors">
+        Cancelar
+      </button>
+    </form>
   );
 }

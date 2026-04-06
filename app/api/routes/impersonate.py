@@ -12,7 +12,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import jwt
 
-from app.api.security import SECRET, ALGO, require_role, revoke_token
+from app.api.security import SECRET, ALGO, require_role, require_staff_role, verify_staff_token, revoke_token
+from app.infra.audit.staff_repository import StaffRepository
 from app.infra.audit.support_repository import SupportSessionRepository
 from app.infra.audit.user_repository import UserRepository
 
@@ -20,6 +21,7 @@ router = APIRouter(prefix="/admin/impersonate", tags=["impersonate"])
 
 _support_repo = SupportSessionRepository()
 _user_repo    = UserRepository()
+_staff_repo   = StaffRepository()
 
 SUPPORT_TTL_MINUTES = 15
 
@@ -109,3 +111,68 @@ def revoke_session(
             detail="Sesión no encontrada, ya revocada, o no pertenece a este admin.",
         )
     return {"ok": True, "session_id": session_id}
+
+
+# ---------------------------------------------------------------------------
+# Staff support — colaboradores con rol "support" inician sesiones de soporte
+# ---------------------------------------------------------------------------
+
+@router.post("/staff/{user_id}", tags=["staff"])
+def staff_start_support_session(
+    user_id: int,
+    request: Request,
+    staff: dict = Depends(require_staff_role("support")),
+):
+    """
+    Un colaborador con rol 'support' inicia una sesión de soporte remoto.
+    Funciona igual que el admin, pero el token lleva staff_id en lugar de impersonated_by.
+    """
+    target = _user_repo.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    if target.get("role") == "admin":
+        raise HTTPException(status_code=403, detail="No se puede acceder a cuentas de administrador.")
+
+    ip = _get_ip(request)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=SUPPORT_TTL_MINUTES)
+
+    # Usar admin_id=0 como señal de que lo inició un staff (no un admin)
+    # El session_id queda en el log para auditoría completa
+    session_id = _support_repo.create_session(
+        admin_id=staff["staff_id"],   # staff_id actúa como referencia
+        target_user_id=user_id,
+        expires_at=expires_at,
+        ip_address=ip,
+    )
+
+    # Registrar en el log de productividad del staff
+    _staff_repo.log_activity(
+        staff_id=staff["staff_id"],
+        action_type="support_session_start",
+        description=f"Sesión de soporte iniciada para {target['email']}",
+        target_user_id=user_id,
+        ip_address=ip,
+    )
+
+    payload = {
+        "user_id":         user_id,
+        "email":           target["email"],
+        "role":            target.get("role", "user"),
+        "mode":            "support",
+        "impersonated_by": staff["staff_id"],
+        "admin_email":     staff["email"],
+        "session_id":      session_id,
+        "jti":             str(uuid.uuid4()),
+        "type":            "access",
+        "exp":             expires_at,
+        "initiated_by":    "staff",
+    }
+    token = jwt.encode(payload, SECRET, algorithm=ALGO)
+
+    return {
+        "token":           token,
+        "session_id":      session_id,
+        "target_email":    target["email"],
+        "expires_at":      expires_at.isoformat(),
+        "expires_minutes": SUPPORT_TTL_MINUTES,
+    }

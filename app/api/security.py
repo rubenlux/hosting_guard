@@ -179,6 +179,59 @@ def require_role(*roles: str) -> Callable:
     return _check
 
 
+def create_staff_token(data: dict) -> str:
+    """JWT de 8 horas para colaboradores (type='staff')."""
+    payload = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(hours=8)
+    payload.update({"jti": str(uuid.uuid4()), "exp": expire, "type": "staff"})
+    return jwt.encode(payload, SECRET, algorithm=ALGO)
+
+
+def verify_staff_token(request: Request) -> dict:
+    """
+    Verifica el staff_token cookie. Lanza 401 si está ausente, expirado o revocado.
+    También verifica is_active en la DB para que la desactivación sea inmediata.
+    """
+    token = request.cookies.get("staff_token")
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Staff no autenticado")
+
+    try:
+        payload = jwt.decode(token, SECRET, algorithms=[ALGO])
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de staff inválido o expirado")
+
+    if payload.get("type") != "staff":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tipo de token incorrecto")
+
+    jti = payload.get("jti")
+    if jti and _is_revoked(jti):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesión de staff revocada")
+
+    # Verificar is_active en DB para que la desactivación sea instantánea
+    from app.infra.audit.staff_repository import StaffRepository
+    staff = StaffRepository().get_staff_by_id(payload.get("staff_id"))
+    if not staff or not staff.get("is_active"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Cuenta de staff desactivada")
+
+    return payload
+
+
+def require_staff_role(*roles: str) -> Callable:
+    """
+    Dependency factory para proteger endpoints de staff por rol.
+    Roles disponibles: support | billing | readonly | admin (superconjunto)
+    """
+    def _check(payload: dict = Depends(verify_staff_token)) -> dict:
+        if payload.get("role") in roles:
+            return payload
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Se requiere uno de los roles de staff: {', '.join(roles)}",
+        )
+    return _check
+
+
 def require_api_key(x_api_key: str = Header(None)) -> None:
     if API_KEY is None:
         # En producción esto jamás debería ocurrir — la app debería fallar al arrancar.

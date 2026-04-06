@@ -243,4 +243,87 @@ export const saveFile = async (hostingId, path, content) => {
     return response.data;
 };
 
+// ---------------------------------------------------------------------------
+// Staff — gestión de colaboradores (admin)
+// ---------------------------------------------------------------------------
+
+export const createStaff = async (data) => {
+  const response = await api.post('/admin/staff', data);
+  return response.data;
+};
+
+export const listStaff = async () => {
+  const response = await api.get('/admin/staff');
+  return response.data;
+};
+
+export const updateStaff = async (staffId, data) => {
+  const response = await api.patch(`/admin/staff/${staffId}`, data);
+  return response.data;
+};
+
+export const deactivateStaff = async (staffId) => {
+  const response = await api.delete(`/admin/staff/${staffId}`);
+  return response.data;
+};
+
+export const getStaffActivity = async (staffId, limit = 100) => {
+  const response = await api.get(`/admin/staff/${staffId}/activity`, { params: { limit } });
+  return response.data;
+};
+
+export const getStaffAnalytics = async (days = 30) => {
+  const response = await api.get('/admin/staff/analytics', { params: { days } });
+  return response.data;
+};
+
+// ---------------------------------------------------------------------------
+// Staff — sesión propia del colaborador
+// ---------------------------------------------------------------------------
+
+export const staffLogin = async (email, password) => {
+  const response = await api.post('/staff/login', { email, password });
+  return response.data;
+};
+
+export const staffLogout = async () => {
+  const response = await api.post('/staff/logout');
+  return response.data;
+};
+
+export const getStaffMe = async () => {
+  const response = await api.get('/staff/me');
+  return response.data;
+};
+
+export const getStaffClients = async () => {
+  const response = await api.get('/staff/clients');
+  return response.data;
+};
+
+export const getMyActivity = async (limit = 50) => {
+  const response = await api.get('/staff/my-activity', { params: { limit } });
+  return response.data;
+};
+
+// Staff inicia una sesión de soporte (rol support)
+export const staffStartSupportSession = async (userId) => {
+  const response = await api.post(`/admin/impersonate/staff/${userId}`);
+  return response.data;
+};
+
+// ---------------------------------------------------------------------------
+// Staff activity tracking (fire-and-forget, nunca lanza)
+// ---------------------------------------------------------------------------
+
+export const trackActivity = async (data) => {
+  // No lanzar nunca — el tracking no debe interrumpir la UI
+  try {
+    const response = await api.post('/staff/activity', data);
+    return response.data;
+  } catch {
+    return null;
+  }
+};
+
 export default api;

@@ -218,6 +218,30 @@ _SCHEMA_AUDIT_PG = """
 
 # Migraciones idempotentes: columnas añadidas después de la creación inicial
 _MIGRATIONS_SQLITE = [
+    """CREATE TABLE IF NOT EXISTS staff_accounts (
+        staff_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        admin_id INTEGER NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        full_name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        last_login_at TEXT,
+        FOREIGN KEY (admin_id) REFERENCES users (user_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS staff_activity_log (
+        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id INTEGER NOT NULL,
+        action_type TEXT NOT NULL,
+        target_user_id INTEGER,
+        target_hosting_id INTEGER,
+        description TEXT NOT NULL,
+        duration_seconds INTEGER,
+        ip_address TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (staff_id) REFERENCES staff_accounts (staff_id)
+    )""",
     """CREATE TABLE IF NOT EXISTS support_sessions (
         session_id TEXT PRIMARY KEY,
         admin_id INTEGER NOT NULL,
@@ -254,6 +278,30 @@ _MIGRATIONS_SQLITE = [
 ]
 
 _MIGRATIONS_PG = [
+    """CREATE TABLE IF NOT EXISTS staff_accounts (
+        staff_id SERIAL PRIMARY KEY,
+        admin_id INTEGER NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        full_name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        last_login_at TEXT,
+        FOREIGN KEY (admin_id) REFERENCES users (user_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS staff_activity_log (
+        log_id SERIAL PRIMARY KEY,
+        staff_id INTEGER NOT NULL,
+        action_type TEXT NOT NULL,
+        target_user_id INTEGER,
+        target_hosting_id INTEGER,
+        description TEXT NOT NULL,
+        duration_seconds INTEGER,
+        ip_address TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (staff_id) REFERENCES staff_accounts (staff_id)
+    )""",
     """CREATE TABLE IF NOT EXISTS support_sessions (
         session_id TEXT PRIMARY KEY,
         admin_id INTEGER NOT NULL,
