@@ -207,17 +207,40 @@ def login(request: Request, response: Response, body: LoginRequest):
     ip = request.client.host if request.client else "unknown"
     user = user_repo.get_user_by_email(body.email)
 
-    if not user or not bcrypt.checkpw(body.password.encode(), user["password_hash"].encode()):
-        user_repo.log_login_attempt(body.email, ip, success=False, detail="Invalid credentials")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if user and bcrypt.checkpw(body.password.encode(), user["password_hash"].encode()):
+        # Login de cliente / admin normal
+        user_repo.log_login_attempt(body.email, ip, success=True)
+        claims = {"user_id": user["user_id"], "email": user["email"], "role": user.get("role", "user")}
+        _set_auth_cookies(response, create_token(claims), create_refresh_token(claims))
+        return {"status": "ok", "account_type": "user"}
 
-    user_repo.log_login_attempt(body.email, ip, success=True)
+    # Fallback: verificar si es un colaborador (staff_accounts)
+    from app.infra.audit.staff_repository import StaffRepository
+    _staff = StaffRepository().get_staff_by_email(body.email)
+    if _staff and _staff.get("is_active"):
+        _stored = (_staff.get("password_hash") or "").strip()
+        try:
+            _ok = bcrypt.checkpw(body.password.encode("utf-8"), _stored.encode("utf-8"))
+        except Exception:
+            _ok = False
+        if _ok:
+            from app.api.security import create_staff_token
+            _token = create_staff_token({
+                "staff_id":  _staff["staff_id"],
+                "email":     _staff["email"],
+                "full_name": _staff["full_name"],
+                "role":      _staff["role"],
+            })
+            _secure = APP_ENV == "production"
+            response.set_cookie(
+                key="staff_token", value=_token, httponly=True,
+                secure=_secure, samesite="lax", max_age=8 * 3600, path="/",
+            )
+            StaffRepository().update_last_login(_staff["staff_id"])
+            return {"status": "ok", "account_type": "staff"}
 
-    claims = {"user_id": user["user_id"], "email": user["email"], "role": user.get("role", "user")}
-    _set_auth_cookies(response, create_token(claims), create_refresh_token(claims))
-
-    # No devolver tokens en el cuerpo: están en cookies HttpOnly inaccesibles desde JS.
-    return {"status": "ok"}
+    user_repo.log_login_attempt(body.email, ip, success=False, detail="Invalid credentials")
+    raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.post("/logout")
 def logout(response: Response, user=Depends(verify_token)):

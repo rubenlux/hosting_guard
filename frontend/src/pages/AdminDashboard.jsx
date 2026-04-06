@@ -869,7 +869,7 @@ function HostingsTable({ hostings, loading, metricsMap, onReload }) {
     }
   };
 
-  const cols = ['Nombre','Estado','Plan','CPU','RAM','Uptime 24h','Tráfico 24h','Subdominio','Acciones'];
+  const cols = ['Nombre','Estado','Plan','CPU','RAM','Uptime 24h','Tráfico 24h','Subdominio'];
 
   return (
     <>
@@ -881,19 +881,20 @@ function HostingsTable({ hostings, loading, metricsMap, onReload }) {
                 {cols.map(c => (
                   <th key={c} className="text-left px-4 py-3 text-[9px] uppercase tracking-wider text-gray-500 font-medium whitespace-nowrap">{c}</th>
                 ))}
+                <th className="sticky right-0 bg-[#111] text-left px-4 py-3 text-[9px] uppercase tracking-wider text-gray-500 font-medium whitespace-nowrap border-l border-white/5">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={cols.length} className="p-10 text-center"><RefreshCw className="w-4 h-4 animate-spin mx-auto text-gray-600" /></td></tr>
+                <tr><td colSpan={cols.length + 1} className="p-10 text-center"><RefreshCw className="w-4 h-4 animate-spin mx-auto text-gray-600" /></td></tr>
               ) : hostings.length === 0 ? (
-                <tr><td colSpan={cols.length} className="p-10 text-center text-gray-600 italic text-xs">Sin hostings.</td></tr>
+                <tr><td colSpan={cols.length + 1} className="p-10 text-center text-gray-600 italic text-xs">Sin hostings.</td></tr>
               ) : hostings.map(h => {
                 const m = metricsMap[h.container_name] || {};
                 const busy = actioning === h.hosting_id;
                 const isStopped = h.status === 'stopped' || h.status === 'expired';
                 return (
-                  <tr key={h.hosting_id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
+                  <tr key={h.hosting_id} className="group border-b border-white/5 hover:bg-white/[0.02] transition-colors">
                     <td className="px-4 py-3">
                       <div className="text-white font-medium">{h.name}</div>
                       <div className="text-[9px] text-gray-600 font-mono mt-0.5">{h.container_name}</div>
@@ -905,7 +906,7 @@ function HostingsTable({ hostings, loading, metricsMap, onReload }) {
                     <td className="px-4 py-3 font-mono text-amber-400">{m.uptime_pct != null ? `${m.uptime_pct.toFixed(1)}%` : '—'}</td>
                     <td className="px-4 py-3 font-mono text-gray-400">{m.traffic_24h?.total_requests != null ? `${m.traffic_24h.total_requests} req` : '—'}</td>
                     <td className="px-4 py-3 text-gray-500 font-mono text-[10px]">{h.subdomain}</td>
-                    <td className="px-4 py-3">
+                    <td className="sticky right-0 bg-[#111] group-hover:bg-[#161616] px-4 py-3 border-l border-white/5 transition-colors">
                       <div className="flex items-center gap-1.5">
                         {/* Logs */}
                         <button
@@ -1286,10 +1287,26 @@ function EquipoSection() {
                             await updateStaff(s.staff_id, { is_active: !s.is_active });
                             load();
                           }}
-                          className={`p-1.5 rounded transition-colors ${s.is_active ? 'hover:bg-red-500/10 text-gray-500 hover:text-red-400' : 'hover:bg-emerald-500/10 text-gray-500 hover:text-emerald-400'}`}
-                          title={s.is_active ? 'Desactivar' : 'Activar'}
+                          className={`p-1.5 rounded transition-colors ${s.is_active ? 'hover:bg-orange-500/10 text-gray-500 hover:text-orange-400' : 'hover:bg-emerald-500/10 text-gray-500 hover:text-emerald-400'}`}
+                          title={s.is_active ? 'Desactivar cuenta' : 'Activar cuenta'}
                         >
                           {s.is_active ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
+                        </button>
+                        {/* Eliminar colaborador (soft delete permanente) */}
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`¿Eliminar la cuenta de ${s.full_name} (${s.email})?\n\nSe desactivará permanentemente. El historial de actividad se conserva.`)) return;
+                            try {
+                              await deactivateStaff(s.staff_id);
+                              load();
+                            } catch (ex) {
+                              alert(ex?.response?.data?.detail || 'Error al eliminar');
+                            }
+                          }}
+                          className="p-1.5 rounded hover:bg-red-500/10 text-gray-600 hover:text-red-400 transition-colors"
+                          title="Eliminar colaborador"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>

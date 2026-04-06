@@ -28,8 +28,13 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
       const data = await login(email, password);
 
       if (data?.status === "ok") {
-        // El servidor estableció las cookies HttpOnly; solo necesitamos
-        // cargar los datos del usuario desde /me.
+        if (data?.account_type === "staff") {
+          // Colaborador — redirigir al panel de staff sin cargar /me de cliente
+          onClose();
+          window.location.href = "/staff/dashboard";
+          return;
+        }
+        // Cliente / admin normal
         await loginAction();
         onLoginSuccess();
         onClose();
