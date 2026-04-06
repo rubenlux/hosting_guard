@@ -213,6 +213,21 @@ export const getPixelSiteStats = async (siteId, days = 30) => {
     return response.data;
 };
 
+export const startSupportSession = async (userId) => {
+    const response = await api.post(`/admin/impersonate/${userId}`);
+    return response.data;
+};
+
+export const getSupportSessions = async () => {
+    const response = await api.get('/admin/impersonate/sessions');
+    return response.data;
+};
+
+export const revokeSupportSession = async (sessionId) => {
+    const response = await api.delete(`/admin/impersonate/${sessionId}`);
+    return response.data;
+};
+
 export const listFiles = async (hostingId, path = '') => {
     const response = await api.get(`/files/${hostingId}`, { params: { path } });
     return response.data;

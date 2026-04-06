@@ -1,15 +1,17 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Users, Globe, BarChart3, RefreshCw, ShieldCheck, Activity,
   LogOut, Zap, Bell, Settings, CheckCircle2,
   XCircle, Clock, DollarSign, FileText, Bot,
-  TrendingUp, MousePointer, Eye, Timer, ArrowRight
+  TrendingUp, MousePointer, Eye, Timer, ArrowRight,
+  HeadsetIcon, ShieldAlert, Ban,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
   getAdminPixelEvents, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
+  startSupportSession, getSupportSessions, revokeSupportSession,
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 
@@ -640,32 +642,169 @@ export default function AdminDashboard() {
 
 /* ── Sub-components ─────────────────────────────────────────── */
 function UsersTable({ users, loading, navigate }) {
+  const { activateSupportSession } = useAuth();
+  const [supporting, setSupporting] = useState(null); // user_id being activated
+
+  const handleSupport = async (e, u) => {
+    e.stopPropagation();
+    if (!window.confirm(`¿Iniciar sesión de soporte para ${u.email}?\n\nDuración: 15 minutos. Quedará registrado en auditoría.`)) return;
+    setSupporting(u.user_id);
+    try {
+      const data = await startSupportSession(u.user_id);
+      await activateSupportSession(data.token);
+      // Navigate to the client dashboard to see their view
+      navigate('/dashboard');
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Error iniciando sesión de soporte');
+    } finally {
+      setSupporting(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="border-b border-white/5">
+              {['ID','Email','Role','Plan','Balance','Created Date','Soporte'].map(h => (
+                <th key={h} className="text-left px-4 py-3 text-[9px] uppercase tracking-wider text-gray-500 font-medium">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? <tr><td colSpan={7} className="p-10 text-center"><RefreshCw className="w-4 h-4 animate-spin mx-auto text-gray-600" /></td></tr>
+            : users.length === 0 ? <tr><td colSpan={7} className="p-10 text-center text-gray-600 italic text-xs">Sin usuarios.</td></tr>
+            : users.map(u => (
+              <tr key={u.user_id} onClick={() => navigate(`/admin/users/${u.user_id}`)} className="border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors">
+                <td className="px-4 py-3 font-mono text-gray-500">#{String(u.user_id).padStart(4,'0')}</td>
+                <td className="px-4 py-3"><div className="flex items-center gap-2"><Initials email={u.email} /><span className="text-white font-medium">{u.email}</span></div></td>
+                <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${u.role==='admin' ? 'bg-red-500/20 text-red-400' : 'bg-white/5 text-gray-400'}`}>{u.role}</span></td>
+                <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${PLAN_STYLE[u.plan] || 'bg-white/5 text-gray-400'}`}>{u.plan||'free'}</span></td>
+                <td className="px-4 py-3 font-mono text-emerald-400">${(u.balance||0).toFixed(2)}</td>
+                <td className="px-4 py-3 text-gray-500">{u.created_at ? new Date(u.created_at).toLocaleDateString('es-AR',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</td>
+                <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                  {u.role === 'admin' ? (
+                    <span className="text-[9px] text-gray-600 flex items-center gap-1"><Ban className="w-3 h-3" /> N/A</span>
+                  ) : (
+                    <button
+                      onClick={(e) => handleSupport(e, u)}
+                      disabled={supporting === u.user_id}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold
+                        bg-amber-500/10 text-amber-400 hover:bg-amber-500/25 transition-colors
+                        disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Acceder como este cliente (modo soporte)"
+                    >
+                      {supporting === u.user_id
+                        ? <RefreshCw className="w-3 h-3 animate-spin" />
+                        : <ShieldAlert className="w-3 h-3" />}
+                      Soporte
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {users.length > 0 && <div className="px-4 py-3 border-t border-white/5 text-[10px] text-gray-500">Showing 1 to {users.length} of {users.length} entries</div>}
+      </div>
+      <SupportSessionsPanel />
+    </div>
+  );
+}
+
+function SupportSessionsPanel() {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [revoking, setRevoking] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try { setData(await getSupportSessions()); } catch { /* ignore */ }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const handleRevoke = async (sessionId) => {
+    if (!window.confirm('¿Revocar esta sesión de soporte ahora?')) return;
+    setRevoking(sessionId);
+    try { await revokeSupportSession(sessionId); await load(); }
+    catch (err) { alert(err?.response?.data?.detail || 'Error'); }
+    finally { setRevoking(null); }
+  };
+
+  const active  = data?.active  || [];
+  const history = data?.history || [];
+
   return (
     <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
-      <table className="w-full text-[11px]">
-        <thead>
-          <tr className="border-b border-white/5">
-            {['ID','Email','Role','Plan','Balance','Created Date'].map(h => (
-              <th key={h} className="text-left px-4 py-3 text-[9px] uppercase tracking-wider text-gray-500 font-medium">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {loading ? <tr><td colSpan={6} className="p-10 text-center"><RefreshCw className="w-4 h-4 animate-spin mx-auto text-gray-600" /></td></tr>
-          : users.length === 0 ? <tr><td colSpan={6} className="p-10 text-center text-gray-600 italic text-xs">Sin usuarios.</td></tr>
-          : users.map(u => (
-            <tr key={u.user_id} onClick={() => navigate(`/admin/users/${u.user_id}`)} className="border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors">
-              <td className="px-4 py-3 font-mono text-gray-500">#{String(u.user_id).padStart(4,'0')}</td>
-              <td className="px-4 py-3"><div className="flex items-center gap-2"><Initials email={u.email} /><span className="text-white font-medium">{u.email}</span></div></td>
-              <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${u.role==='admin' ? 'bg-red-500/20 text-red-400' : 'bg-white/5 text-gray-400'}`}>{u.role}</span></td>
-              <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${PLAN_STYLE[u.plan] || 'bg-white/5 text-gray-400'}`}>{u.plan||'free'}</span></td>
-              <td className="px-4 py-3 font-mono text-emerald-400">${(u.balance||0).toFixed(2)}</td>
-              <td className="px-4 py-3 text-gray-500">{u.created_at ? new Date(u.created_at).toLocaleDateString('es-AR',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</td>
-            </tr>
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
+        <ShieldAlert className="w-4 h-4 text-amber-400" />
+        <span className="text-xs font-bold text-white">Sesiones de Soporte</span>
+        {active.length > 0 && (
+          <span className="ml-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/20 text-amber-400">
+            {active.length} activa{active.length !== 1 ? 's' : ''}
+          </span>
+        )}
+        <button onClick={load} className="ml-auto text-gray-600 hover:text-white transition-colors">
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      {active.length > 0 && (
+        <div className="px-4 py-3 border-b border-amber-500/20 bg-amber-500/5">
+          <div className="text-[9px] uppercase tracking-wider text-amber-500 font-bold mb-2">Activas ahora</div>
+          {active.map(s => (
+            <div key={s.session_id} className="flex items-center gap-3 py-1.5 text-[11px]">
+              <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+              <span className="text-white font-mono">{s.target_email}</span>
+              <span className="text-gray-500">← {s.admin_email}</span>
+              <span className="text-gray-600 font-mono text-[10px]">exp: {new Date(s.expires_at).toLocaleTimeString()}</span>
+              <button
+                onClick={() => handleRevoke(s.session_id)}
+                disabled={revoking === s.session_id}
+                className="ml-auto px-2 py-0.5 rounded text-[9px] bg-red-500/10 text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
+              >
+                {revoking === s.session_id ? '...' : 'Revocar'}
+              </button>
+            </div>
           ))}
-        </tbody>
-      </table>
-      {users.length > 0 && <div className="px-4 py-3 border-t border-white/5 text-[10px] text-gray-500">Showing 1 to {users.length} of {users.length} entries</div>}
+        </div>
+      )}
+
+      <div className="max-h-48 overflow-y-auto">
+        {history.length === 0 ? (
+          <div className="p-6 text-center text-[11px] text-gray-600 italic">Sin historial de sesiones.</div>
+        ) : (
+          <table className="w-full text-[10px]">
+            <thead className="sticky top-0 bg-[#111]">
+              <tr className="border-b border-white/5">
+                {['Cliente','Admin','Inicio','Expiración','Estado'].map(h => (
+                  <th key={h} className="text-left px-4 py-2 text-[9px] uppercase tracking-wider text-gray-600">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {history.map(s => {
+                const now = new Date();
+                const exp = new Date(s.expires_at);
+                const state = s.revoked_at ? 'revocada' : exp < now ? 'expirada' : 'activa';
+                const stateColor = state === 'activa' ? 'text-amber-400' : state === 'revocada' ? 'text-red-400' : 'text-gray-500';
+                return (
+                  <tr key={s.session_id} className="border-b border-white/5 hover:bg-white/3">
+                    <td className="px-4 py-2 text-white font-mono">{s.target_email}</td>
+                    <td className="px-4 py-2 text-gray-400">{s.admin_email}</td>
+                    <td className="px-4 py-2 text-gray-500">{new Date(s.created_at).toLocaleString('es-AR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</td>
+                    <td className="px-4 py-2 text-gray-500">{exp.toLocaleString('es-AR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</td>
+                    <td className={`px-4 py-2 font-bold uppercase text-[9px] ${stateColor}`}>{state}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }

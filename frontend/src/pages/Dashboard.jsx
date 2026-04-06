@@ -38,10 +38,11 @@ import ZipUploadModal from '../components/ZipUploadModal';
 import PixelAnalytics from '../components/PixelAnalytics';
 import AdminDashboard from './AdminDashboard';
 import MonacoFileEditor from '../components/MonacoFileEditor';
+import SupportBanner from '../components/SupportBanner';
 import { AlertTriangle, Upload, FolderOpen } from "lucide-react"
 
 const Dashboard = () => {
-  const { user, logoutAction, setUser } = useAuth();
+  const { user, logoutAction, setUser, isSupportSession, supportSession, deactivateSupportSession } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -247,6 +248,15 @@ const Dashboard = () => {
 
   return (
     <div className={`dashboard-container fixed inset-0 z-50 overflow-hidden ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+      {/* SUPPORT BANNER — visible during admin support sessions */}
+      {isSupportSession && supportSession && (
+        <SupportBanner
+          targetEmail={supportSession.targetEmail}
+          adminEmail={supportSession.adminEmail}
+          expiresAt={supportSession.expiresAt}
+          onExit={deactivateSupportSession}
+        />
+      )}
       {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="logo-dash">
@@ -548,13 +558,15 @@ const Dashboard = () => {
                                 </div>
                               )}
 
-                              <button
-                                onClick={() => handleDelete(h.hosting_id, h.name)}
-                                title="Eliminar"
-                                className="w-8 h-8 rounded-lg bg-danger/10 text-danger flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:bg-danger hover:text-white"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              {!isSupportSession && (
+                                <button
+                                  onClick={() => handleDelete(h.hosting_id, h.name)}
+                                  title="Eliminar"
+                                  className="w-8 h-8 rounded-lg bg-danger/10 text-danger flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:bg-danger hover:text-white"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -683,6 +695,7 @@ const Dashboard = () => {
       {showFiles && selectedFilesHosting && (
         <MonacoFileEditor
           hosting={selectedFilesHosting}
+          readOnly={isSupportSession}
           onClose={() => { setShowFiles(false); setSelectedFilesHosting(null); }}
         />
       )}

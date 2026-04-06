@@ -17,7 +17,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from app.api.config import APP_ENV, ENABLE_ACTION_EXECUTION, ENABLE_AI_ADVISORY
 from app.api.rate_limit import limiter
 from app.api.schemas import DecisionRequest, DecisionResponse, HumanActionRequest
-from app.api.security import create_token, create_refresh_token, verify_token, revoke_token, require_role, SECRET, ALGO, _is_revoked
+from app.api.security import create_token, create_refresh_token, verify_token, revoke_token, require_role, require_not_support, SECRET, ALGO, _is_revoked
 from app.api.security_headers import SecurityHeadersMiddleware
 from app.api.tenancy import Tenant
 from app.api.tenant_resolver import resolve_tenant
@@ -111,8 +111,10 @@ user_repo = UserRepository()
 # Importar y registrar sub-routers
 from app.api.routes.pixel import router as pixel_router
 from app.api.routes.files import router as files_router
+from app.api.routes.impersonate import router as impersonate_router
 app.include_router(pixel_router)
 app.include_router(files_router)
+app.include_router(impersonate_router)
 
 
 _IS_PRODUCTION = APP_ENV == "production"
@@ -293,7 +295,7 @@ def get_me(user: dict = Depends(verify_token)):
         # lanzamos 401 para que el frontend limpie la sesión.
         raise HTTPException(status_code=401, detail="User session expired or not found")
         
-    return {
+    response_data = {
         "user_id": user["user_id"],
         "email": user["email"],
         # Role is read from the DB (not the JWT) so a role change in the DB takes effect
@@ -303,8 +305,26 @@ def get_me(user: dict = Depends(verify_token)):
         "balance": user_db.get("balance", 0.0),
         "has_payment_method": bool(user_db.get("has_payment_method", 0)),
         "autoscale_enabled": bool(user_db.get("autoscale_enabled", 1)),
-        "status": "authenticated"
+        "status": "authenticated",
+        "is_support_session": user.get("is_support_session", False),
     }
+    # Expose support metadata so the frontend can render the SupportBanner
+    if user.get("is_support_session"):
+        from datetime import datetime as _dt, timezone as _tz
+        exp = user.get("exp")
+        response_data["admin_email"]       = user.get("admin_email")
+        response_data["support_expires_at"] = (
+            _dt.fromtimestamp(exp, tz=_tz.utc).isoformat() if exp else None
+        )
+    return response_data
+
+@app.get("/me/support-history")
+def get_support_history(user: dict = Depends(verify_token)):
+    """Client can see when support accessed their account — full transparency."""
+    from app.infra.audit.support_repository import SupportSessionRepository
+    repo = SupportSessionRepository()
+    return repo.get_sessions_for_user(user["user_id"])
+
 
 # --- NUEVAS RUTAS DE PRODUCTO ---
 
@@ -336,7 +356,7 @@ class TopupRequest(BaseModel):
         return v
 
 @app.post("/user/topup")
-def topup(data: TopupRequest, user=Depends(verify_token)):
+def topup(data: TopupRequest, user=Depends(require_not_support)):
     try:
         user_repo.update_balance(user["user_id"], data.amount)
         user_db = user_repo.get_user_by_id(user["user_id"])
@@ -431,6 +451,51 @@ execution_engine = ExecutionEngine()
 # Routers
 app.include_router(hosting_router)
 app.include_router(admin_router)
+
+
+# ── Support session cookie management ────────────────────────────────────────
+
+class SupportTokenRequest(BaseModel):
+    token: str
+
+@app.post("/support/activate")
+def activate_support_session(body: SupportTokenRequest, response: Response):
+    """
+    Sets the support_token cookie so verify_token picks it up automatically.
+    Called by the frontend after the admin receives the token from /admin/impersonate/{id}.
+    """
+    from jose import jwt as _jwt, JWTError
+    try:
+        payload = _jwt.decode(body.token, SECRET, algorithms=[ALGO])
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Token de soporte inválido.")
+    if payload.get("mode") != "support":
+        raise HTTPException(status_code=400, detail="No es un token de soporte.")
+
+    from app.api.config import APP_ENV
+    secure = APP_ENV == "production"
+    response.set_cookie(
+        key="support_token",
+        value=body.token,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        max_age=15 * 60,   # 15 minutos
+        path="/",
+    )
+    return {
+        "ok": True,
+        "target_email": payload.get("email"),
+        "admin_email":  payload.get("admin_email"),
+        "expires_at":   payload.get("exp"),
+    }
+
+
+@app.post("/support/deactivate")
+def deactivate_support_session(response: Response):
+    """Clears the support_token cookie (admin exits support mode)."""
+    response.delete_cookie("support_token", path="/")
+    return {"ok": True}
 
 
 @app.post("/decision", response_model=DecisionResponse)

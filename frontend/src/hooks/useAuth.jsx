@@ -1,23 +1,41 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { jwtDecode } from 'jwt-decode';
 import api from '../services/api';
 
 const AuthContext = createContext();
 
+/**
+ * Reads the support_token cookie (client-side visible part) to detect support mode.
+ * HttpOnly cookies are NOT accessible via document.cookie — but the backend sets
+ * is_support_session in the /me response, so we rely on that as the source of truth.
+ * This helper is a fallback that reads it if somehow available.
+ */
+function readSupportCookieInfo() {
+  // The support_token is HttpOnly so we cannot read it here.
+  // We rely on the /me endpoint returning is_support_session + support metadata.
+  return null;
+}
+
 export const AuthProvider = ({ children }) => {
-  const [user, setUser]       = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser]                   = useState(null);
+  const [loading, setLoading]             = useState(true);
+  const [supportSession, setSupportSession] = useState(null); // { targetEmail, adminEmail, expiresAt }
 
   useEffect(() => {
-    // Al montar, intentar recuperar la sesión desde el servidor.
-    // _noRefresh: true evita que el interceptor intente POST /refresh cuando no hay
-    // cookies — sin este flag, un usuario no logueado generaría un loop infinito:
-    // GET /me → 401 → POST /refresh → 401 → reload → GET /me → 401 → ...
     const initAuth = async () => {
       try {
         const res = await api.get('/me', { _noRefresh: true });
-        // Normalizar role a minúsculas para que todas las comparaciones
-        // (=== 'admin') funcionen independientemente de cómo esté en la DB.
-        setUser({ ...res.data, role: res.data.role?.toLowerCase() ?? 'user' });
+        const data = { ...res.data, role: res.data.role?.toLowerCase() ?? 'user' };
+        setUser(data);
+
+        // Backend includes support metadata in /me when support_token cookie is active
+        if (data.is_support_session) {
+          setSupportSession({
+            targetEmail: data.email,
+            adminEmail:  data.admin_email  ?? null,
+            expiresAt:   data.support_expires_at ?? null,
+          });
+        }
       } catch {
         setUser(null);
       } finally {
@@ -25,10 +43,7 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
-    // Cuando el interceptor detecta que ambos tokens han expirado (refresh también falla),
-    // emite este evento en lugar de recargar la página. Aquí limpiamos la sesión y
-    // PrivateRoute redirige a '/' via React Router sin causar un reload.
-    const handleSessionExpired = () => setUser(null);
+    const handleSessionExpired = () => { setUser(null); setSupportSession(null); };
     window.addEventListener('auth:session-expired', handleSessionExpired);
 
     initAuth();
@@ -36,8 +51,6 @@ export const AuthProvider = ({ children }) => {
     return () => window.removeEventListener('auth:session-expired', handleSessionExpired);
   }, []);
 
-  // Llamar tras un login exitoso: el servidor ya estableció las cookies.
-  // Solo necesitamos obtener los datos del usuario desde /me.
   const loginAction = async () => {
     try {
       const res = await api.get('/me');
@@ -47,25 +60,63 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Llamar al hacer logout: revocamos ambos tokens y el servidor borra las cookies.
   const logoutAction = async () => {
     try {
-      // /refresh/revoke está en path=/refresh, por lo que el browser envía el refresh_token cookie.
-      // Debe llamarse ANTES de /logout para que la cookie aún exista en el browser.
       await api.post('/refresh/revoke').catch(() => {});
       await api.post('/logout');
     } catch {
-      // Si falla (sesión ya expirada), igualmente limpiamos el estado local.
+      // ignore
     } finally {
       setUser(null);
+      setSupportSession(null);
       if (typeof window !== 'undefined') {
         window.location.href = '/';
       }
     }
   };
 
+  /**
+   * Called by the admin panel after receiving a support token.
+   * Sends the token to the backend to set the support_token cookie,
+   * then reloads /me so the dashboard reflects the impersonated user.
+   */
+  const activateSupportSession = async (token) => {
+    const res = await api.post('/support/activate', { token });
+    setSupportSession({
+      targetEmail: res.data.target_email,
+      adminEmail:  res.data.admin_email,
+      expiresAt:   res.data.expires_at,
+    });
+    // Reload user context as the impersonated client
+    const me = await api.get('/me');
+    setUser({ ...me.data, role: me.data.role?.toLowerCase() ?? 'user' });
+    return res.data;
+  };
+
+  /**
+   * Called when the admin exits support mode (banner "Salir" button or timer expiry).
+   * Clears the support cookie and reloads the admin's own session.
+   */
+  const deactivateSupportSession = async () => {
+    try { await api.post('/support/deactivate'); } catch { /* ignore */ }
+    setSupportSession(null);
+    // Restore admin's own /me
+    try {
+      const me = await api.get('/me');
+      setUser({ ...me.data, role: me.data.role?.toLowerCase() ?? 'user' });
+    } catch {
+      setUser(null);
+    }
+  };
+
+  const isSupportSession = Boolean(supportSession);
+
   return (
-    <AuthContext.Provider value={{ user, loginAction, logoutAction, loading, setUser }}>
+    <AuthContext.Provider value={{
+      user, loginAction, logoutAction, loading, setUser,
+      isSupportSession, supportSession,
+      activateSupportSession, deactivateSupportSession,
+    }}>
       {children}
     </AuthContext.Provider>
   );

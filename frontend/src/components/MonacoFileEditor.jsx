@@ -112,7 +112,7 @@ function FileItem({ item, isOpen, onClick }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function MonacoFileEditor({ hosting, onClose }) {
+export default function MonacoFileEditor({ hosting, onClose, readOnly = false }) {
   const [currentPath, setCurrentPath]   = useState('');
   const [breadcrumb, setBreadcrumb]     = useState([]);
   const [items, setItems]               = useState([]);
@@ -205,6 +205,7 @@ export default function MonacoFileEditor({ hosting, onClose }) {
   }, [hosting.hosting_id, openFile]);
 
   const handleEditorChange = (value) => {
+    if (readOnly) return;
     setContent(value ?? '');
     setDirty(true);
     // Auto-save: 2s de inactividad
@@ -333,15 +334,19 @@ export default function MonacoFileEditor({ hosting, onClose }) {
                       {dirty && <span className="ml-1.5 text-gray-500">●</span>}
                     </span>
                   </div>
-                  <button
-                    onClick={handleManualSave}
-                    disabled={!dirty || saving}
-                    className="flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-bold transition-colors
-                      bg-accent/10 text-accent hover:bg-accent hover:text-black
-                      disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <Save className="w-3 h-3" /> Guardar
-                  </button>
+                  {readOnly ? (
+                    <span className="text-[10px] text-amber-400 bg-amber-400/10 px-2 py-1 rounded font-bold">Solo lectura — modo soporte</span>
+                  ) : (
+                    <button
+                      onClick={handleManualSave}
+                      disabled={!dirty || saving}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-bold transition-colors
+                        bg-accent/10 text-accent hover:bg-accent hover:text-black
+                        disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <Save className="w-3 h-3" /> Guardar
+                    </button>
+                  )}
                 </div>
 
                 {/* Monaco */}

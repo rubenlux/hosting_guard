@@ -82,50 +82,69 @@ def create_refresh_token(data: dict) -> str:
     return jwt.encode(payload, SECRET, algorithm=ALGO)
 
 
-def verify_token(request: Request) -> dict:
-    token = request.cookies.get("access_token")
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
+def _decode_and_validate(token: str) -> dict:
+    """Decode + validate a JWT. Raises HTTPException on any failure."""
     try:
         payload = jwt.decode(token, SECRET, algorithms=[ALGO])
-
-        if payload.get("type") != "access":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type",
-            )
-
-        if not payload.get("user_id") or not payload.get("email"):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token payload incompleto",
-            )
-
-        jti = payload.get("jti")
-        if not jti:
-            # Tokens sin jti no pueden verificarse contra la revocation list
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token inválido: falta jti",
-            )
-
-        if _is_revoked(jti):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token revocado",
-            )
-
-        return payload
-
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+
+    if not payload.get("user_id") or not payload.get("email"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token payload incompleto")
+
+    jti = payload.get("jti")
+    if not jti:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido: falta jti")
+
+    if _is_revoked(jti):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revocado")
+
+    return payload
+
+
+def verify_token(request: Request) -> dict:
+    """
+    Accepts either a regular access_token or a support_token cookie.
+    Support tokens have mode='support' and is_support_session=True in the payload.
+    They are non-renewable and expire in 15 minutes.
+    """
+    # Support token takes precedence when present
+    support_token = request.cookies.get("support_token")
+    if support_token:
+        payload = _decode_and_validate(support_token)
+        if payload.get("mode") != "support":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de soporte inválido")
+        payload["is_support_session"] = True
+        return payload
+
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    payload = _decode_and_validate(token)
+    payload["is_support_session"] = False
+    return payload
+
+
+def require_not_support(user: dict = Depends(verify_token)) -> dict:
+    """
+    Blocks destructive operations during a support session.
+    Use as a dependency on endpoints that must not run in support mode:
+        user = Depends(require_not_support)
+    """
+    if user.get("is_support_session"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acción no permitida en modo soporte. Solo lectura.",
+        )
+    return user
 
 
 def require_role(*roles: str) -> Callable:

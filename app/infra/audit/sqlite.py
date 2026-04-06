@@ -218,6 +218,17 @@ _SCHEMA_AUDIT_PG = """
 
 # Migraciones idempotentes: columnas añadidas después de la creación inicial
 _MIGRATIONS_SQLITE = [
+    """CREATE TABLE IF NOT EXISTS support_sessions (
+        session_id TEXT PRIMARY KEY,
+        admin_id INTEGER NOT NULL,
+        target_user_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        ip_address TEXT,
+        FOREIGN KEY (admin_id) REFERENCES users (user_id),
+        FOREIGN KEY (target_user_id) REFERENCES users (user_id)
+    )""",
     "ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0.0",
     "ALTER TABLE users ADD COLUMN has_payment_method INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN autoscale_enabled INTEGER DEFAULT 1",
@@ -243,6 +254,17 @@ _MIGRATIONS_SQLITE = [
 ]
 
 _MIGRATIONS_PG = [
+    """CREATE TABLE IF NOT EXISTS support_sessions (
+        session_id TEXT PRIMARY KEY,
+        admin_id INTEGER NOT NULL,
+        target_user_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        ip_address TEXT,
+        FOREIGN KEY (admin_id) REFERENCES users (user_id),
+        FOREIGN KEY (target_user_id) REFERENCES users (user_id)
+    )""",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS balance REAL DEFAULT 0.0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS has_payment_method INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS autoscale_enabled INTEGER DEFAULT 1",
