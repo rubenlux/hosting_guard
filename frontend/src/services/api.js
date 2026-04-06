@@ -293,6 +293,11 @@ export const deactivateStaff = async (staffId) => {
   return response.data;
 };
 
+export const resetStaffPassword = async (staffId) => {
+  const response = await api.post(`/admin/staff/${staffId}/reset-password`);
+  return response.data;
+};
+
 export const getStaffActivity = async (staffId, limit = 100) => {
   const response = await api.get(`/admin/staff/${staffId}/activity`, { params: { limit } });
   return response.data;

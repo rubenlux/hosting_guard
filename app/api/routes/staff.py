@@ -5,10 +5,13 @@ Gestión de colaboradores (staff) y analytics de productividad.
 /staff/login    — login propio de colaboradores
 /staff/me       — perfil del colaborador autenticado
 """
+import logging
 import secrets
 import string
 import uuid
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -43,8 +46,9 @@ def _get_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _generate_temp_password(length: int = 16) -> str:
-    alphabet = string.ascii_letters + string.digits + "!@#$"
+def _generate_temp_password(length: int = 14) -> str:
+    # Solo caracteres alfanuméricos sin ambigüedad visual (sin l, 1, I, O, 0)
+    alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
@@ -161,6 +165,31 @@ def deactivate_staff(
     return {"ok": True, "staff_id": staff_id, "message": "Cuenta desactivada. Historial conservado."}
 
 
+@router.post("/admin/staff/{staff_id}/reset-password")
+def reset_staff_password(
+    staff_id: int,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Genera una nueva contraseña temporal para el colaborador. Se muestra una sola vez."""
+    staff = _staff_repo.get_staff_by_id(staff_id)
+    if not staff:
+        raise HTTPException(status_code=404, detail="Colaborador no encontrado")
+
+    new_password = _generate_temp_password()
+    pw_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    _staff_repo.update_password(staff_id, pw_hash)
+
+    logger.info("Password reset for staff_id=%s by admin=%s", staff_id, admin["email"])
+
+    return {
+        "ok":           True,
+        "staff_id":     staff_id,
+        "email":        staff["email"],
+        "new_password": new_password,
+        "message":      "Nueva contraseña generada. Compártela de forma segura. Solo se muestra una vez.",
+    }
+
+
 @router.get("/admin/staff/analytics")
 def get_team_analytics(
     days: int = 30,
@@ -208,7 +237,21 @@ def staff_login(
         raise HTTPException(status_code=401, detail="Credenciales incorrectas")
     if not staff.get("is_active"):
         raise HTTPException(status_code=403, detail="Cuenta desactivada. Contacta al administrador.")
-    if not bcrypt.checkpw(body.password.encode(), staff["password_hash"].encode()):
+
+    # Normalizar el hash: garantizar que sea str puro sin espacios
+    # (PostgreSQL RealDictCursor puede devolver memoryview u otros tipos en algunas versiones)
+    stored_hash = staff.get("password_hash") or ""
+    if not isinstance(stored_hash, str):
+        stored_hash = str(stored_hash)
+    stored_hash = stored_hash.strip()
+
+    try:
+        password_ok = bcrypt.checkpw(body.password.encode("utf-8"), stored_hash.encode("utf-8"))
+    except Exception as exc:
+        logger.error("bcrypt.checkpw falló para staff %s: %s", staff.get("staff_id"), exc)
+        raise HTTPException(status_code=500, detail="Error interno de autenticación")
+
+    if not password_ok:
         raise HTTPException(status_code=401, detail="Credenciales incorrectas")
 
     _staff_repo.update_last_login(staff["staff_id"])

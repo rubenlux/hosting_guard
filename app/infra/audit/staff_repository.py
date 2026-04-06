@@ -101,6 +101,16 @@ class StaffRepository:
         conn.commit()
         return cursor.rowcount > 0
 
+    def update_password(self, staff_id: int, password_hash: str) -> None:
+        """Actualiza el hash de contraseña (reset por admin)."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE staff_accounts SET password_hash = ? WHERE staff_id = ?",
+            (password_hash, staff_id),
+        )
+        conn.commit()
+
     def update_last_login(self, staff_id: int) -> None:
         conn = get_connection()
         cursor = conn.cursor()

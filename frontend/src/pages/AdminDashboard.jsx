@@ -7,14 +7,14 @@ import {
   TrendingUp, MousePointer, Eye, Timer, ArrowRight,
   HeadsetIcon, ShieldAlert, Ban, UserCog, PlusCircle,
   ToggleLeft, ToggleRight, ChevronDown, Pencil, Trash2,
-  Terminal, RotateCcw, Play, Square,
+  Terminal, RotateCcw, Play, Square, KeyRound,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
   getAdminPixelEvents, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
   startSupportSession, getSupportSessions, revokeSupportSession,
-  listStaff, createStaff, updateStaff, deactivateStaff,
+  listStaff, createStaff, updateStaff, deactivateStaff, resetStaffPassword,
   adminRestartHosting, adminStopHosting, adminStartHosting,
   adminGetHostingLogs, adminTerminateHosting,
 } from '../services/api';
@@ -1254,25 +1254,44 @@ function EquipoSection() {
                         ? new Date(s.last_login_at).toLocaleString('es-AR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
                         : '—'}
                     </td>
-                    <td className="px-4 py-3 flex items-center gap-2">
-                      <button
-                        onClick={() => setEditId(editId === s.staff_id ? null : s.staff_id)}
-                        className="p-1.5 rounded hover:bg-white/10 text-gray-500 hover:text-white transition-colors"
-                        title="Editar"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={async () => {
-                          if (!window.confirm(`¿${s.is_active ? 'Desactivar' : 'Activar'} a ${s.full_name}?`)) return;
-                          await updateStaff(s.staff_id, { is_active: !s.is_active });
-                          load();
-                        }}
-                        className={`p-1.5 rounded transition-colors ${s.is_active ? 'hover:bg-red-500/10 text-gray-500 hover:text-red-400' : 'hover:bg-emerald-500/10 text-gray-500 hover:text-emerald-400'}`}
-                        title={s.is_active ? 'Desactivar' : 'Activar'}
-                      >
-                        {s.is_active ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
-                      </button>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setEditId(editId === s.staff_id ? null : s.staff_id)}
+                          className="p-1.5 rounded hover:bg-white/10 text-gray-500 hover:text-white transition-colors"
+                          title="Editar nombre / rol"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        {/* Reset password */}
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`¿Generar nueva contraseña temporal para ${s.full_name}?\nLa contraseña anterior quedará inválida.`)) return;
+                            try {
+                              const r = await resetStaffPassword(s.staff_id);
+                              alert(`Nueva contraseña para ${r.email}:\n\n${r.new_password}\n\nCópiala ahora — no se mostrará de nuevo.`);
+                            } catch (ex) {
+                              alert(ex?.response?.data?.detail || 'Error reseteando contraseña');
+                            }
+                          }}
+                          className="p-1.5 rounded hover:bg-blue-500/10 text-gray-500 hover:text-blue-400 transition-colors"
+                          title="Resetear contraseña"
+                        >
+                          <KeyRound className="w-3.5 h-3.5" />
+                        </button>
+                        {/* Activar / Desactivar */}
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`¿${s.is_active ? 'Desactivar' : 'Activar'} a ${s.full_name}?`)) return;
+                            await updateStaff(s.staff_id, { is_active: !s.is_active });
+                            load();
+                          }}
+                          className={`p-1.5 rounded transition-colors ${s.is_active ? 'hover:bg-red-500/10 text-gray-500 hover:text-red-400' : 'hover:bg-emerald-500/10 text-gray-500 hover:text-emerald-400'}`}
+                          title={s.is_active ? 'Desactivar' : 'Activar'}
+                        >
+                          {s.is_active ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {editId === s.staff_id && (
