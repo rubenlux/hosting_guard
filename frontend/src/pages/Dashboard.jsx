@@ -246,17 +246,27 @@ const Dashboard = () => {
     return <AdminDashboard />;
   }
 
+  // Banner height: ~44px. Push the dashboard down when it's active.
+  const bannerHeight = isSupportSession && supportSession ? 44 : 0;
+
   return (
-    <div className={`dashboard-container fixed inset-0 z-50 overflow-hidden ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-      {/* SUPPORT BANNER — visible during admin support sessions */}
+    <>
+      {/* SUPPORT BANNER — fixed above everything, outside the flex row container */}
       {isSupportSession && supportSession && (
-        <SupportBanner
-          targetEmail={supportSession.targetEmail}
-          adminEmail={supportSession.adminEmail}
-          expiresAt={supportSession.expiresAt}
-          onExit={deactivateSupportSession}
-        />
+        <div className="fixed top-0 left-0 right-0 z-[60]">
+          <SupportBanner
+            targetEmail={supportSession.targetEmail}
+            adminEmail={supportSession.adminEmail}
+            expiresAt={supportSession.expiresAt}
+            onExit={deactivateSupportSession}
+          />
+        </div>
       )}
+
+      <div
+        className={`dashboard-container fixed inset-0 z-50 overflow-hidden ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}
+        style={bannerHeight ? { top: bannerHeight } : undefined}
+      >
       {/* SIDEBAR */}
       <aside className="sidebar">
         <div className="logo-dash">
@@ -700,6 +710,7 @@ const Dashboard = () => {
         />
       )}
     </div>
+    </>
   );
 };
 
