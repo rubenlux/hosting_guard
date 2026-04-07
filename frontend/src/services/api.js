@@ -290,9 +290,9 @@ export const listFiles = async (hostingId, path = '') => {
     return response.data;
 };
 
-export const readFiles = async (hostingId, path = '') => {
-  const response = await api.get(`/hosting/${hostingId}/fs/read`, { params: { path } });
-  return response.data.content;
+export const readFile = async (hostingId, path) => {
+    const response = await api.get(`/files/${hostingId}/read`, { params: { path } });
+    return response.data;
 };
 
 export const diagnoseHosting = async (hostingId) => {
