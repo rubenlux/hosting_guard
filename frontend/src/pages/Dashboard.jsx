@@ -978,6 +978,33 @@ const Dashboard = () => {
                     {diagnosisData.diagnosis?.llm_explanation || diagnosisData.diagnosis?.summary || "No se detectaron problemas evidentes."}
                   </div>
                 </div>
+
+                {/* DEBUG TÉCNICO SECTION */}
+                <div style={{ marginTop: '0.5rem', borderTop: '1px dashed rgba(255,255,255,0.1)', pt: '1rem' }}>
+                    <div style={{ fontSize: 10, color: '#555', fontWeight: 800, letterSpacing: '1px', marginBottom: '0.75rem' }}>🔍 DEBUG TÉCNICO (ADMIN):</div>
+                    
+                    {diagnosisData.debug_info?.parsed_errors?.length > 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+                            {diagnosisData.debug_info.parsed_errors.map((err, i) => (
+                                <div key={i} style={{ fontSize: 11, fontAttributes: 'monospace', color: '#ff4444', background: 'rgba(255,68,68,0.05)', padding: '0.5rem', borderRadius: '0.5rem', border: '1px solid rgba(255,68,68,0.1)' }}>
+                                    <span style={{ fontWeight: 800 }}>[{err.type.toUpperCase()}]</span> {err.file} (Línea {err.line})
+                                    <div style={{ color: '#aaa', marginTop: '2px' }}>{err.message}</div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div style={{ fontSize: 11, color: '#444', marginBottom: '1rem' }}>No se encontraron patrones de error conocidos en los logs.</div>
+                    )}
+
+                    <div style={{ fontSize: 10, color: '#444', marginBottom: '0.25rem' }}>SNIPPET DE LOGS RECIENTES:</div>
+                    <pre style={{ 
+                        fontSize: '9px', fontAttributes: 'monospace', color: '#666', background: '#050505', 
+                        padding: '0.75rem', borderRadius: '0.5rem', overflowX: 'auto', maxHeight: '100px',
+                        border: '1px solid rgba(255,255,255,0.03)'
+                    }}>
+                        {diagnosisData.debug_info?.raw_snippet || 'Sin logs disponibles.'}
+                    </pre>
+                </div>
               </div>
             ) : (
                <div style={{ color: '#888', textAlign: 'center', marginTop: '2rem' }}>Error al cargar datos.</div>

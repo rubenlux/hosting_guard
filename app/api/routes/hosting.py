@@ -913,5 +913,9 @@ async def diagnose_hosting(hosting_id: str, user: dict = Depends(verify_token)):
         "status": status,
         "metrics": metrics,
         "diagnosis": diagnosis,
-        "has_hard_errors": debug_context["logs"]["has_errors"]
+        "has_hard_errors": debug_context["logs"]["has_errors"],
+        "debug_info": {
+            "parsed_errors": debug_context["logs"]["parsed_errors"],
+            "raw_snippet": debug_context["logs"]["recent_raw_snippet"]
+        }
     }
