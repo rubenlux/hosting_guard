@@ -20,6 +20,7 @@ user_repo = UserRepository()
 
 # 🔧 CONFIG GLOBAL
 CHECK_INTERVAL = 10  # segundos
+DRY_RUN = True      # 🔥 MODO SIMULACIÓN (No aplica cambios, solo loggea)
 
 # 🔥 PLANES DEFINIDOS (Sincronizados con el resto de la app)
 PLANS = {
@@ -115,6 +116,10 @@ def get_container_stats():
 
 def throttle_container(name, user_id, cpu_limit, reason_type):
     """Aplica límites de CPU dinámicamente y registra el evento."""
+    if DRY_RUN:
+        logger.info(f"[{datetime.now()}] [DRY_RUN] Would throttle {name} → {cpu_limit} CPU (Reason: {reason_type})")
+        return
+
     logger.info(f"[{datetime.now()}] ⚡ LIMITANDO {name} → {cpu_limit} CPU")
     result = subprocess.run([
         "docker", "update",
@@ -134,6 +139,10 @@ def throttle_container(name, user_id, cpu_limit, reason_type):
 
 def restart_container(name, user_id):
     """Reinicia un contenedor por exceso crítico de memoria y registra el evento."""
+    if DRY_RUN:
+        logger.info(f"[{datetime.now()}] [DRY_RUN] Would restart {name} (Critical RAM)")
+        return
+
     logger.info(f"[{datetime.now()}] 🔄 REINICIANDO {name} (Exceso crítico de RAM)")
     result = subprocess.run([
         "docker", "restart",
@@ -148,6 +157,10 @@ def restart_container(name, user_id):
 
 def revert_scaling(name, user_id, original_cpu, original_mem):
     """Devuelve el contenedor a su estado original según plan."""
+    if DRY_RUN:
+        logger.info(f"[{datetime.now()}] [DRY_RUN] Would revert scaling for {name} to {original_cpu} CPU")
+        return
+
     logger.info(f"[{datetime.now()}] 🔙 REVIRTIENDO {name} a límites de plan ({original_cpu} CPU)")
     try:
         result = subprocess.run([
@@ -174,6 +187,10 @@ def apply_autoscale(name, user_id, rules):
     if name in _active_timers and _active_timers[name].is_alive():
         return
         
+    if DRY_RUN:
+        logger.info(f"[{datetime.now()}] [DRY_RUN] Would autoscale {name} (charge + scale resources)")
+        return
+
     cost_abs = abs(AUTOSCALE_COST)
     if not user_repo.deduct_balance_if_sufficient(user_id, cost_abs):
         logger.warning(f"[{datetime.now()}] Saldo insuficiente para {name}.")
