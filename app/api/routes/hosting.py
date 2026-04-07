@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from app.api.security import verify_token, require_support_write
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.user_repository import UserRepository
-
+from app.core.ai_orchestrator import AIOrchestrator
+from app.core.debug_context_builder import build_debug_context
 _user_repo = UserRepository()
 
 hosting_repo = HostingRepository()
@@ -857,3 +858,60 @@ def get_orchestrator_events(skip: int = 0, limit: int = 20, user: dict = Depends
     # y no bloqueamos el hilo principal asíncrono haciendo peticiones síncronas a SQLite!
     events = hosting_repo.get_orchestrator_events(user_id, limit=limit, skip=skip)
     return events
+
+
+@router.post("/hosting/{hosting_id}/diagnose")
+async def diagnose_hosting(hosting_id: str, user: dict = Depends(verify_token)):
+    user_id = user.get("user_id")
+    
+    # 1. Validar propiedad
+    loop = asyncio.get_running_loop()
+    hosting = await loop.run_in_executor(None, lambda: hosting_repo.get_hosting_by_id(hosting_id))
+    
+    if not hosting or str(hosting['user_id']) != str(user_id):
+        raise HTTPException(status_code=404, detail="Hosting no encontrado o no tienes permisos")
+        
+    container_name = hosting['container_name']
+    
+    # 2. Conseguir metricas basales (CPU, RAM, Status) para el contexto
+    # Igual que en `list_hostings`, pero concentrado.
+    status = "unknown"
+    metrics = {"cpu": "0%", "memory": "0MiB"}
+    
+    try:
+        res_inspect = await _run_docker(
+            "docker", "inspect", "--format", "{{.State.Status}}", container_name, timeout=5
+        )
+        status = res_inspect.stdout.strip()
+        
+        if status == "running":
+            res_stats = await _run_docker(
+                "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}|{{.MemUsage}}", container_name, timeout=10
+            )
+            pts = res_stats.stdout.strip().split("|")
+            if len(pts) == 2:
+                metrics = {"cpu": pts[0], "memory": pts[1]}
+    except Exception:
+        pass
+
+    # 3. Construir Debug Context (Logs + Métricas + Parsed Errors)
+    debug_context = await build_debug_context(container_name, metrics=metrics, limit_logs=60)
+    
+    # 4. Decisión simulada de base que alimenta el motor
+    decision_base = {
+        "overall_status": "unknown" if status != "running" else "requires_human" if debug_context["logs"]["has_errors"] else "ready_for_execution",
+        "container_name": container_name,
+        "hosting_id": hosting_id,
+        "metrics": metrics
+    }
+    
+    # 5. Llamado al AI Orchestrator para enriquezimiento inteligente
+    orchestrator = AIOrchestrator()
+    diagnosis = await orchestrator.enrich(decision=decision_base, debug_context=debug_context)
+
+    return {
+        "status": status,
+        "metrics": metrics,
+        "diagnosis": diagnosis,
+        "has_hard_errors": debug_context["logs"]["has_errors"]
+    }

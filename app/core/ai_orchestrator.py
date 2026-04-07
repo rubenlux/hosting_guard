@@ -39,13 +39,22 @@ class AIOrchestrator:
         self,
         decision: Dict,
         tenant: Optional[Tenant] = None,
+        debug_context: Optional[Dict] = None,
     ) -> Dict:
         try:
-            advisory = generate_advisory(decision)
+            advisory = generate_advisory(decision, debug_context=debug_context)
 
             # 1. Primero verificar cache (operación barata)
+            # Incorporar el hash de debug_context para asegurar que respuestas de bugs diferentes no se crucen
             tenant_id = tenant.tenant_id if tenant else None
-            cached = get_cached_response(decision, tenant_id=tenant_id)
+            
+            cache_decision_key = dict(decision)
+            if debug_context:
+                # Agregamos una firma ligera de los errores extraídos al hash del decision
+                errs = debug_context.get("logs", {}).get("parsed_errors", [])
+                cache_decision_key["_debug_hash"] = str([e.get("message") for e in errs])
+
+            cached = get_cached_response(cache_decision_key, tenant_id=tenant_id)
             if cached:
                 logger.info("Cache HIT - serving from cache")
                 return {
@@ -66,11 +75,11 @@ class AIOrchestrator:
             # 3. Llamar al LLM con Timeout
             logger.info(
                 "LLM enrich request",
-                extra={"tenant_id": tenant_id, "decision_id": decision.get("decision_id")},
+                extra={"tenant_id": tenant_id, "decision_id": decision.get("decision_id"), "has_debug_ctx": bool(debug_context)},
             )
             loop = asyncio.get_running_loop()
             with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(self.llm.generate, decision, context)
+                future = executor.submit(self.llm.generate, decision, context, debug_context)
                 try:
                     explanation = await loop.run_in_executor(None, lambda: future.result(timeout=LLM_TIMEOUT_SECONDS))
                 except FuturesTimeout:
@@ -98,7 +107,7 @@ class AIOrchestrator:
                     "from_cache": False,
                 }
 
-            save_to_cache(decision, explanation, tenant_id=tenant_id)
+            save_to_cache(cache_decision_key, explanation, tenant_id=tenant_id)
 
             return {
                 **advisory,

@@ -13,7 +13,8 @@ const SiteManagement = ({
   onOpenLogs,
   onDelete,
   onUploadZip,
-  onOpenFiles
+  onOpenFiles,
+  onDiagnose
 }) => {
 
   return (
@@ -120,7 +121,7 @@ const SiteManagement = ({
                 <div className="w-[1px] h-6 bg-white/10 mx-1"></div>
                 
                 <button 
-                  onClick={() => alert(`Diagnóstico con IA para ${h.name} arrancando... (Pronto)`)}
+                  onClick={() => onDiagnose?.(h.hosting_id)}
                   className="px-3 h-9 flex items-center gap-2 rounded-lg bg-ia/10 text-ia hover:bg-ia hover:text-[#000] font-bold text-[11px] transition-all"
                 >
                   <Bot size={14} /> Diagnosticar

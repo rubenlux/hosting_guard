@@ -1,7 +1,7 @@
 # app/core/ai_advisory_engine.py
 
 
-def generate_advisory(decision_result: dict) -> dict:
+def generate_advisory(decision_result: dict, debug_context: dict | None = None) -> dict:
     """
     Genera una explicación y advertencias humanas a partir
     de una decisión ya tomada por el DecisionPipeline.
@@ -13,11 +13,16 @@ def generate_advisory(decision_result: dict) -> dict:
     """
 
     overall_status = decision_result.get("overall_status")
+    
+    debug_msg = ""
+    if debug_context and debug_context.get("logs", {}).get("parsed_errors"):
+        err = debug_context["logs"]["parsed_errors"][0]
+        debug_msg = f"\nDEBUG DETECTADO: {err['type']} en {err['file']} (Línea {err['line']}). Detalle: {err['message']}."
 
     # 1️⃣ Caso: acción BLOQUEADA (riesgo alto)
     if overall_status == "blocked":
         return {
-            "summary": ("La acción propuesta fue bloqueada por presentar un riesgo alto para el sistema."),
+            "summary": ("La acción propuesta fue bloqueada por presentar un riesgo alto para el sistema." + debug_msg),
             "risk_notes": ["Ejecutar esta acción podría causar pérdida de datos o interrupciones graves."],
             "recommendation": (
                 "No se recomienda ejecutar ninguna acción automática. Un humano debe revisar el caso cuidadosamente."
@@ -29,7 +34,7 @@ def generate_advisory(decision_result: dict) -> dict:
     if overall_status == "requires_human":
         return {
             "summary": (
-                "Se detectó una situación que requiere la revisión y aprobación de un humano antes de continuar."
+                "Se detectó una situación que requiere la revisión y aprobación de un humano antes de continuar." + debug_msg
             ),
             "risk_notes": ["La acción propuesta puede tener impacto en el funcionamiento del sistema."],
             "recommendation": ("Revisar la recomendación técnica y aprobarla manualmente si se considera segura."),
@@ -39,7 +44,7 @@ def generate_advisory(decision_result: dict) -> dict:
     # 3️⃣ Caso: estado DESCONOCIDO (incertidumbre)
     if overall_status == "unknown":
         return {
-            "summary": ("No se pudo determinar con certeza la causa del problema detectado."),
+            "summary": ("No se pudo determinar con certeza la causa del problema detectado." + debug_msg),
             "risk_notes": ["La información disponible no es suficiente para una decisión automática."],
             "recommendation": ("Se recomienda que un humano revise el caso para evitar acciones incorrectas."),
             "requires_human_attention": True,

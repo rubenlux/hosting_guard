@@ -26,8 +26,8 @@ class OpenAIAdvisoryLLM(AdvisoryLLM):
         self.model = os.getenv("LLM_MODEL", "gpt-4o-mini")
         self.timeout = int(os.getenv("LLM_TIMEOUT_SECONDS", "5"))
 
-    def generate(self, decision: Dict, context: List[str]) -> str:
-        prompt = self._build_prompt(decision, context)
+    def generate(self, decision: Dict, context: List[str], debug_context: Optional[Dict] = None) -> str:
+        prompt = self._build_prompt(decision, context, debug_context=debug_context)
 
         # Usando la API v1.0+ de OpenAI
         response = self.client.chat.completions.create(
@@ -53,8 +53,14 @@ class OpenAIAdvisoryLLM(AdvisoryLLM):
 
         return text
 
-    def _build_prompt(self, decision: Dict, context: List[str]) -> str:
-        # Prompt estrictamente factual
+    def _build_prompt(self, decision: Dict, context: List[str], debug_context: Optional[Dict] = None) -> str:
+        # Prompt enriquezido con logs si existe debug_context
+        debug_section = ""
+        if debug_context:
+            errors = debug_context.get("logs", {}).get("parsed_errors", [])
+            snippet = debug_context.get("logs", {}).get("recent_raw_snippet", "")
+            debug_section = f"\nERRORES EN CÓDIGO DETECTADOS (LOGS):\n{errors}\n\nSNIPPET RECIENTE:\n{snippet}\n"
+
         return f"""
 Explica la situación de forma clara y prudente para un cliente.
 
@@ -63,6 +69,6 @@ DECISIÓN DEL SISTEMA (Hechos):
 
 CONTEXTO TÉCNICO (Conocimiento curado):
 {context}
-
-Produce una explicación breve, honesta y conservadora. No menciones el formato JSON.
+{debug_section}
+Produce una explicación breve, honesta y conservadora. Si ves errores precisos en el código (ej. línea 45 functions.php), menciónalos para que el usuario pueda ir directo a corregirlos. No menciones el formato JSON ni la estructura interna.
 """

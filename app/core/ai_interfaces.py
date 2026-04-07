@@ -18,7 +18,6 @@ class KnowledgeProvider(Protocol):
         """
         ...
 
-
 class TenantKnowledgeProvider(Protocol):
     """
     Proveedor de conocimiento aislado por tenant.
@@ -35,7 +34,6 @@ class TenantKnowledgeProvider(Protocol):
         """
         ...
 
-
 class AdvisoryLLM(Protocol):
     """
     Genera texto explicativo a partir de hechos.
@@ -46,6 +44,7 @@ class AdvisoryLLM(Protocol):
         self,
         decision: Dict,
         context: List[str],
+        debug_context: Dict | None = None
     ) -> str:
         """
         Produce una explicación/recomendación textual.

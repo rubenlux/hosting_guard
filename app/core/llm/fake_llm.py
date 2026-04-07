@@ -10,7 +10,7 @@ class RuleBasedFakeLLM(AdvisoryLLM):
     Emula razonamiento técnico sin efectos secundarios.
     """
 
-    def generate(self, decision: Dict, context: List[str]) -> str:
+    def generate(self, decision: Dict, context: List[str], debug_context: Dict | None = None) -> str:
         parts: List[str] = []
 
         # 1️⃣ Estado general

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe } from '../services/api';
+import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import {
   Globe,
@@ -75,6 +75,11 @@ const Dashboard = () => {
   const [showSupport, setShowSupport] = useState(false);
   const [supportView, setSupportView] = useState('chat'); // 'chat' | 'history'
   const [openTicketId, setOpenTicketId] = useState(null);
+  
+  // AI Diagnostics State
+  const [showDiagnosis, setShowDiagnosis] = useState(false);
+  const [diagnosisData, setDiagnosisData] = useState(null);
+  const [diagnosisLoading, setDiagnosisLoading] = useState(false);
 
   const expiringHostings = hostings.filter(
     h => h.plan === 'free' && h.days_remaining !== null && h.days_remaining <= 3
@@ -135,12 +140,33 @@ const Dashboard = () => {
     }
   };
 
-  const handleAction = async (id, actionFn) => {
+  const handleAction = async (id, actionFn, needRefresh = true) => {
+    setActionLoading(true);
     try {
       await actionFn(id);
-      fetchHostings(); // Refresh status
-    } catch (err) {
-      alert("Error al ejecutar la acción. Inténtalo de nuevo.");
+      if (needRefresh) {
+        fetchHostings();
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Error al ejecutar la acción');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDiagnose = async (id) => {
+    try {
+      setShowDiagnosis(true);
+      setDiagnosisLoading(true);
+      setDiagnosisData(null);
+      const host = hostings.find(h => h.hosting_id === id);
+      const result = await diagnoseHosting(id);
+      setDiagnosisData({ hostingName: host?.name, ...result });
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Fallo AI Engine al diagnosticar.');
+      setShowDiagnosis(false);
+    } finally {
+      setDiagnosisLoading(false);
     }
   };
 
@@ -446,6 +472,7 @@ const Dashboard = () => {
               onDelete={handleDelete}
               onUploadZip={(h) => { setSelectedUploadHosting(h); setShowUpload(true); }}
               onOpenFiles={(h) => { setSelectedFilesHosting(h); setShowFiles(true); }}
+              onDiagnose={handleDiagnose}
             />
           ) : (
             <>
@@ -874,6 +901,87 @@ const Dashboard = () => {
       >
         <Headset size={22} color="#000" />
       </button>
+    )}
+
+    {/* ── MODAL DE DIAGNOSTICO AI ────────────────────────────────────── */}
+    {showDiagnosis && (
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '1.5rem',
+      }}>
+        <div style={{
+          width: 500, maxWidth: '100%', background: '#0a0a0c',
+          border: '1px solid rgba(166,0,255,0.2)', borderRadius: '1.5rem',
+          boxShadow: '0 0 40px rgba(166,0,255,0.1)', overflow: 'hidden'
+        }}>
+          <div style={{
+            padding: '1.25rem', borderBottom: '1px solid rgba(255,255,255,0.05)',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            background: 'linear-gradient(90deg, rgba(166,0,255,0.1), transparent)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: '0.75rem',
+                background: 'rgba(166,0,255,0.2)', color: '#d088ff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center'
+              }}>
+                <Bot size={18} />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: '#fff', letterSpacing: '0.5px' }}>AI DEBUG ENGINE</div>
+                <div style={{ fontSize: 11, color: '#888' }}>{diagnosisData?.hostingName || 'Analizando...'}</div>
+              </div>
+            </div>
+            <button onClick={() => setShowDiagnosis(false)} style={{
+              background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '50%',
+              width: 28, height: 28, cursor: 'pointer', color: '#888',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <X size={14} />
+            </button>
+          </div>
+          
+          <div style={{ padding: '1.5rem', minHeight: 150, display: 'flex', flexDirection: 'column' }}>
+            {diagnosisLoading ? (
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', color: '#a600ff' }}>
+                <Loader className="animate-spin" size={32} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#888', letterSpacing: '1px' }}>ESCANENADO LOGS Y MÉTRICAS...</span>
+              </div>
+            ) : diagnosisData ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  <div style={{ flex: 1, background: '#111', padding: '0.75rem', borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div style={{ fontSize: 10, color: '#666', fontWeight: 800, uppercase: true, marginBottom: '0.25rem' }}>STATUS</div>
+                    <div style={{ fontSize: 13, color: diagnosisData.status === 'running' ? '#00ff88' : '#ff4444', fontWeight: 600 }}>{diagnosisData.status.toUpperCase()}</div>
+                  </div>
+                  <div style={{ flex: 1, background: '#111', padding: '0.75rem', borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div style={{ fontSize: 10, color: '#666', fontWeight: 800, uppercase: true, marginBottom: '0.25rem' }}>CPU / RAM</div>
+                    <div style={{ fontSize: 13, color: '#fff', fontFamily: 'monospace' }}>{diagnosisData.metrics.cpu} / {diagnosisData.metrics.memory}</div>
+                  </div>
+                </div>
+                
+                {diagnosisData.has_hard_errors && (
+                  <div style={{ background: 'rgba(255,68,68,0.1)', border: '1px solid rgba(255,68,68,0.2)', padding: '0.75rem', borderRadius: '0.75rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <AlertTriangle color="#ff4444" size={20} />
+                    <span style={{ fontSize: 12, color: '#ff4444', fontWeight: 600 }}>Se detectaron errores en el código (Logs)</span>
+                  </div>
+                )}
+                
+                <div style={{ background: 'rgba(166,0,255,0.05)', borderRadius: '1rem', padding: '1.25rem', border: '1px solid rgba(166,0,255,0.1)' }}>
+                  <div style={{ fontSize: 10, color: '#a600ff', fontWeight: 800, letterSpacing: '1px', marginBottom: '0.5rem' }}>REPORTE DEL ASESOR:</div>
+                  <div style={{ fontSize: 13, color: '#ddd', lineHeight: 1.6 }}>
+                    {diagnosisData.diagnosis?.llm_explanation || diagnosisData.diagnosis?.summary || "No se detectaron problemas evidentes."}
+                  </div>
+                </div>
+              </div>
+            ) : (
+               <div style={{ color: '#888', textAlign: 'center', marginTop: '2rem' }}>Error al cargar datos.</div>
+            )}
+          </div>
+        </div>
+      </div>
     )}
 
     {/* ── MODAL DE SOPORTE ────────────────────────────────────── */}
