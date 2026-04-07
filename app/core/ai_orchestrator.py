@@ -118,8 +118,14 @@ class AIOrchestrator:
 
         except Exception:
             logger.error(
-                "Error en enriquecimiento de IA",
+                "Error en enriquecimiento de IA (posible falta de crédito o timeout)",
                 exc_info=True,
                 extra={"tenant_id": tenant.tenant_id if tenant else None},
             )
-            return {"summary": "No disponible", "requires_human_attention": True}
+            # Fallback al advisory base definido arriba (reglas de negocio)
+            return {
+                **advisory,
+                "llm_explanation": "IA temporalmente fuera de servicio. Reporte basado en reglas internas.",
+                "context_used": "N/A",
+                "from_cache": False
+            }
