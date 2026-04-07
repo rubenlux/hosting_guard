@@ -502,6 +502,13 @@ execution_engine = ExecutionEngine()
 app.include_router(hosting_router)
 app.include_router(admin_router)
 
+# ── Support Chat (aditivo) ────────────────────────────────────────────────
+from app.api.routes.support_chat import router as support_chat_router
+from app.api.websocket.support_ws import support_ws_handler
+
+app.include_router(support_chat_router)
+app.add_api_websocket_route("/ws/support/{ticket_id}", support_ws_handler)
+
 
 # ── Support session cookie management ────────────────────────────────────────
 

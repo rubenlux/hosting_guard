@@ -29,7 +29,8 @@ import {
   Headset,
   ChevronLeft,
   ChevronRight,
-  Bot
+  Bot,
+  X
 } from 'lucide-react';
 import '../Dashboard.css';
 import HostingCreationForm from '../components/HostingCreationForm';
@@ -39,6 +40,8 @@ import PixelAnalytics from '../components/PixelAnalytics';
 import AdminDashboard from './AdminDashboard';
 import MonacoFileEditor from '../components/MonacoFileEditor';
 import SupportBanner from '../components/SupportBanner';
+import SupportChat from '../components/SupportChat';
+import SupportTicketList from '../components/SupportTicketList';
 import { AlertTriangle, Upload, FolderOpen } from "lucide-react"
 
 const Dashboard = () => {
@@ -67,6 +70,9 @@ const Dashboard = () => {
   const [metrics, setMetrics] = useState({});
   const [events, setEvents] = useState([]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [showSupport, setShowSupport] = useState(false);
+  const [supportView, setSupportView] = useState('chat'); // 'chat' | 'history'
+  const [openTicketId, setOpenTicketId] = useState(null);
 
   const expiringHostings = hostings.filter(
     h => h.plan === 'free' && h.days_remaining !== null && h.days_remaining <= 3
@@ -331,6 +337,12 @@ const Dashboard = () => {
           </div>
 
           <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Cuenta'}</div>
+          <div className="nav-item-dash"
+            onClick={() => { setShowSupport(true); setSupportView('history'); setOpenTicketId(null); }}
+          >
+            <div className="nav-icon-dash" style={{ color: '#818cf8' }}><Headset size={18} /></div>
+            {!isSidebarCollapsed && <span>Soporte</span>}
+          </div>
           <div className="nav-item-dash">
             <div className="nav-icon-dash icon-blue"><CreditCard size={18} /></div>
             {!isSidebarCollapsed && <span>Facturación</span>}
@@ -710,7 +722,74 @@ const Dashboard = () => {
         />
       )}
     </div>
-    </>
+    {/* ── BOTÓN FLOTANTE + MODAL ───────────── se inyectan aquí sin romper el Fragment */}
+
+    {/* ── BOTÓN FLOTANTE DE SOPORTE ───────────────────────────── */}
+    {!showSupport && (
+      <button
+        id="support-chat-bubble"
+        onClick={() => { setShowSupport(true); setSupportView('chat'); setOpenTicketId(null); }}
+        style={{
+          position: 'fixed', bottom: '1.75rem', right: '1.75rem', zIndex: 999,
+          width: 52, height: 52, borderRadius: '50%', border: 'none',
+          background: 'linear-gradient(135deg, #00ff88, #00cc70)',
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 8px 32px rgba(0,255,136,0.4)', transition: 'all 0.2s ease',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.1)'; }}
+        onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
+        title="Abrir soporte"
+      >
+        <Headset size={22} color="#000" />
+      </button>
+    )}
+
+    {/* ── MODAL DE SOPORTE ────────────────────────────────────── */}
+    {showSupport && (
+      supportView === 'history' && !openTicketId ? (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1000,
+          background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)',
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
+          padding: '1.5rem',
+        }} onClick={(e) => e.target === e.currentTarget && setShowSupport(false)}>
+          <div style={{
+            width: 460, maxHeight: '80vh', background: '#0d0d0d',
+            border: '1px solid rgba(255,255,255,0.08)', borderRadius: '1.5rem',
+            overflow: 'hidden', display: 'flex', flexDirection: 'column',
+            boxShadow: '0 24px 80px rgba(0,0,0,0.8)',
+          }}>
+            <div style={{
+              padding: '1rem 1.25rem', borderBottom: '1px solid rgba(255,255,255,0.06)',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>Historial de Soporte</div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button onClick={() => { setSupportView('chat'); setOpenTicketId(null); }} style={{
+                  fontSize: 11, padding: '0.3rem 0.75rem', borderRadius: '0.5rem',
+                  background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.2)',
+                  color: '#00ff88', cursor: 'pointer',
+                }}>+ Nuevo ticket</button>
+                <button onClick={() => setShowSupport(false)} style={{
+                  background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: '50%',
+                  width: 28, height: 28, cursor: 'pointer', color: '#888',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}><X size={14} /></button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+              <SupportTicketList onOpenTicket={(id) => { setOpenTicketId(id); setSupportView('chat'); }} />
+            </div>
+          </div>
+        </div>
+      ) : (
+        <SupportChat
+          onClose={() => setShowSupport(false)}
+          initialTicketId={openTicketId}
+        />
+      )
+    )}
+  </>
   );
 };
 

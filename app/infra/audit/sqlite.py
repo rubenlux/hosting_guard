@@ -286,6 +286,47 @@ _MIGRATIONS_SQLITE = [
         response_ms INTEGER,
         status_code INTEGER
     )""",
+    # ── Support Chat tables (v3) ─────────────────────────────────────────────
+    """CREATE TABLE IF NOT EXISTS ticket_categories (
+        category_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        ai_prompt_hint TEXT,
+        priority_default TEXT NOT NULL DEFAULT 'medium',
+        is_active INTEGER NOT NULL DEFAULT 1
+    )""",
+    """CREATE TABLE IF NOT EXISTS support_tickets (
+        ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        hosting_id INTEGER,
+        category TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        priority TEXT NOT NULL DEFAULT 'medium',
+        title TEXT NOT NULL,
+        ai_summary TEXT,
+        assigned_to INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        resolved_at TEXT,
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS ticket_messages (
+        message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id INTEGER NOT NULL,
+        sender_type TEXT NOT NULL,
+        sender_id INTEGER,
+        content TEXT NOT NULL,
+        metadata TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (ticket_id) REFERENCES support_tickets (ticket_id)
+    )""",
+    # Seed de categorías iniciales (INSERT OR IGNORE = idempotente en SQLite)
+    "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (1, 'Sitio caído', 'El sitio web no responde o da error 502/503', 'El cliente reporta que su sitio web está completamente caído o inaccesible. Revisa el estado del contenedor Docker y los logs de nginx.', 'high', 1)",
+    "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (2, 'Sitio lento', 'El sitio carga muy despacio', 'El cliente reporta lentitud en su sitio web. Revisa CPU, memoria y conexiones activas del contenedor.', 'medium', 1)",
+    "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (3, 'Error en WordPress', 'Error 500, pantalla blanca o plugin roto en WordPress', 'El cliente tiene un sitio WordPress con errores. Puede ser un plugin incompatible, límite de memoria PHP o base de datos corrupta.', 'medium', 1)",
+    "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (4, 'Problema de billing', 'Cobros incorrectos, saldo o facturación', 'El cliente tiene una consulta sobre su factura, saldo o método de pago. Revisar el historial de transacciones.', 'low', 1)",
+    "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (5, 'Ayuda técnica', 'Configuración, DNS, SSL u otro problema técnico', 'El cliente necesita ayuda técnica general. Puede ser configuración de DNS, certificado SSL, redirecciones o deploy.', 'medium', 1)",
+    "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (6, 'Otro', 'Otro tipo de problema no clasificado', 'El cliente tiene una consulta general. Intentar clasificar el problema antes de responder.', 'low', 1)",
 ]
 
 _MIGRATIONS_PG = [
@@ -357,6 +398,47 @@ _MIGRATIONS_PG = [
         response_ms INTEGER,
         status_code INTEGER
     )""",
+    # ── Support Chat tables (v3) ─────────────────────────────────────────────
+    """CREATE TABLE IF NOT EXISTS ticket_categories (
+        category_id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        ai_prompt_hint TEXT,
+        priority_default TEXT NOT NULL DEFAULT 'medium',
+        is_active INTEGER NOT NULL DEFAULT 1
+    )""",
+    """CREATE TABLE IF NOT EXISTS support_tickets (
+        ticket_id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        hosting_id INTEGER,
+        category TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        priority TEXT NOT NULL DEFAULT 'medium',
+        title TEXT NOT NULL,
+        ai_summary TEXT,
+        assigned_to INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        resolved_at TEXT,
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS ticket_messages (
+        message_id SERIAL PRIMARY KEY,
+        ticket_id INTEGER NOT NULL,
+        sender_type TEXT NOT NULL,
+        sender_id INTEGER,
+        content TEXT NOT NULL,
+        metadata TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (ticket_id) REFERENCES support_tickets (ticket_id)
+    )""",
+    # Seed de categorías iniciales (ON CONFLICT DO NOTHING = idempotente en PostgreSQL)
+    "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (1, 'Sitio caído', 'El sitio web no responde o da error 502/503', 'El cliente reporta que su sitio web está completamente caído o inaccesible. Revisa el estado del contenedor Docker y los logs de nginx.', 'high', 1) ON CONFLICT (category_id) DO NOTHING",
+    "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (2, 'Sitio lento', 'El sitio carga muy despacio', 'El cliente reporta lentitud en su sitio web. Revisa CPU, memoria y conexiones activas del contenedor.', 'medium', 1) ON CONFLICT (category_id) DO NOTHING",
+    "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (3, 'Error en WordPress', 'Error 500, pantalla blanca o plugin roto en WordPress', 'El cliente tiene un sitio WordPress con errores. Puede ser un plugin incompatible, límite de memoria PHP o base de datos corrupta.', 'medium', 1) ON CONFLICT (category_id) DO NOTHING",
+    "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (4, 'Problema de billing', 'Cobros incorrectos, saldo o facturación', 'El cliente tiene una consulta sobre su factura, saldo o método de pago. Revisar el historial de transacciones.', 'low', 1) ON CONFLICT (category_id) DO NOTHING",
+    "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (5, 'Ayuda técnica', 'Configuración, DNS, SSL u otro problema técnico', 'El cliente necesita ayuda técnica general. Puede ser configuración de DNS, certificado SSL, redirecciones o deploy.', 'medium', 1) ON CONFLICT (category_id) DO NOTHING",
+    "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (6, 'Otro', 'Otro tipo de problema no clasificado', 'El cliente tiene una consulta general. Intentar clasificar el problema antes de responder.', 'low', 1) ON CONFLICT (category_id) DO NOTHING",
 ]
 
 _INDEXES = [
@@ -368,6 +450,11 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_traffic_collected ON traffic_stats(collected_at)",
     "CREATE INDEX IF NOT EXISTS idx_uptime_hosting ON uptime_checks(hosting_id)",
     "CREATE INDEX IF NOT EXISTS idx_uptime_checked ON uptime_checks(checked_at)",
+    # Support Chat indexes
+    "CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)",
+    "CREATE INDEX IF NOT EXISTS idx_tickets_assigned ON support_tickets(assigned_to)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_ticket ON ticket_messages(ticket_id)",
 ]
 
 

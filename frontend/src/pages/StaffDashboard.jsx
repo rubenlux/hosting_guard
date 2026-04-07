@@ -11,6 +11,8 @@ import {
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import { useStaffTracking } from '../hooks/useStaffTracking';
+import SupportQueue from '../components/SupportQueue';
+import StaffChatPanel from '../components/StaffChatPanel';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -116,14 +118,16 @@ export default function StaffDashboard() {
   const { activateSupportSession } = useAuth();
   const { track } = useStaffTracking();
 
-  const [staff, setStaff]         = useState(null);
-  const [clients, setClients]     = useState([]);
-  const [activity, setActivity]   = useState([]);
-  const [search, setSearch]       = useState('');
-  const [loading, setLoading]     = useState(true);
+  const [staff, setStaff]           = useState(null);
+  const [clients, setClients]       = useState([]);
+  const [activity, setActivity]     = useState([]);
+  const [search, setSearch]         = useState('');
+  const [loading, setLoading]       = useState(true);
   const [supporting, setSupporting] = useState(null);
-  const [issueModal, setIssueModal] = useState(null);  // client object
-  const [error, setError]         = useState(null);
+  const [issueModal, setIssueModal] = useState(null);
+  const [error, setError]           = useState(null);
+  const [activeTab, setActiveTab]   = useState('clients'); // 'clients' | 'queue'
+  const [chatTicketId, setChatTicketId] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -336,90 +340,130 @@ export default function StaffDashboard() {
           <StatCard label="Total clientes"     value={clients.length}     color="text-emerald-400" />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Tab bar */}
+        <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.5rem' }}>
+          {[
+            { key: 'clients', label: '👥 Clientes' },
+            { key: 'queue',   label: chatTicketId ? '💬 Chat Activo' : '🎫 Cola de Soporte' },
+          ].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => { setActiveTab(tab.key); if (tab.key === 'clients') setChatTicketId(null); }}
+              style={{
+                padding: '0.4rem 1rem', borderRadius: '0.5rem', border: 'none',
+                fontSize: 11, fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s',
+                background: activeTab === tab.key ? 'rgba(0,255,136,0.1)' : 'rgba(255,255,255,0.04)',
+                color: activeTab === tab.key ? '#00ff88' : '#666',
+                borderBottom: activeTab === tab.key ? '2px solid #00ff88' : '2px solid transparent',
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
-          {/* Lista de clientes */}
-          <div className="lg:col-span-2 bg-[#111] rounded-xl border border-white/5 overflow-hidden">
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-white/5">
-              <Users className="w-4 h-4 text-gray-500" />
-              <span className="text-xs font-bold text-white">Clientes</span>
-              <span className="text-[9px] text-gray-600">{filtered.length} de {clients.length}</span>
-              <div className="ml-auto flex items-center gap-2 bg-white/5 rounded-lg px-2.5 py-1.5">
-                <Search className="w-3 h-3 text-gray-600" />
-                <input
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder="Buscar por email..."
-                  className="bg-transparent text-[11px] text-white placeholder-gray-600 outline-none w-40"
-                />
+        {activeTab === 'clients' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Lista de clientes */}
+            <div className="lg:col-span-2 bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+              <div className="flex items-center gap-3 px-4 py-3 border-b border-white/5">
+                <Users className="w-4 h-4 text-gray-500" />
+                <span className="text-xs font-bold text-white">Clientes</span>
+                <span className="text-[9px] text-gray-600">{filtered.length} de {clients.length}</span>
+                <div className="ml-auto flex items-center gap-2 bg-white/5 rounded-lg px-2.5 py-1.5">
+                  <Search className="w-3 h-3 text-gray-600" />
+                  <input
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    placeholder="Buscar por email..."
+                    className="bg-transparent text-[11px] text-white placeholder-gray-600 outline-none w-40"
+                  />
+                </div>
+              </div>
+
+              <div className="overflow-auto max-h-[480px]">
+                <table className="w-full text-[11px]">
+                  <thead className="sticky top-0 bg-[#111]">
+                    <tr className="border-b border-white/5">
+                      {['ID', 'Email', 'Fecha', 'Plan', 'Acción'].map(h => (
+                        <th key={h} className="text-left px-4 py-2 text-[9px] uppercase tracking-wider text-gray-600 font-medium">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.length === 0 ? (
+                      <tr><td colSpan={5} className="p-8 text-center text-gray-600 italic text-[11px]">Sin resultados</td></tr>
+                    ) : filtered.map(c => (
+                      <ClientRow
+                        key={c.user_id}
+                        client={c}
+                        canSupport={staff?.role === 'support'}
+                        onSupport={handleSupport}
+                        supporting={supporting}
+                      />
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
 
-            <div className="overflow-auto max-h-[480px]">
-              <table className="w-full text-[11px]">
-                <thead className="sticky top-0 bg-[#111]">
-                  <tr className="border-b border-white/5">
-                    {['ID', 'Email', 'Fecha', 'Plan', 'Acción'].map(h => (
-                      <th key={h} className="text-left px-4 py-2 text-[9px] uppercase tracking-wider text-gray-600 font-medium">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.length === 0 ? (
-                    <tr><td colSpan={5} className="p-8 text-center text-gray-600 italic text-[11px]">Sin resultados</td></tr>
-                  ) : filtered.map(c => (
-                    <ClientRow
-                      key={c.user_id}
-                      client={c}
-                      canSupport={staff?.role === 'support'}
-                      onSupport={handleSupport}
-                      supporting={supporting}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+            {/* Actividad reciente */}
+            <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
+                <Clock className="w-4 h-4 text-gray-500" />
+                <span className="text-xs font-bold text-white">Mi actividad</span>
+              </div>
 
-          {/* Actividad reciente */}
-          <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
-              <Clock className="w-4 h-4 text-gray-500" />
-              <span className="text-xs font-bold text-white">Mi actividad</span>
-            </div>
-
-            <div className="overflow-auto max-h-[480px]">
-              {activity.length === 0 ? (
-                <div className="p-6 text-center text-[11px] text-gray-600 italic">Sin actividad registrada</div>
-              ) : (
-                <div className="divide-y divide-white/5">
-                  {activity.map(a => (
-                    <div key={a.log_id} className="flex items-start gap-3 px-4 py-3">
-                      <div className="mt-0.5 shrink-0">
-                        <ActionIcon type={a.action_type} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[11px] text-white leading-snug truncate">
-                          {ACTION_LABELS[a.action_type] || a.action_type}
+              <div className="overflow-auto max-h-[480px]">
+                {activity.length === 0 ? (
+                  <div className="p-6 text-center text-[11px] text-gray-600 italic">Sin actividad registrada</div>
+                ) : (
+                  <div className="divide-y divide-white/5">
+                    {activity.map(a => (
+                      <div key={a.log_id} className="flex items-start gap-3 px-4 py-3">
+                        <div className="mt-0.5 shrink-0">
+                          <ActionIcon type={a.action_type} />
                         </div>
-                        {a.target_email && (
-                          <div className="text-[10px] text-gray-500 truncate">{a.target_email}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11px] text-white leading-snug truncate">
+                            {ACTION_LABELS[a.action_type] || a.action_type}
+                          </div>
+                          {a.target_email && (
+                            <div className="text-[10px] text-gray-500 truncate">{a.target_email}</div>
+                          )}
+                          <div className="text-[9px] text-gray-700 mt-0.5">{timeAgo(a.created_at)}</div>
+                        </div>
+                        {a.duration_seconds != null && (
+                          <div className="text-[9px] text-gray-600 font-mono shrink-0">
+                            {a.duration_seconds}s
+                          </div>
                         )}
-                        <div className="text-[9px] text-gray-700 mt-0.5">{timeAgo(a.created_at)}</div>
                       </div>
-                      {a.duration_seconds != null && (
-                        <div className="text-[9px] text-gray-600 font-mono shrink-0">
-                          {a.duration_seconds}s
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
+        )}
 
-        </div>
+        {/* Cola de soporte / Chat activo */}
+        {activeTab === 'queue' && (
+          <div style={{ minHeight: '60vh' }}>
+            {chatTicketId ? (
+              <StaffChatPanel
+                ticketId={chatTicketId}
+                staffPayload={staff}
+                onBack={() => setChatTicketId(null)}
+              />
+            ) : (
+              <SupportQueue
+                onOpenTicket={(id) => { setChatTicketId(id); }}
+              />
+            )}
+          </div>
+        )}
+
       </div>
     </div>
   );

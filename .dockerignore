@@ -14,3 +14,7 @@ audit_events.sqlite
 tenant_configs.sqlite
 Dockerfile
 .dockerignore
+tests/
+audits/
+scripts/
+*.log

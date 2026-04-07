@@ -255,3 +255,36 @@ class StaffRepository:
             (staff_id, since),
         )
         return [dict(row) for row in cursor.fetchall()]
+
+    # -------------------------------------------------------------------------
+    # Disponibilidad para soporte (aditivo)
+    # -------------------------------------------------------------------------
+
+    def get_available_staff(self):
+        """Lista colaboradores activos con su carga actual de tickets."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT s.staff_id, s.email, s.full_name, s.role, s.last_login_at,
+                      COUNT(t.ticket_id) AS active_tickets
+               FROM staff_accounts s
+               LEFT JOIN support_tickets t
+                  ON s.staff_id = t.assigned_to
+                 AND t.status = 'in_progress'
+               WHERE s.is_active = 1
+               GROUP BY s.staff_id, s.email, s.full_name, s.role, s.last_login_at
+               ORDER BY active_tickets ASC, s.last_login_at DESC"""
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_staff_ticket_load(self, staff_id: int) -> int:
+        """Retorna cuantos tickets activos tiene asignados un colaborador."""
+        conn = get_connection()
+        cursor = conn.cursor()
+        p = _PH
+        cursor.execute(
+            f"SELECT COUNT(*) FROM support_tickets WHERE assigned_to = {p} AND status = 'in_progress'",
+            (staff_id,),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else 0

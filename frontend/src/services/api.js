@@ -389,3 +389,68 @@ export const trackActivity = async (data) => {
 };
 
 export default api;
+
+// ---------------------------------------------------------------------------
+// Support Chat — cliente
+// ---------------------------------------------------------------------------
+
+export const getSupportCategories = async () => {
+  const response = await api.get('/support/categories');
+  return response.data;
+};
+
+export const createSupportTicket = async (data) => {
+  const response = await api.post('/support/tickets', data);
+  return response.data;
+};
+
+export const getMyTickets = async () => {
+  const response = await api.get('/support/tickets');
+  return response.data;
+};
+
+export const getTicketDetail = async (ticketId) => {
+  const response = await api.get(`/support/tickets/${ticketId}`);
+  return response.data;
+};
+
+export const sendTicketMessage = async (ticketId, content) => {
+  const response = await api.post(`/support/tickets/${ticketId}/messages`, { content });
+  return response.data;
+};
+
+export const escalateTicket = async (ticketId, reason) => {
+  const response = await api.post(`/support/tickets/${ticketId}/escalate`, { reason });
+  return response.data;
+};
+
+export const resolveTicket = async (ticketId, resolution_note) => {
+  const response = await api.post(`/support/tickets/${ticketId}/resolve`, { resolution_note });
+  return response.data;
+};
+
+// ---------------------------------------------------------------------------
+// Support Chat — staff
+// ---------------------------------------------------------------------------
+
+export const getSupportQueue = async () => {
+  const response = await api.get('/support/queue');
+  return response.data;
+};
+
+export const assignTicket = async (ticketId) => {
+  const response = await api.post(`/support/tickets/${ticketId}/assign`);
+  return response.data;
+};
+
+export const getAllTickets = async () => {
+  const response = await api.get('/support/tickets');
+  return response.data;
+};
+
+export const createSupportWebSocket = (ticketId) => {
+  const wsBase = (import.meta.env.VITE_API_URL || 'https://api.hostingguard.lat')
+    .replace('https://', 'wss://')
+    .replace('http://', 'ws://');
+  return new WebSocket(`${wsBase}/ws/support/${ticketId}`);
+};
