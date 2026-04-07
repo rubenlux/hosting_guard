@@ -159,6 +159,28 @@ services:
     networks:
       - hosting_network
 
+  # ---------------------------------------------------------------------------
+  # orchestrator — Monitoreo y auto-scaling inteligente (Safe Mode: DRY_RUN)
+  # ---------------------------------------------------------------------------
+  orchestrator:
+    build:
+      context: /opt/hosting_guard
+    container_name: orchestrator
+    restart: always
+    env_file: .env.production
+    depends_on:
+      - docker-socket-proxy
+      - app
+    command: python -m app.services.orchestrator
+    environment:
+      DOCKER_HOST: "tcp://docker-socket-proxy:2375"
+    volumes:
+      - /usr/bin/docker:/usr/bin/docker:ro
+      - ./data:/app/data
+    networks:
+      - hosting_network
+      - socket_proxy_network
+
 networks:
   hosting_network:
     driver: bridge

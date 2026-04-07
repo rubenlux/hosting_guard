@@ -342,6 +342,11 @@ _MIGRATIONS_SQLITE = [
     "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (4, 'Problema de billing', 'Cobros incorrectos, saldo o facturación', 'El cliente tiene una consulta sobre su factura, saldo o método de pago. Revisar el historial de transacciones.', 'low', 1)",
     "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (5, 'Ayuda técnica', 'Configuración, DNS, SSL u otro problema técnico', 'El cliente necesita ayuda técnica general. Puede ser configuración de DNS, certificado SSL, redirecciones o deploy.', 'medium', 1)",
     "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (6, 'Otro', 'Otro tipo de problema no clasificado', 'El cliente tiene una consulta general. Intentar clasificar el problema antes de responder.', 'low', 1)",
+    # ── Orchestrator observability columns (v4) ───────────────────────────────────
+    "ALTER TABLE orchestrator_events ADD COLUMN cpu_pct REAL",
+    "ALTER TABLE orchestrator_events ADD COLUMN mem_pct REAL",
+    "ALTER TABLE orchestrator_events ADD COLUMN risk_level TEXT",
+    "ALTER TABLE orchestrator_events ADD COLUMN simulated INTEGER DEFAULT 1",
 ]
 
 _MIGRATIONS_PG = [
@@ -469,6 +474,11 @@ _MIGRATIONS_PG = [
     "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (4, 'Problema de billing', 'Cobros incorrectos, saldo o facturación', 'El cliente tiene una consulta sobre su factura, saldo o método de pago. Revisar el historial de transacciones.', 'low', 1) ON CONFLICT (category_id) DO NOTHING",
     "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (5, 'Ayuda técnica', 'Configuración, DNS, SSL u otro problema técnico', 'El cliente necesita ayuda técnica general. Puede ser configuración de DNS, certificado SSL, redirecciones o deploy.', 'medium', 1) ON CONFLICT (category_id) DO NOTHING",
     "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (6, 'Otro', 'Otro tipo de problema no clasificado', 'El cliente tiene una consulta general. Intentar clasificar el problema antes de responder.', 'low', 1) ON CONFLICT (category_id) DO NOTHING",
+    # ── Orchestrator observability columns (v4) ───────────────────────────────────
+    "ALTER TABLE orchestrator_events ADD COLUMN IF NOT EXISTS cpu_pct REAL",
+    "ALTER TABLE orchestrator_events ADD COLUMN IF NOT EXISTS mem_pct REAL",
+    "ALTER TABLE orchestrator_events ADD COLUMN IF NOT EXISTS risk_level TEXT",
+    "ALTER TABLE orchestrator_events ADD COLUMN IF NOT EXISTS simulated INTEGER DEFAULT 1",
 ]
 
 _INDEXES = [

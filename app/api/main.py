@@ -384,12 +384,26 @@ class UserConfigRequest(BaseModel):
 
 @app.post("/user/config")
 def update_user_config(config: UserConfigRequest, user=Depends(verify_token)):
+    user_db = user_repo.get_user_by_id(user["user_id"])
+    if not user_db:
+        raise HTTPException(status_code=404, detail="User not found")
+        
     try:
         if config.autoscale_enabled is not None:
+            # 🛑 RESTRICCIÓN: Solo planes de pago pueden activar autoscale
+            if config.autoscale_enabled and user_db.get("plan", "free") == "free":
+                raise HTTPException(
+                    status_code=403, 
+                    detail="Autoscaling solo disponible en planes pagos. Por favor, actualiza tu plan para activar esta función."
+                )
             user_repo.update_autoscale(user["user_id"], config.autoscale_enabled)
+            
         if config.has_payment_method is not None:
             user_repo.update_payment_method(user["user_id"], config.has_payment_method)
+            
         return {"status": "ok"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -22,6 +22,21 @@ user_repo = UserRepository()
 CHECK_INTERVAL = 10  # segundos
 DRY_RUN = True      # 🔥 MODO SIMULACIÓN (No aplica cambios, solo loggea)
 
+# 🛡️ CONTENEDORES DEL SISTEMA — JAMÁS SE TOCAN
+# Lista de contenedores core que el orquestador NUNCA debe modificar ni reiniciar.
+# Si el nombre de un contenedor está aquí, se ignora incondicionalmente.
+PROTECTED_CONTAINERS = frozenset({
+    "hosting_guard",    # API FastAPI principal
+    "postgres",
+    "hosting_guard_db", # alias del contenedor postgres
+    "traefik",
+    "redis",
+    "prometheus",
+    "docker_socket_proxy",
+    "orchestrator",     # el propio proceso
+    "frontend",
+})
+
 # 🔥 PLANES DEFINIDOS (Sincronizados con el resto de la app)
 PLANS = {
     "free": {
@@ -75,11 +90,34 @@ def get_system_load():
 _CONTAINER_PREFIX = "user_"
 
 
+def _is_protected(name: str) -> bool:
+    """Retorna True si el contenedor está en la lista de protegidos."""
+    return name in PROTECTED_CONTAINERS or not name.startswith(_CONTAINER_PREFIX)
+
+
+def _is_paid_plan(user_id: int) -> bool:
+    """
+    Centralized plan check. Returns True ONLY for users on paid plans.
+    Uses the shared _get_user_cached() (TTL=60s) to avoid hitting the DB
+    on every action call. Free plan → fail-safe False.
+    """
+    try:
+        # NOTE: _get_user_cached is defined below — forward reference OK at runtime
+        user = _get_user_cached(user_id)
+        if not user:
+            return False
+        return user.get("plan", "free").lower() != "free"
+    except Exception as e:
+        logger.error(f"_is_paid_plan: error consultando plan de user_id={user_id}: {e}")
+        return False  # Falla segura: sin datos → no ejecutar
+
+
 def get_container_stats():
     """
     Lee estadísticas de Docker filtradas por prefijo 'user_'.
     Solo procesa contenedores creados por HostingGuard, evitando actuar sobre
-    contenedores del sistema (traefik, prometheus, etc.).
+    contenedores del sistema (traefik, postgres, etc.).
+    DOBLE CHECK: filtra por prefijo AND por lista de protegidos.
     """
     result = subprocess.run(
         [
@@ -101,8 +139,8 @@ def get_container_stats():
             name, cpu, mem = line.split("|")
             name = name.strip()
 
-            # ARCH-01: ignorar contenedores que no sean de usuarios
-            if not name.startswith(_CONTAINER_PREFIX):
+            # ARCH-01: ignorar contenedores del sistema (doble capa)
+            if _is_protected(name):
                 continue
 
             cpu_val = float(cpu.replace("%", "").strip())
@@ -114,10 +152,21 @@ def get_container_stats():
 
     return containers
 
-def throttle_container(name, user_id, cpu_limit, reason_type):
+def throttle_container(name, user_id, cpu_limit, reason_type, cpu_pct=None, mem_pct=None):
     """Aplica límites de CPU dinámicamente y registra el evento."""
+    # 🔒 BLOQUEO DE PLAN: throttle solo aplica a usuarios de pago
+    if not _is_paid_plan(user_id):
+        logger.info(f"⛔ BLOCKED (FREE PLAN) action=throttle container={name} user_id={user_id}")
+        return
+
+    risk = "critical" if reason_type == "panic" else "warning"
     if DRY_RUN:
-        logger.info(f"[{datetime.now()}] [DRY_RUN] Would throttle {name} → {cpu_limit} CPU (Reason: {reason_type})")
+        msg = f"[SIMULADO] Throttle → {cpu_limit} vCPU (Razón: {reason_type}, CPU: {cpu_pct}%, MEM: {mem_pct}%)"
+        logger.info(f"[{datetime.now()}] [DRY_RUN] {msg}")
+        hosting_repo.log_orchestrator_event(
+            name, user_id, reason_type, msg,
+            cpu_pct=cpu_pct, mem_pct=mem_pct, risk_level=risk, simulated=True
+        )
         return
 
     logger.info(f"[{datetime.now()}] ⚡ LIMITANDO {name} → {cpu_limit} CPU")
@@ -135,12 +184,26 @@ def throttle_container(name, user_id, cpu_limit, reason_type):
     if reason_type == "panic":
         msg = "Alta carga del servidor. Recursos reducidos temporalmente para proteger la estabilidad."
 
-    hosting_repo.log_orchestrator_event(name, user_id, reason_type, msg)
+    risk = "critical" if reason_type == "panic" else "warning"
+    hosting_repo.log_orchestrator_event(
+        name, user_id, reason_type, msg,
+        cpu_pct=None, mem_pct=None, risk_level=risk, simulated=False
+    )
 
-def restart_container(name, user_id):
+def restart_container(name, user_id, cpu_pct=None, mem_pct=None):
     """Reinicia un contenedor por exceso crítico de memoria y registra el evento."""
+    # 🔒 BLOQUEO DE PLAN: restart solo aplica a usuarios de pago
+    if not _is_paid_plan(user_id):
+        logger.info(f"⛔ BLOCKED (FREE PLAN) action=restart container={name} user_id={user_id}")
+        return
+
     if DRY_RUN:
-        logger.info(f"[{datetime.now()}] [DRY_RUN] Would restart {name} (Critical RAM)")
+        msg = f"[SIMULADO] Restart por RAM crítica (CPU: {cpu_pct}%, MEM: {mem_pct}%)"
+        logger.info(f"[{datetime.now()}] [DRY_RUN] {msg}")
+        hosting_repo.log_orchestrator_event(
+            name, user_id, "restart", msg,
+            cpu_pct=cpu_pct, mem_pct=mem_pct, risk_level="critical", simulated=True
+        )
         return
 
     logger.info(f"[{datetime.now()}] 🔄 REINICIANDO {name} (Exceso crítico de RAM)")
@@ -153,7 +216,11 @@ def restart_container(name, user_id):
         logger.error(f"restart_container falló para {name}: {result.stderr.strip()}")
         return
 
-    hosting_repo.log_orchestrator_event(name, user_id, "restart", "Uso crítico de memoria. El contenedor se reinició automáticamente para evitar fallos.")
+    hosting_repo.log_orchestrator_event(
+        name, user_id, "restart",
+        "Uso crítico de memoria. El contenedor se reinició automáticamente para evitar fallos.",
+        risk_level="critical", simulated=False
+    )
 
 def revert_scaling(name, user_id, original_cpu, original_mem):
     """Devuelve el contenedor a su estado original según plan."""
@@ -182,13 +249,23 @@ def revert_scaling(name, user_id, original_cpu, original_mem):
 
 _active_timers: dict = {}
 
-def apply_autoscale(name, user_id, rules):
+def apply_autoscale(name, user_id, rules, cpu_pct=None, mem_pct=None):
     """Aplica escalamiento temporal cobrando al usuario atómicamente."""
+    # 🔒 BLOQUEO DE PLAN (CRÍTICO MÁXIMO): autoscale solo para planes de pago
+    if not _is_paid_plan(user_id):
+        logger.info(f"⛔ BLOCKED (FREE PLAN) action=autoscale container={name} user_id={user_id}")
+        return
+
     if name in _active_timers and _active_timers[name].is_alive():
         return
-        
+
     if DRY_RUN:
-        logger.info(f"[{datetime.now()}] [DRY_RUN] Would autoscale {name} (charge + scale resources)")
+        msg = f"[SIMULADO] Autoscale por alta demanda (CPU: {cpu_pct}%, MEM: {mem_pct}%)"
+        logger.info(f"[{datetime.now()}] [DRY_RUN] {msg}")
+        hosting_repo.log_orchestrator_event(
+            name, user_id, "autoscale", msg,
+            cpu_pct=cpu_pct, mem_pct=mem_pct, risk_level="warning", simulated=True
+        )
         return
 
     cost_abs = abs(AUTOSCALE_COST)
@@ -213,8 +290,9 @@ def apply_autoscale(name, user_id, rules):
             return
             
         hosting_repo.log_orchestrator_event(
-            name, user_id, "autoscale", 
-            f"Escalamiento automático activado por alta demanda. (+{AUTOSCALE_CPU} vCPU). Costo: ${cost_abs}"
+            name, user_id, "autoscale",
+            f"Escalamiento automático activado por alta demanda. (+{AUTOSCALE_CPU} vCPU). Costo: ${cost_abs}",
+            cpu_pct=cpu_pct, mem_pct=mem_pct, risk_level="warning", simulated=False
         )
         
         # 3. Programar reversión
@@ -256,6 +334,12 @@ def handle_container(container):
     cpu = container["cpu"]
     mem = container["mem"]
 
+    # 🛡️ GUARDIA FINAL: si por cualquier razón un contenedor protegido llegó aquí,
+    # se rechaza incondicionalmente. Esta línea NO debería ejecutarse nunca.
+    if _is_protected(name):
+        logger.critical("⛔ SECURITY BLOCK: intento de actuar sobre contenedor protegido '%s'. Ignorado.", name)
+        return
+
     hosting = _get_hosting_cached(name)
     if not hosting:
         return
@@ -271,29 +355,29 @@ def handle_container(container):
     # Si hay pico de uso y el server NO está saturado
     if (cpu > 85 or mem > 85) and sys_load < 4.0:
         if user_data.get("autoscale_enabled") and user_data.get("has_payment_method") and user_data.get("balance", 0) > 0:
-            apply_autoscale(name, user_id, rules)
+            apply_autoscale(name, user_id, rules, cpu_pct=cpu, mem_pct=mem)
             return
 
     # --- 🛡️ LÓGICA DE PROTECCIÓN (THROTTLE/RESTART) ---
     # 🚨 PROTECCIÓN DE SISTEMA: Si el server está saturado (> Load 4), bajamos Free al 50%
     if sys_load > 4.0 and plan_name == "free":
         logger.warning(f"⚠️ Servidor Saturado (L:{sys_load}). Penalizando Free: {name}")
-        throttle_container(name, user_id, rules["cpu_limit"] * 0.5, "panic")
+        throttle_container(name, user_id, rules["cpu_limit"] * 0.5, "panic", cpu_pct=cpu, mem_pct=mem)
         return
 
     # 🚨 RAM CRÍTICA
     if mem > rules["mem_hard"]:
-        restart_container(name, user_id)
+        restart_container(name, user_id, cpu_pct=cpu, mem_pct=mem)
         return
 
     # 🔥 CPU ABUSO DE SU PROPIO PLAN
     if cpu > rules["cpu_hard"]:
-        throttle_container(name, user_id, rules["cpu_limit"] * 0.5, "throttle")
+        throttle_container(name, user_id, rules["cpu_limit"] * 0.5, "throttle", cpu_pct=cpu, mem_pct=mem)
         return
 
     # ⚠️ CPU ELEVADA (Dentro de su plan)
     if cpu > rules["cpu_soft"]:
-        throttle_container(name, user_id, rules["cpu_limit"], "soft_limit")
+        throttle_container(name, user_id, rules["cpu_limit"], "soft_limit", cpu_pct=cpu, mem_pct=mem)
         return
 
 def run_orchestrator():

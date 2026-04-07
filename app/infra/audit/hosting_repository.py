@@ -75,15 +75,37 @@ class HostingRepository:
         cursor.execute("SELECT * FROM hostings ORDER BY created_at DESC")
         return [dict(row) for row in cursor.fetchall()]
 
-    def log_orchestrator_event(self, container_name: str, user_id: int, event_type: str, message: str):
+    def log_orchestrator_event(
+        self,
+        container_name: str,
+        user_id: int,
+        event_type: str,
+        message: str,
+        cpu_pct: float = None,
+        mem_pct: float = None,
+        risk_level: str = None,
+        simulated: bool = True,
+    ):
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO orchestrator_events (container_name, user_id, event_type, message, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO orchestrator_events
+              (container_name, user_id, event_type, message, created_at,
+               cpu_pct, mem_pct, risk_level, simulated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (container_name, user_id, event_type, message, datetime.now(timezone.utc).isoformat())
+            (
+                container_name,
+                user_id,
+                event_type,
+                message,
+                datetime.now(timezone.utc).isoformat(),
+                cpu_pct,
+                mem_pct,
+                risk_level,
+                1 if simulated else 0,
+            ),
         )
         # Conservar solo los últimos 500 eventos por usuario
         cursor.execute(
@@ -96,7 +118,7 @@ class HostingRepository:
                 LIMIT 500
             )
             """,
-            (user_id, user_id)
+            (user_id, user_id),
         )
         conn.commit()
 
