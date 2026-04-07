@@ -866,7 +866,7 @@ async def diagnose_hosting(hosting_id: str, user: dict = Depends(verify_token)):
     
     # 1. Validar propiedad
     loop = asyncio.get_running_loop()
-    hosting = await loop.run_in_executor(None, lambda: hosting_repo.get_hosting_by_id(hosting_id))
+    hosting = await loop.run_in_executor(None, lambda: hosting_repo.get_hosting(hosting_id, user_id))
     
     if not hosting or str(hosting['user_id']) != str(user_id):
         raise HTTPException(status_code=404, detail="Hosting no encontrado o no tienes permisos")
