@@ -320,6 +320,21 @@ _MIGRATIONS_SQLITE = [
         created_at TEXT NOT NULL,
         FOREIGN KEY (ticket_id) REFERENCES support_tickets (ticket_id)
     )""",
+    """CREATE TABLE IF NOT EXISTS support_chat_cache (
+        cache_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL,
+        sub_intent TEXT NOT NULL,
+        problem_summary TEXT NOT NULL,
+        ai_response TEXT NOT NULL,
+        score INTEGER NOT NULL DEFAULT 50,
+        uses INTEGER NOT NULL DEFAULT 0,
+        resolutions INTEGER NOT NULL DEFAULT 0,
+        hosting_id INTEGER,
+        hosting_status_when_cached TEXT,
+        hosting_updated_at_when_cached TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    )""",
     # Seed de categorías iniciales (INSERT OR IGNORE = idempotente en SQLite)
     "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (1, 'Sitio caído', 'El sitio web no responde o da error 502/503', 'El cliente reporta que su sitio web está completamente caído o inaccesible. Revisa el estado del contenedor Docker y los logs de nginx.', 'high', 1)",
     "INSERT OR IGNORE INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (2, 'Sitio lento', 'El sitio carga muy despacio', 'El cliente reporta lentitud en su sitio web. Revisa CPU, memoria y conexiones activas del contenedor.', 'medium', 1)",
@@ -432,6 +447,21 @@ _MIGRATIONS_PG = [
         created_at TEXT NOT NULL,
         FOREIGN KEY (ticket_id) REFERENCES support_tickets (ticket_id)
     )""",
+    """CREATE TABLE IF NOT EXISTS support_chat_cache (
+        cache_id SERIAL PRIMARY KEY,
+        category TEXT NOT NULL,
+        sub_intent TEXT NOT NULL,
+        problem_summary TEXT NOT NULL,
+        ai_response TEXT NOT NULL,
+        score INTEGER NOT NULL DEFAULT 50,
+        uses INTEGER NOT NULL DEFAULT 0,
+        resolutions INTEGER NOT NULL DEFAULT 0,
+        hosting_id INTEGER,
+        hosting_status_when_cached TEXT,
+        hosting_updated_at_when_cached TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    )""",
     # Seed de categorías iniciales (ON CONFLICT DO NOTHING = idempotente en PostgreSQL)
     "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (1, 'Sitio caído', 'El sitio web no responde o da error 502/503', 'El cliente reporta que su sitio web está completamente caído o inaccesible. Revisa el estado del contenedor Docker y los logs de nginx.', 'high', 1) ON CONFLICT (category_id) DO NOTHING",
     "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (2, 'Sitio lento', 'El sitio carga muy despacio', 'El cliente reporta lentitud en su sitio web. Revisa CPU, memoria y conexiones activas del contenedor.', 'medium', 1) ON CONFLICT (category_id) DO NOTHING",
@@ -455,6 +485,7 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)",
     "CREATE INDEX IF NOT EXISTS idx_tickets_assigned ON support_tickets(assigned_to)",
     "CREATE INDEX IF NOT EXISTS idx_messages_ticket ON ticket_messages(ticket_id)",
+    "CREATE INDEX IF NOT EXISTS idx_support_cache_lookup ON support_chat_cache(category, sub_intent)",
 ]
 
 
@@ -484,6 +515,9 @@ def _init_sqlite_audit():
     for sql in _INDEXES:
         cursor.execute(sql)
 
+    # Invalidar cache técnico al deploy (startup)
+    cursor.execute("DELETE FROM support_chat_cache WHERE category IN ('Sitio caído', 'Sitio lento', 'Error en WordPress')")
+
     conn.commit()
     # Cerrar la conexión de init y limpiar el pool para que la primera
     # solicitud real obtenga una conexión limpia con WAL ya activado.
@@ -505,6 +539,9 @@ def _init_postgresql_audit():
 
         for sql in _INDEXES:
             cursor.execute(sql)
+
+        # Invalidar cache técnico al deploy (startup)
+        cursor.execute("DELETE FROM support_chat_cache WHERE category IN ('Sitio caído', 'Sitio lento', 'Error en WordPress')")
 
         conn.commit()
     except Exception:

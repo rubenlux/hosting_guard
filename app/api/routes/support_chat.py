@@ -24,6 +24,7 @@ from app.core.support_ai import generate_support_response, get_ticket_priority
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.staff_repository import StaffRepository
 from app.infra.audit.ticket_repository import TicketRepository
+from app.infra.audit.support_cache_repository import SupportCacheRepository
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ router = APIRouter(prefix="/support", tags=["support"])
 _ticket_repo  = TicketRepository()
 _hosting_repo = HostingRepository()
 _staff_repo   = StaffRepository()
+_cache_repo   = SupportCacheRepository()
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +152,7 @@ async def create_ticket(
     )
 
     # Generar respuesta IA
-    ai_response = await generate_support_response(
+    ai_response, cache_id = await generate_support_response(
         category=body.category,
         description=body.description,
         ai_prompt_hint=ai_prompt_hint,
@@ -162,7 +164,11 @@ async def create_ticket(
         ticket_id=ticket_id,
         sender_type="ai",
         content=ai_response,
-        metadata={"category": body.category, "ai_prompt_hint": ai_prompt_hint},
+        metadata={
+            "category": body.category, 
+            "ai_prompt_hint": ai_prompt_hint,
+            "cache_id": cache_id
+        },
     )
     _ticket_repo.update_ticket_status(
         ticket_id=ticket_id,
@@ -421,6 +427,18 @@ def resolve_ticket(
             sender_type="system",
             content="✅ El cliente confirmó que el problema fue resuelto.",
         )
+
+        # Buscar si hubo una respuesta de IA con cache_id para darle feedback
+        try:
+            messages = _ticket_repo.list_messages(ticket_id)
+            for msg in messages:
+                if msg.get("sender_type") == "ai" and msg.get("metadata"):
+                    cache_id = msg["metadata"].get("cache_id")
+                    if cache_id:
+                        _cache_repo.record_feedback(cache_id, resolved=True)
+                        break
+        except Exception as e:
+            logger.debug("Cache feedback non-critical error: %s", e)
 
     # Broadcast WS
     try:
