@@ -183,6 +183,13 @@ const Dashboard = () => {
     }
   };
 
+  const [errorToast, setErrorToast] = useState(null);
+
+  const showError = (message) => {
+    setErrorToast(message);
+    setTimeout(() => setErrorToast(null), 5000);
+  };
+
   const handleToggleAutoscale = async () => {
     if (actionLoading) return;
     const newValue = !user?.autoscale_enabled;
@@ -191,7 +198,11 @@ const Dashboard = () => {
       await updateUserConfig({ autoscale_enabled: newValue });
       setUser(prev => ({ ...prev, autoscale_enabled: newValue }));
     } catch (err) {
-      alert("Error al actualizar la configuración. Inténtalo de nuevo.");
+      if (err.response && err.response.data && err.response.data.detail) {
+        showError(err.response.data.detail);
+      } else {
+        showError("Error al actualizar la configuración. Inténtalo de nuevo.");
+      }
     } finally {
       setActionLoading(false);
     }
@@ -205,7 +216,11 @@ const Dashboard = () => {
       const res = await topupBalance(10);
       setUser(prev => ({ ...prev, balance: res.balance }));
     } catch (err) {
-      alert("Error al recargar el saldo. Inténtalo de nuevo.");
+      if (err.response && err.response.data && err.response.data.detail) {
+        showError(err.response.data.detail);
+      } else {
+        showError("Error al recargar el saldo. Inténtalo de nuevo.");
+      }
     } finally {
       setActionLoading(false);
     }
@@ -720,6 +735,59 @@ const Dashboard = () => {
           readOnly={false}
           onClose={() => { setShowFiles(false); setSelectedFilesHosting(null); }}
         />
+      )}
+
+      {/* ── CUSTOM ERROR TOAST (STITCH DESIGN) ── */}
+      {errorToast && (
+        <div style={{
+          position: 'fixed',
+          top: 24,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '16px 24px',
+          background: 'rgba(10, 10, 12, 0.95)',
+          backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(255, 68, 68, 0.4)',
+          borderRadius: 16,
+          boxShadow: '0 16px 40px rgba(255, 0, 0, 0.2), 0 0 0 1px rgba(255,68,68,0.1) inset',
+          color: '#fff',
+          animation: 'toastSlideDown 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 32, height: 32, borderRadius: '50%',
+            background: 'rgba(255, 68, 68, 0.1)', color: '#ff4444'
+          }}>
+            <AlertTriangle size={16} />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#ff4444', marginBottom: 2 }}>
+              Acción Bloqueada
+            </div>
+            <div style={{ fontSize: 13, color: '#aaa', lineHeight: 1.4, maxWidth: 320 }}>
+              {errorToast}
+            </div>
+          </div>
+          <button 
+            onClick={() => setErrorToast(null)}
+            style={{ 
+              background: 'none', border: 'none', color: '#666', 
+              cursor: 'pointer', padding: 4, marginLeft: 8 
+            }}
+          >
+            <X size={16} />
+          </button>
+          <style>{`
+            @keyframes toastSlideDown {
+              from { opacity: 0; transform: translate(-50%, -20px) scale(0.9); }
+              to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+            }
+          `}</style>
+        </div>
       )}
     </div>
     {/* ── BOTÓN FLOTANTE + MODAL ───────────── se inyectan aquí sin romper el Fragment */}
