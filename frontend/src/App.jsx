@@ -1,4 +1,5 @@
 import React from 'react';
+import { Toaster } from 'react-hot-toast';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
@@ -58,6 +59,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background text-white selection:bg-primary/30">
+      <Toaster position="top-right" toastOptions={{ style: { background: '#111', color: '#fff', border: '1px solid rgba(255,255,255,0.1)' } }} />
       {!user && <Navbar />}
       <main className={!user ? "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" : ""}>
         <Routes>
