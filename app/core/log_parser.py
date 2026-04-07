@@ -11,19 +11,16 @@ class LogParser:
     def parse_logs(raw_logs: str) -> List[Dict[str, Any]]:
         """
         Escanea logs de texto crudo y extrae errores estructurados.
+        Diferencia entre CRITICAL (errores de código) y WARNING (señales HTTP como 404).
         """
         parsed_errors = []
         lines = raw_logs.splitlines()
-
-        # Usar un buffer simple para python stacktraces
-        python_traceback_buffer = []
-        in_python_traceback = False
 
         for i, line in enumerate(lines):
             # 1. PHP PHP Errors
             php_match = PHP_ERROR_REGEX.search(line)
             if php_match:
-                severity = "high" if "error" in php_match.group(1).lower() else "medium"
+                severity = "critical" if "error" in php_match.group(1).lower() else "warning"
                 parsed_errors.append({
                     "type": "php_error",
                     "severity": severity,
@@ -34,43 +31,47 @@ class LogParser:
                 })
                 continue
             
-            # 2. Node.js Errors (simple one-line start usually)
-            node_match = NODE_ERROR_REGEX.search(line)
-            if node_match and len(lines) > i + 1:
-               # Often node errors have "    at ..." on subsequent lines, 
-               # but we are looking for a simple generic match right now
-               pass # Improved JS parsing can be added later
-
-            # Nginx / Generic 500s or timeouts
-            if "HTTP/1.1\" 500" in line:
-               parsed_errors.append({
-                   "type": "http_500",
-                   "severity": "high",
-                   "message": "Internal Server Error detected in access logs",
-                   "file": "nginx/access.log",
-                   "line": 0,
-                   "raw_context": line
-               })
+            # 2. HTTP Signals (404, 5xx, timeouts)
+            if '" 404 ' in line:
+                path_match = re.search(r'GET\s+(.+?)\s+HTTP', line)
+                path = path_match.group(1) if path_match else "unknown"
+                parsed_errors.append({
+                    "type": "http_404",
+                    "severity": "warning",
+                    "message": f"Archivo faltante (404): {path}",
+                    "file": path,
+                    "line": 0,
+                    "raw_context": line
+                })
+            
+            elif '" 500 ' in line or '" 503 ' in line:
+                parsed_errors.append({
+                    "type": "http_5xx",
+                    "severity": "critical",
+                    "message": "Error interno del servidor (500/503) detectado",
+                    "file": "servidor",
+                    "line": 0,
+                    "raw_context": line
+                })
 
         # Python Regex over the whole blob
         for py_match in PYTHON_ERROR_REGEX.finditer(raw_logs):
              parsed_errors.append({
                  "type": "python_exception",
-                 "severity": "high",
+                 "severity": "critical",
                  "message": py_match.group(2).strip(),
-                 "file": "unknown.py", # Can be extracted from stack trace if needed
+                 "file": "unknown.py",
                  "line": 0,
                  "raw_context": py_match.group(0).strip()
              })
 
-        # Deduplicate generic errors avoiding noise
+        # Deduplicar
         unique_errors = []
         seen = set()
         for err in parsed_errors:
-            # Hash basico para dedup
             key = f"{err['type']}_{err['message']}_{err['file']}"
             if key not in seen:
                 seen.add(key)
                 unique_errors.append(err)
 
-        return unique_errors[:5] # Limitar a los 5 errores más relevantes
+        return unique_errors[:10]

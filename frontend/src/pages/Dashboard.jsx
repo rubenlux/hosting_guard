@@ -972,12 +972,34 @@ const Dashboard = () => {
                   </div>
                 )}
                 
-                <div style={{ background: 'rgba(166,0,255,0.05)', borderRadius: '1rem', padding: '1.25rem', border: '1px solid rgba(166,0,255,0.1)' }}>
-                  <div style={{ fontSize: 10, color: '#a600ff', fontWeight: 800, letterSpacing: '1px', marginBottom: '0.5rem' }}>REPORTE DEL ASESOR:</div>
-                  <div style={{ fontSize: 13, color: '#ddd', lineHeight: 1.6 }}>
-                    {diagnosisData.diagnosis?.llm_explanation || diagnosisData.diagnosis?.summary || "No se detectaron problemas evidentes."}
-                  </div>
-                </div>
+                {/* REPORTE DINÁMICO SEGÚN SEVERIDAD */}
+                {(() => {
+                  const severity = diagnosisData.diagnosis?.severity || 'ok';
+                  const colors = {
+                    critical: { bg: 'rgba(255,68,68,0.05)', border: 'rgba(255,68,68,0.2)', text: '#ff4444' },
+                    warning: { bg: 'rgba(255,170,0,0.05)', border: 'rgba(255,170,0,0.2)', text: '#ffaa00' },
+                    ok: { bg: 'rgba(0,255,136,0.05)', border: 'rgba(0,255,136,0.1)', text: '#00ff88' }
+                  }[severity] || { bg: 'rgba(166,0,255,0.05)', border: 'rgba(166,0,255,0.1)', text: '#a600ff' };
+
+                  return (
+                    <div style={{ background: colors.bg, borderRadius: '1rem', padding: '1.25rem', border: `1px solid ${colors.border}`, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                         <div style={{ width: 8, height: 8, borderRadius: '50%', background: colors.text, boxShadow: `0 0 10px ${colors.text}` }} />
+                         <div style={{ fontSize: 10, color: colors.text, fontWeight: 800, letterSpacing: '1px' }}>
+                           ANÁLISIS DEL ASESOR ({severity.toUpperCase()}):
+                         </div>
+                      </div>
+                      <div style={{ fontSize: 13, color: '#ddd', lineHeight: 1.6 }}>
+                        {diagnosisData.diagnosis?.llm_explanation || diagnosisData.diagnosis?.summary || "No se detectaron problemas evidentes."}
+                      </div>
+                      {diagnosisData.diagnosis?.recommendation && (
+                        <div style={{ fontSize: 11, color: '#888', fontStyle: 'italic', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.5rem' }}>
+                          💡 {diagnosisData.diagnosis.recommendation}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* DEBUG TÉCNICO SECTION */}
                 <div style={{ marginTop: '0.5rem', borderTop: '1px dashed rgba(255,255,255,0.1)', pt: '1rem' }}>
@@ -985,12 +1007,24 @@ const Dashboard = () => {
                     
                     {diagnosisData.debug_info?.parsed_errors?.length > 0 ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
-                            {diagnosisData.debug_info.parsed_errors.map((err, i) => (
-                                <div key={i} style={{ fontSize: 11, fontAttributes: 'monospace', color: '#ff4444', background: 'rgba(255,68,68,0.05)', padding: '0.5rem', borderRadius: '0.5rem', border: '1px solid rgba(255,68,68,0.1)' }}>
-                                    <span style={{ fontWeight: 800 }}>[{err.type.toUpperCase()}]</span> {err.file} (Línea {err.line})
-                                    <div style={{ color: '#aaa', marginTop: '2px' }}>{err.message}</div>
-                                </div>
-                            ))}
+                            {diagnosisData.debug_info.parsed_errors.map((err, i) => {
+                                const isCritical = err.severity === 'critical';
+                                const color = isCritical ? '#ff4444' : '#ffaa00';
+                                return (
+                                    <div key={i} style={{ 
+                                        fontSize: 11, fontAttributes: 'monospace', color: color, 
+                                        background: isCritical ? 'rgba(255,68,68,0.05)' : 'rgba(255,170,0,0.05)', 
+                                        padding: '0.5rem', borderRadius: '0.5rem', border: `1px solid ${isCritical ? 'rgba(255,68,68,0.1)' : 'rgba(255,170,0,0.1)'}` 
+                                    }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                            <span style={{ fontWeight: 800 }}>[{err.type.toUpperCase()}]</span>
+                                            <span style={{ fontSize: 9, opacity: 0.6 }}>{err.severity.toUpperCase()}</span>
+                                        </div>
+                                        <div style={{ marginTop: '2px' }}>{err.file} {err.line > 0 && `(Línea ${err.line})`}</div>
+                                        <div style={{ color: '#aaa', marginTop: '2px', fontSize: 10 }}>{err.message}</div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     ) : (
                         <div style={{ fontSize: 11, color: '#444', marginBottom: '1rem' }}>No se encontraron patrones de error conocidos en los logs.</div>
