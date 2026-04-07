@@ -915,9 +915,10 @@ const Dashboard = () => {
         padding: '1.5rem',
       }}>
         <div style={{
-          width: 500, maxWidth: '100%', background: '#0a0a0c',
+          width: 640, maxWidth: '95%', maxHeight: '85vh', background: '#0a0a0c',
           border: '1px solid rgba(166,0,255,0.2)', borderRadius: '1.5rem',
-          boxShadow: '0 0 40px rgba(166,0,255,0.1)', overflow: 'hidden'
+          boxShadow: '0 0 40px rgba(166,0,255,0.1)', overflow: 'hidden',
+          display: 'flex', flexDirection: 'column'
         }}>
           <div style={{
             padding: '1.25rem', borderBottom: '1px solid rgba(255,255,255,0.05)',
@@ -946,7 +947,11 @@ const Dashboard = () => {
             </button>
           </div>
           
-          <div style={{ padding: '1.5rem', minHeight: 150, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ 
+            padding: '1.5rem', flex: 1, overflowY: 'auto', 
+            display: 'flex', flexDirection: 'column',
+            scrollbarWidth: 'thin', scrollbarColor: 'rgba(166,0,255,0.3) transparent'
+          }}>
             {diagnosisLoading ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', color: '#a600ff' }}>
                 <Loader className="animate-spin" size={32} />
