@@ -472,7 +472,7 @@ const Dashboard = () => {
               ))}
 
               {/* AI ADVISORY */}
-              <div className="advisory-box-dash border-scanner-warn flex flex-col md:flex-row gap-4 items-start md:items-center bg-[#050505]">
+              <div className="advisory-box-dash border-scanner-warn flex flex-col md:flex-row gap-4 items-start md:items-center bg-[#050505] mb-6">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
                     <span className="ai-badge-dash">🤖 IA ADVISORY</span>
@@ -484,8 +484,61 @@ const Dashboard = () => {
                   </div>
                 </div>
                 <div className="flex gap-2 shrink-0">
-                  <button className="btn-dash btn-primary-dash text-xs">Diagnosticar</button>
-                  <button className="btn-dash btn-ghost-dash text-xs">Cerrar</button>
+                  <button className="btn-dash btn-primary-dash text-xs !bg-[#00ff88] !text-black !border-none hover:shadow-[0_0_15px_#00ff88]">Diagnosticar</button>
+                  <button className="btn-dash btn-ghost-dash text-xs border border-white/10 hover:bg-white/5">Cerrar</button>
+                </div>
+              </div>
+
+              {/* DASHBOARD SUMMARY CARDS (DYNAMIC) */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+                {/* UPTIME */}
+                <div className="bg-[#0a0a0c] border border-[rgba(0,255,136,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #00ff88" }}>
+                  <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">Uptime General</div>
+                  <div>
+                    <div className="text-3xl font-black text-[#00ff88] [text-shadow:0_0_15px_rgba(0,255,136,0.5)]">99.9<span className="text-lg">%</span></div>
+                    <div className="text-[11px] text-gray-400 mt-2 flex items-center gap-1">
+                      <span className="text-white">↑</span> Últimos 30 días
+                    </div>
+                  </div>
+                </div>
+
+                {/* CPU */}
+                <div className="bg-[#0a0a0c] border border-[rgba(0,195,255,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #00c3ff" }}>
+                  <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">CPU Promedio</div>
+                  <div>
+                    <div className="text-3xl font-black text-[#00c3ff] [text-shadow:0_0_15px_rgba(0,195,255,0.5)]">
+                      {hostings.length ? (hostings.reduce((acc, h) => acc + parseFloat(h.metrics?.cpu || 0), 0) / hostings.length).toFixed(1) : "0"}<span className="text-lg">%</span>
+                    </div>
+                    <div className="w-16 h-1 bg-[#00c3ff] rounded-full mt-3 shadow-[0_0_8px_rgba(0,195,255,0.8)]"></div>
+                  </div>
+                </div>
+
+                {/* RAM */}
+                <div className="bg-[#0a0a0c] border border-[rgba(255,170,0,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #ffaa00" }}>
+                  <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">RAM Usada</div>
+                  <div>
+                    <div className="text-3xl font-black text-[#ffaa00] [text-shadow:0_0_15px_rgba(255,170,0,0.5)]">
+                      {(() => {
+                        let totalMiB = hostings.reduce((acc, h) => {
+                          const memStr = h.metrics?.memory || "0MiB";
+                          const val = parseFloat(memStr);
+                          return acc + (isNaN(val) ? 0 : (memStr.includes('GiB') ? val * 1024 : val));
+                        }, 0);
+                        return totalMiB > 1024 ? (totalMiB / 1024).toFixed(1) + " GB" : totalMiB.toFixed(1) + " MB";
+                      })()}
+                    </div>
+                    <div className="text-[11px] text-gray-400 mt-2">Medición en tiempo real</div>
+                  </div>
+                </div>
+
+                {/* ALMACENAMIENTO */}
+                <div className="bg-[#0a0a0c] border border-[rgba(166,0,255,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #a600ff" }}>
+                  <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">Almacenamiento</div>
+                  <div>
+                    <div className="text-3xl font-black text-[#a600ff] [text-shadow:0_0_15px_rgba(166,0,255,0.5)]">
+                      18<span className="text-lg font-bold text-gray-300"> GB</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 

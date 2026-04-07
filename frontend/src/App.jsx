@@ -63,6 +63,7 @@ function App() {
         <Routes>
           <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Home />} />
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+          <Route path="/sites"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/pixel"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/admin"                         element={<AdminRoute><Dashboard /></AdminRoute>} />
           <Route path="/admin/users/:id"              element={<AdminRoute><AdminUserDetail /></AdminRoute>} />

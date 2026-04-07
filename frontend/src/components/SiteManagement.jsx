@@ -4,7 +4,6 @@ import {
   Trash2, FileText, Bot, Upload, FolderOpen, RefreshCw,
   Cpu, Database
 } from 'lucide-react';
-import { getStatusClass } from '../utils/status';
 
 const SiteManagement = ({ 
   hostings, 
