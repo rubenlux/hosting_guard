@@ -2,7 +2,7 @@ import re
 from typing import List, Dict, Any
 
 # Expresiones regulares comunes para errores de backend
-PHP_ERROR_REGEX = re.compile(r"(Fatal error|Parse error|Warning|Notice):(.+?) in (.+?) on line (\d+)", re.IGNORECASE)
+PHP_ERROR_REGEX = re.compile(r"(Fatal error|Parse error|Warning|Notice):(.+?) in (.+?)(?: on line |:)(\d+)", re.IGNORECASE)
 PYTHON_ERROR_REGEX = re.compile(r"Traceback \(most recent call last\):([\s\S]+?)([A-Za-z]+Error: .+)")
 NODE_ERROR_REGEX = re.compile(r"(TypeError|ReferenceError|SyntaxError):(.+?)\n\s+at (.+?):(\d+)(:\d+)?")
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { toast } from 'react-hot-toast';
 import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import {
@@ -30,7 +31,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Bot,
-  X
+  X,
+  AlertTriangle,
+  Upload,
+  FolderOpen
 } from 'lucide-react';
 import '../Dashboard.css';
 import HostingCreationForm from '../components/HostingCreationForm';
@@ -42,7 +46,6 @@ import MonacoFileEditor from '../components/MonacoFileEditor';
 import SupportBanner from '../components/SupportBanner';
 import SupportChat from '../components/SupportChat';
 import SupportTicketList from '../components/SupportTicketList';
-import { AlertTriangle, Upload, FolderOpen } from "lucide-react";
 import SiteManagement from '../components/SiteManagement';
 
 const Dashboard = () => {
@@ -135,7 +138,7 @@ const Dashboard = () => {
         await deleteHosting(id);
         setHostings(hostings.filter(h => h.hosting_id !== id));
       } catch (err) {
-        alert("Error al eliminar el hosting. Inténtalo de nuevo.");
+        toast.error("Error al eliminar el hosting. Inténtalo de nuevo.");
       }
     }
   };
