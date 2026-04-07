@@ -229,29 +229,58 @@ async def list_hostings(skip: int = 0, limit: int = 50, user: dict = Depends(ver
         "dead":       "error"
     }
 
-    # FIX #3: un solo comando docker inspect para TODOS los contenedores (antes era N llamadas en loop)
     names = [h["container_name"] for h in hostings_list]
+    
+    # 1. Obtener status (inspect)
+    status_by_name = {}
     try:
-        res = await _run_docker(
+        res_inspect = await _run_docker(
             "docker", "inspect",
             "--format", "{{.Name}}|{{.State.Status}}",
             *names,
             timeout=10
         )
-        # Construir mapa { container_name -> docker_status }
-        status_by_name = {}
-        for line in res.stdout.strip().splitlines():
+        for line in res_inspect.stdout.strip().splitlines():
             if "|" in line:
                 cname, cstatus = line.lstrip("/").split("|", 1)
                 status_by_name[cname.strip()] = cstatus.strip()
+    except Exception as e:
+        pass
 
-        for h in hostings_list:
-            docker_status = status_by_name.get(h["container_name"])
-            h["status"]   = status_map.get(docker_status, "not_found") if docker_status else "not_found"
+    # 2. Obtener métricas (stats en batch)
+    metrics_by_name = {}
+    try:
+        # Solo pedimos stats de los corriendo para no trabar
+        active_names = [n for n in names if status_by_name.get(n) in ("running",)]
+        if active_names:
+            res_stats = await _run_docker(
+                "docker", "stats", "--no-stream",
+                "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}",
+                *active_names,
+                timeout=15
+            )
+            for line in res_stats.stdout.strip().splitlines():
+                if "|" in line:
+                    parts = line.lstrip("/").split("|")
+                    if len(parts) >= 3:
+                        metrics_by_name[parts[0].strip()] = {
+                            "cpu": parts[1].strip(),
+                            "memory": parts[2].strip()
+                        }
+    except Exception as e:
+        pass
 
-    except Exception:
-        for h in hostings_list:
-            h["status"] = "error"
+    # 3. Cruzar info para la UI
+    for h in hostings_list:
+        cname = h["container_name"]
+        docker_status = status_by_name.get(cname)
+        h["status"] = status_map.get(docker_status, "not_found") if docker_status else "not_found"
+        
+        # Métricas o valores por defecto
+        if h["status"] == "active" and cname in metrics_by_name:
+            h["metrics"] = metrics_by_name[cname]
+        else:
+            h["metrics"] = {"cpu": "0%", "memory": "0MiB / 0MiB"}
 
     return hostings_list
 

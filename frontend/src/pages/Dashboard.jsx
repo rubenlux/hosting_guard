@@ -42,7 +42,8 @@ import MonacoFileEditor from '../components/MonacoFileEditor';
 import SupportBanner from '../components/SupportBanner';
 import SupportChat from '../components/SupportChat';
 import SupportTicketList from '../components/SupportTicketList';
-import { AlertTriangle, Upload, FolderOpen } from "lucide-react"
+import { AlertTriangle, Upload, FolderOpen } from "lucide-react";
+import SiteManagement from '../components/SiteManagement';
 
 const Dashboard = () => {
   const { user, logoutAction, setUser, isSupportSession, supportSession, deactivateSupportSession } = useAuth();
@@ -52,6 +53,7 @@ const Dashboard = () => {
   // Determina la vista activa por URL; showCreate sobreescribe localmente
   const activeView = location.pathname === '/pixel' ? 'pixel'
                    : location.pathname === '/admin' ? 'admin'
+                   : location.pathname === '/sites' ? 'sites'
                    : 'dashboard';
 
   const [hostings, setHostings] = useState([]);
@@ -93,17 +95,10 @@ const Dashboard = () => {
   };
 
   const fetchHostings = async () => {
-    setLoading(true);
     try {
+      setLoading(true);
       const data = await listHostings();
       setHostings(data);
-
-      // Check for errors to show alerts
-      data.forEach(h => {
-        if (h.status === 'error') {
-          console.warn(`Alerta: El proyecto ${h.name} está en estado de error.`);
-        }
-      });
     } catch (err) {
       console.error(err);
     } finally {
@@ -312,7 +307,7 @@ const Dashboard = () => {
             <div className="nav-icon-dash icon-green"><Activity size={18} /></div>
             {!isSidebarCollapsed && <span>Dashboard</span>}
           </div>
-          <div className="nav-item-dash" onClick={() => { setShowCreate(false); navigate('/dashboard'); }}>
+          <div className={`nav-item-dash ${activeView === 'sites' ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/sites'); }}>
             <div className="nav-icon-dash icon-blue"><Globe size={18} /></div>
             {!isSidebarCollapsed && <span>Mis Sitios</span>}
           </div>
@@ -404,6 +399,7 @@ const Dashboard = () => {
             {showCreate ? 'Nuevo Proyecto'
               : activeView === 'pixel' ? 'Pixel Analytics'
               : activeView === 'admin' ? 'Panel de Administración'
+              : activeView === 'sites' ? 'Mis Sitios (Operaciones)'
               : 'Dashboard Overview'}
           </div>
           <div className="hidden md:flex items-center gap-2 bg-accent/5 text-accent px-3 py-1.5 rounded-full border border-accent/10 text-xs font-medium">
@@ -415,7 +411,7 @@ const Dashboard = () => {
                 if (showCreate) {
                   setShowCreate(false);
                 } else {
-                  navigate('/dashboard');
+                  navigate(activeView === 'sites' ? '/sites' : '/dashboard');
                   setShowCreate(true);
                 }
               }}
@@ -436,6 +432,21 @@ const Dashboard = () => {
             <PixelAnalytics />
           ) : activeView === 'admin' ? (
             <AdminDashboard />
+          ) : activeView === 'sites' ? (
+            <SiteManagement 
+              hostings={hostings} 
+              loading={loading} 
+              onRefresh={fetchHostings}
+              onAction={(id, action) => {
+                if (action === 'start') handleAction(id, startHosting);
+                else if (action === 'stop') handleAction(id, stopHosting);
+                else if (action === 'restart') handleAction(id, restartHosting);
+              }}
+              onOpenLogs={handleOpenLogs}
+              onDelete={handleDelete}
+              onUploadZip={(h) => { setSelectedUploadHosting(h); setShowUpload(true); }}
+              onOpenFiles={(h) => { setSelectedFilesHosting(h); setShowFiles(true); }}
+            />
           ) : (
             <>
               {/* EXPIRATION WARNINGS */}
