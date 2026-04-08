@@ -55,8 +55,9 @@ class UserRepository:
     def deduct_balance_if_sufficient(self, user_id: int, amount: float) -> bool:
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            "UPDATE users SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
+            f"UPDATE users SET balance = balance - {p} WHERE user_id = {p} AND balance >= {p}",
             (amount, user_id, amount)
         )
         affected = cursor.rowcount
@@ -66,19 +67,22 @@ class UserRepository:
     def update_balance(self, user_id: int, amount: float):
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+        p = _PH
+        cursor.execute(f"UPDATE users SET balance = balance + {p} WHERE user_id = {p}", (amount, user_id))
         conn.commit()
 
     def update_payment_method(self, user_id: int, has_method: bool):
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET has_payment_method = ? WHERE user_id = ?", (1 if has_method else 0, user_id))
+        p = _PH
+        cursor.execute(f"UPDATE users SET has_payment_method = {p} WHERE user_id = {p}", (1 if has_method else 0, user_id))
         conn.commit()
 
     def update_autoscale(self, user_id: int, enabled: bool):
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET autoscale_enabled = ? WHERE user_id = ?", (1 if enabled else 0, user_id))
+        p = _PH
+        cursor.execute(f"UPDATE users SET autoscale_enabled = {p} WHERE user_id = {p}", (1 if enabled else 0, user_id))
         conn.commit()
 
     def get_all_users(self) -> List[Dict]:
@@ -94,8 +98,9 @@ class UserRepository:
     def log_login_attempt(self, email: str, ip: str, success: bool, detail: str = "") -> None:
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            "INSERT INTO login_audit (email, ip, success, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+            f"INSERT INTO login_audit (email, ip, success, detail, created_at) VALUES ({p}, {p}, {p}, {p}, {p})",
             (email, ip, 1 if success else 0, detail, datetime.now(timezone.utc).isoformat()),
         )
         conn.commit()
