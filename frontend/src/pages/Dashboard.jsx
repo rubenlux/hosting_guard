@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting } from '../services/api';
+import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting, getHostingHealth } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import {
   Globe,
@@ -73,6 +73,7 @@ const Dashboard = () => {
   const [lastLogsTimestamp, setLastLogsTimestamp] = useState(null);
   const [logsLoading, setLogsLoading] = useState(false);
   const [metrics, setMetrics] = useState({});
+  const [healthData, setHealthData] = useState({});
   const [events, setEvents] = useState([]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showSupport, setShowSupport] = useState(false);
@@ -120,6 +121,15 @@ const Dashboard = () => {
       setMetrics(prev => ({ ...prev, [hostingId]: data }));
     } catch (err) {
       console.error(`Error fetching metrics for ${hostingId}:`, err);
+    }
+  };
+
+  const fetchHealth = async (hostingId) => {
+    try {
+      const data = await getHostingHealth(hostingId);
+      setHealthData(prev => ({ ...prev, [hostingId]: data }));
+    } catch (err) {
+      console.error(`Error fetching health for ${hostingId}:`, err);
     }
   };
 
@@ -274,6 +284,7 @@ const Dashboard = () => {
       hostingsRef.current.forEach(h => {
         if (h.status === 'active') {
           fetchMetrics(h.hosting_id);
+          fetchHealth(h.hosting_id);
         }
       });
     }, 10000);
@@ -465,6 +476,7 @@ const Dashboard = () => {
             <SiteManagement 
               hostings={hostings} 
               loading={loading} 
+              healthData={healthData}
               onRefresh={fetchHostings}
               onAction={(id, action) => {
                 if (action === 'start') handleAction(id, startHosting);
@@ -521,13 +533,16 @@ const Dashboard = () => {
 
               {/* DASHBOARD SUMMARY CARDS (DYNAMIC) */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                {/* UPTIME */}
+                {/* SALUD GENERAL */}
                 <div className="bg-[#0a0a0c] border border-[rgba(0,255,136,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #00ff88" }}>
-                  <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">Uptime General</div>
+                  <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">Salud General</div>
                   <div>
-                    <div className="text-3xl font-black text-[#00ff88] [text-shadow:0_0_15px_rgba(0,255,136,0.5)]">99.9<span className="text-lg">%</span></div>
+                    <div className="text-3xl font-black text-[#00ff88] [text-shadow:0_0_15px_rgba(0,255,136,0.5)]">
+                      {hostings.length ? Math.round(hostings.reduce((acc, h) => acc + (healthData[h.hosting_id]?.score || 100), 0) / hostings.length) : "100"}
+                      <span className="text-lg">/100</span>
+                    </div>
                     <div className="text-[11px] text-gray-400 mt-2 flex items-center gap-1">
-                      <span className="text-white">↑</span> Últimos 30 días
+                      <span className="text-white">↔</span> Tendencia Estable
                     </div>
                   </div>
                 </div>
@@ -617,6 +632,15 @@ const Dashboard = () => {
                                 <div className="flex items-center gap-2 text-[10px] bg-white/5 px-2 py-0.5 rounded border border-white/5 font-mono text-muted">
                                   <span className="flex items-center gap-1"><Cpu className="w-2.5 h-2.5" /> {metrics[h.hosting_id].cpu}</span>
                                   <span className="flex items-center gap-1"><Database className="w-2.5 h-2.5" /> {metrics[h.hosting_id].memory}</span>
+                                </div>
+                              )}
+                              {healthData[h.hosting_id] && (
+                                <div className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider ${
+                                  healthData[h.hosting_id].score >= 90 ? 'bg-green-500/20 text-green-400' :
+                                  healthData[h.hosting_id].score >= 70 ? 'bg-warn/20 text-warn' :
+                                  'bg-danger/20 text-danger'
+                                }`}>
+                                  Salud: {healthData[h.hosting_id].score}%
                                 </div>
                               )}
                             </div>

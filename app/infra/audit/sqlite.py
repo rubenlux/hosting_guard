@@ -137,6 +137,22 @@ _SCHEMA_AUDIT_SQLITE = """
         created_at TEXT NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users (user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS site_health_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        site_id INTEGER NOT NULL,
+        score INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        cpu REAL NOT NULL,
+        ram REAL NOT NULL,
+        error_count INTEGER DEFAULT 0,
+        warning_count INTEGER DEFAULT 0,
+        alert_type TEXT,
+        alert_message TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
+    );
 """
 
 _SCHEMA_AUDIT_PG = """
@@ -213,6 +229,22 @@ _SCHEMA_AUDIT_PG = """
         message TEXT NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users (user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS site_health_history (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        site_id INTEGER NOT NULL,
+        score INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        cpu REAL NOT NULL,
+        ram REAL NOT NULL,
+        error_count INTEGER DEFAULT 0,
+        warning_count INTEGER DEFAULT 0,
+        alert_type TEXT,
+        alert_message TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
     );
 """
 
@@ -347,6 +379,19 @@ _MIGRATIONS_SQLITE = [
     "ALTER TABLE orchestrator_events ADD COLUMN mem_pct REAL",
     "ALTER TABLE orchestrator_events ADD COLUMN risk_level TEXT",
     "ALTER TABLE orchestrator_events ADD COLUMN simulated INTEGER DEFAULT 1",
+    """CREATE TABLE IF NOT EXISTS site_health_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        site_id INTEGER NOT NULL,
+        score INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        cpu REAL NOT NULL,
+        ram REAL NOT NULL,
+        error_count INTEGER DEFAULT 0,
+        warning_count INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
+    )""",
 ]
 
 _MIGRATIONS_PG = [
@@ -479,6 +524,19 @@ _MIGRATIONS_PG = [
     "ALTER TABLE orchestrator_events ADD COLUMN IF NOT EXISTS mem_pct REAL",
     "ALTER TABLE orchestrator_events ADD COLUMN IF NOT EXISTS risk_level TEXT",
     "ALTER TABLE orchestrator_events ADD COLUMN IF NOT EXISTS simulated INTEGER DEFAULT 1",
+    """CREATE TABLE IF NOT EXISTS site_health_history (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        site_id INTEGER NOT NULL,
+        score INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        cpu REAL NOT NULL,
+        ram REAL NOT NULL,
+        error_count INTEGER DEFAULT 0,
+        warning_count INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
+    )""",
 ]
 
 _INDEXES = [

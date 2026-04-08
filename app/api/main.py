@@ -114,11 +114,13 @@ from app.api.routes.files import router as files_router
 from app.api.routes.impersonate import router as impersonate_router
 from app.api.routes.staff import router as staff_router
 from app.api.routes.staff_activity import router as staff_activity_router
+from app.api.routes.health import router as health_router
 app.include_router(pixel_router)
 app.include_router(files_router)
 app.include_router(impersonate_router)
 app.include_router(staff_router)
 app.include_router(staff_activity_router)
+app.include_router(health_router)
 
 
 _IS_PRODUCTION = APP_ENV == "production"

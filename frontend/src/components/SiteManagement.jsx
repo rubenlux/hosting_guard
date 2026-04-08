@@ -14,7 +14,8 @@ const SiteManagement = ({
   onDelete,
   onUploadZip,
   onOpenFiles,
-  onDiagnose
+  onDiagnose,
+  healthData = {}
 }) => {
 
   return (
@@ -80,11 +81,20 @@ const SiteManagement = ({
                   </div>
                 </div>
                 
-                <div className="flex items-center ml-auto">
+                <div className="flex items-center ml-auto gap-3">
+                   {healthData[h.hosting_id] && (
+                     <div className={`px-3 py-1 rounded-full text-[10px] font-black border ${
+                       healthData[h.hosting_id].score >= 90 ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                       healthData[h.hosting_id].score >= 70 ? 'bg-warn/10 text-warn border-warn/20' :
+                       'bg-danger/10 text-danger border-danger/20'
+                     }`}>
+                       SALUD: {healthData[h.hosting_id].score}%
+                     </div>
+                   )}
                    <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${h.status === 'active' ? 'bg-[#00ff88]/10 text-[#00ff88]' : h.status === 'stopped' ? 'bg-danger/10 text-danger' : 'bg-warn/10 text-warn'}`}>
                      ● {h.status || 'unknown'}
                    </div>
-                </div>
+                 </div>
               </div>
 
               {/* Actions */}

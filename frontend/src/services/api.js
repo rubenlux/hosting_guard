@@ -300,6 +300,16 @@ export const diagnoseHosting = async (hostingId) => {
   return response.data;
 };
 
+export const getHostingHealth = async (hostingId) => {
+  const response = await api.get(`/health/${hostingId}`);
+  return response.data;
+};
+
+export const getHostingHealthHistory = async (hostingId, limit = 24) => {
+  const response = await api.get(`/health/${hostingId}/history`, { params: { limit } });
+  return response.data;
+};
+
 export const saveFile = async (hostingId, path, content) => {
     const response = await api.post(`/files/${hostingId}/save`, { path, content });
     return response.data;
