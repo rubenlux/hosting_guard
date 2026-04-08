@@ -5,6 +5,7 @@ import re
 import asyncio
 import shutil
 import zipfile
+import logging
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
@@ -13,14 +14,14 @@ from pydantic import BaseModel
 from app.api.security import verify_token, require_support_write
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.user_repository import UserRepository
-from app.infra.audit.health_repository import HealthRepository
+from app.repositories import health_repo
 from app.core.ai_orchestrator import AIOrchestrator
 from app.core.debug_context_builder import build_debug_context
 from app.core.health_engine import calculate_health_score
+from app.core.alert_engine import check_alerts
 
 _user_repo = UserRepository()
 hosting_repo = HostingRepository()
-_health_repo = HealthRepository()
 
 # --- Constantes de seguridad ---
 MAX_ZIP_SIZE        = 50  * 1024 * 1024   # 50 MB en memoria
@@ -865,92 +866,139 @@ def get_orchestrator_events(skip: int = 0, limit: int = 20, user: dict = Depends
 
 @router.post("/hosting/{hosting_id}/diagnose")
 async def diagnose_hosting(hosting_id: str, user: dict = Depends(verify_token)):
-    user_id = user.get("user_id")
-    
-    # 1. Validar propiedad
-    loop = asyncio.get_running_loop()
-    hosting = await loop.run_in_executor(None, lambda: hosting_repo.get_hosting(hosting_id, user_id))
-    
-    if not hosting or str(hosting['user_id']) != str(user_id):
-        raise HTTPException(status_code=404, detail="Hosting no encontrado o no tienes permisos")
-        
-    container_name = hosting['container_name']
-    
-    # 2. Conseguir metricas basales (CPU, RAM, Status) para el contexto
-    # Igual que en `list_hostings`, pero concentrado.
-    status = "unknown"
-    metrics = {"cpu": "0%", "memory": "0MiB"}
-    
     try:
-        res_inspect = await _run_docker(
-            "docker", "inspect", "--format", "{{.State.Status}}", container_name, timeout=5
-        )
-        status = res_inspect.stdout.strip()
+        user_id = user.get("user_id")
         
-        if status == "running":
-            res_stats = await _run_docker(
-                "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}|{{.MemUsage}}", container_name, timeout=10
+        # 1. Validar propiedad
+        loop = asyncio.get_running_loop()
+        
+        # Intentar convertir id a int si parece numérico para evitar fallos en repo
+        query_id = hosting_id
+        if hosting_id.isdigit(): query_id = int(hosting_id)
+
+        hosting = await loop.run_in_executor(None, lambda: hosting_repo.get_hosting(query_id, user_id))
+        
+        if not hosting or str(hosting['user_id']) != str(user_id):
+            raise HTTPException(status_code=404, detail="Hosting no encontrado o no tienes permisos")
+            
+        container_name = hosting['container_name']
+        
+        # 2. Conseguir metricas basales (CPU, RAM, Status) para el contexto
+        status = "unknown"
+        metrics = {"cpu": "0%", "memory": "0MiB"}
+        
+        try:
+            res_inspect = await _run_docker(
+                "docker", "inspect", "--format", "{{.State.Status}}", container_name, timeout=5
             )
-            pts = res_stats.stdout.strip().split("|")
-            if len(pts) == 2:
-                metrics = {"cpu": pts[0], "memory": pts[1]}
-    except Exception:
-        pass
+            status = res_inspect.stdout.strip()
+            
+            if status == "running":
+                res_stats = await _run_docker(
+                    "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}|{{.MemUsage}}", container_name, timeout=10
+                )
+                pts = res_stats.stdout.strip().split("|")
+                if len(pts) == 2:
+                    metrics = {"cpu": pts[0], "memory": pts[1]}
+        except Exception:
+            pass
 
-    # 3. Construir Debug Context (Logs + Métricas + Parsed Errors)
-    debug_context = await build_debug_context(container_name, metrics=metrics, limit_logs=60)
-    
-    # 4. Decisión simulada de base que alimenta el motor
-    decision_base = {
-        "overall_status": "unknown" if status != "running" else "requires_human" if debug_context["logs"]["has_errors"] else "ready_for_execution",
-        "container_name": container_name,
-        "hosting_id": hosting_id,
-        "metrics": metrics
-    }
-    
-    # 5. Llamado al AI Orchestrator para enriquecimiento inteligente
-    orchestrator = AIOrchestrator()
-    diagnosis = await orchestrator.enrich(decision=decision_base, debug_context=debug_context)
-
-    # 6. Cálculo de salud y persistencia (Manual Sync)
-    # Convertimos métricas de string ("10%") a float (10.0) para el engine
-    try:
-        cpu_val = float(metrics["cpu"].replace("%", ""))
-        # "3.5MiB / 256MiB" -> "3.5MiB" -> "3.5"
-        ram_val = float(metrics["memory"].split(" / ")[0].replace("MiB", "").replace("GiB", "").strip())
-        if "GiB" in metrics["memory"]: ram_val *= 1024
-    except:
-        cpu_val, ram_val = 0.0, 0.0
-
-    health_result = calculate_health_score(
-        container_status=status,
-        cpu_usage=cpu_val,
-        ram_usage=ram_val,
-        errors=debug_context["logs"]["parsed_errors"]
-    )
-
-    # Persistir en histórico de forma asíncrona (Threadpool)
-    await loop.run_in_executor(None, lambda: _health_repo.save_health_entry(
-        user_id=user_id,
-        site_id=hosting_id,
-        score=health_result["score"],
-        status=health_result["status"],
-        cpu=cpu_val,
-        ram=ram_val,
-        error_count=len(debug_context["logs"]["parsed_errors"]),
-        warning_count=0, # Por ahora solo hard errors
-        alert_type=None,
-        alert_message=None
-    ))
-
-    return {
-        "status": status,
-        "metrics": metrics,
-        "health_score": health_result["score"],
-        "diagnosis": diagnosis,
-        "has_hard_errors": debug_context["logs"]["has_errors"],
-        "debug_info": {
-            "parsed_errors": debug_context["logs"]["parsed_errors"],
-            "raw_snippet": debug_context["logs"]["recent_raw_snippet"]
+        # 3. Construir Debug Context (Logs + Métricas + Parsed Errors)
+        debug_context = await build_debug_context(container_name, metrics=metrics, limit_logs=60)
+        
+        # 4. Decisión simulada de base que alimenta el motor
+        decision_base = {
+            "overall_status": "unknown" if status != "running" else "requires_human" if debug_context["logs"]["has_errors"] else "ready_for_execution",
+            "container_name": container_name,
+            "hosting_id": hosting_id,
+            "metrics": metrics
         }
-    }
+        
+        # 5. Llamado al AI Orchestrator para enriquecimiento inteligente
+        try:
+            orchestrator = AIOrchestrator()
+            diagnosis = await orchestrator.enrich(decision=decision_base, debug_context=debug_context)
+        except Exception as e:
+            logging.error(f"AI Orchestrator failed: {e}")
+            diagnosis = {"summary": "Error en diagnóstico inteligente.", "requires_human_attention": True}
+
+        # 6. Cálculo de salud y persistencia (Manual Sync)
+        try:
+            cpu_val = float(str(metrics.get("cpu", "0")).replace("%", ""))
+            mem_str = str(metrics.get("memory", "0"))
+            ram_val = float(mem_str.split(" / ")[0].replace("MiB", "").replace("GiB", "").strip())
+            if "GiB" in mem_str: ram_val *= 1024
+        except Exception as e:
+            logging.warning(f"Error parsing metrics: {e}")
+            cpu_val, ram_val = 0.0, 0.0
+
+        # Agrupar errores para el engine
+        grouped_errors = {}
+        for err in debug_context["logs"]["parsed_errors"]:
+            etype = err.get("type", "unknown")
+            grouped_errors[etype] = grouped_errors.get(etype, 0) + 1
+        
+        engine_errors = [{"type": k, "count": v} for k, v in grouped_errors.items()]
+
+        health_result = calculate_health_score({
+            "container_status": status,
+            "cpu": cpu_val,
+            "ram": ram_val,
+            "errors": engine_errors
+        })
+
+        # Persistir en histórico (Async)
+        try:
+            # Aseguramos que el site_id sea numérico para el histórico
+            h_id_db = int(hosting_id) if hosting_id.isdigit() else 0
+            await loop.run_in_executor(None, lambda: health_repo.save_health({
+                "user_id": user_id,
+                "site_id": h_id_db,
+                "score": health_result["score"],
+                "status": health_result["status"],
+                "cpu": cpu_val,
+                "ram": ram_val,
+                "error_count": len(debug_context["logs"]["parsed_errors"]),
+                "warning_count": health_result["warning_count"]
+            }))
+
+            alert = check_alerts(health_result["score"])
+            if alert:
+                await loop.run_in_executor(None, lambda: health_repo.save_alert({
+                    "user_id": user_id,
+                    "site_id": h_id_db,
+                    "type": alert["type"],
+                    "message": alert["message"]
+                }))
+        except Exception as e:
+            logging.error(f"Persistence failed in diagnosis: {e}")
+
+        return {
+            "status": status,
+            "metrics": metrics,
+            "health_score": health_result["score"],
+            "diagnosis": diagnosis,
+            "has_hard_errors": debug_context["logs"]["has_errors"],
+            "debug_info": {
+                "parsed_errors": debug_context["logs"]["parsed_errors"],
+                "raw_snippet": debug_context["logs"]["recent_raw_snippet"]
+            }
+        }
+    except Exception as main_err:
+        import traceback
+        logging.error(f"CRITICAL: diagnose_hosting failed: {main_err}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Fallo crítico en AI Engine: {str(main_err)}")
+
+@router.get("/{hosting_id}/health/history")
+async def get_health_history_legacy(hosting_id: int, user: dict = Depends(verify_token)):
+    """Endpoint solicitado por la guía de implementación."""
+    data = health_repo.get_history(hosting_id)
+    return [
+        {
+            "score": row["score"],
+            "cpu": row["cpu"],
+            "ram": row["ram"],
+            "timestamp": row["created_at"]
+        }
+        for row in data
+    ]

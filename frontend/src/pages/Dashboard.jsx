@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting, getHostingHealth, getHostingHealthHistory } from '../services/api';
+import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting, getHostingHealth, getHostingHealthHistory, getUserAlerts } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import {
   Globe,
@@ -75,6 +75,7 @@ const Dashboard = () => {
   const [metrics, setMetrics] = useState({});
   const [healthData, setHealthData] = useState({});
   const [healthHistory, setHealthHistory] = useState({});
+  const [alerts, setAlerts] = useState([]);
   const [events, setEvents] = useState([]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showSupport, setShowSupport] = useState(false);
@@ -142,6 +143,15 @@ const Dashboard = () => {
       setHealthHistory(prev => ({ ...prev, [hostingId]: data }));
     } catch (err) {
       console.error(`Error fetching health history for ${hostingId}:`, err);
+    }
+  };
+
+  const fetchAlerts = async () => {
+    try {
+      const data = await getUserAlerts();
+      setAlerts(data);
+    } catch (err) {
+      console.error(`Error fetching alerts:`, err);
     }
   };
 
@@ -294,6 +304,7 @@ const Dashboard = () => {
 
     fetchHostings();
     fetchEvents();
+    fetchAlerts();
     
     // Traer historial inicial para todos
     hostings.forEach(h => {
@@ -311,7 +322,10 @@ const Dashboard = () => {
     }, 15000); // 15s para no saturar
 
     // Polling de eventos cada 15 segundos
-    const eventsInterval = setInterval(fetchEvents, 15000);
+    const eventsInterval = setInterval(() => {
+      fetchEvents();
+      fetchAlerts();
+    }, 15000);
 
     return () => {
       clearInterval(metricsInterval);
@@ -607,7 +621,14 @@ const Dashboard = () => {
                           return <><span className="text-white">↔</span><span>Estable</span></>;
                         })()}
                       </div>
-                      <span className="text-[9px] font-mono text-gray-600">MODO PROACTIVO</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-mono text-gray-600">MODO PROACTIVO</span>
+                        {alerts.filter(a => !a.resolved).length > 0 && (
+                          <span className="bg-red-500/20 text-red-500 px-1.5 py-0.5 rounded-md font-black text-[9px] border border-red-500/30 animate-pulse">
+                            {alerts.filter(a => !a.resolved).length} ALERTAS
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
