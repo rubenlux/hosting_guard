@@ -9,11 +9,12 @@ from app.core.alert_engine import check_alerts
 from app.core.debug_context_builder import build_debug_context
 from app.core.health_engine import calculate_health_score
 from app.infra.audit.hosting_repository import HostingRepository
-from app.repositories import health_repo
+from app.infra.audit.health_repository import HealthRepository
 
 logger = logging.getLogger(__name__)
 
 hosting_repo = HostingRepository()
+health_repo = HealthRepository()
 
 
 async def _run_docker(*args, timeout: int = 30) -> subprocess.CompletedProcess:

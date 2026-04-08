@@ -7,6 +7,8 @@ __pycache__/
 venv/
 ENV/
 env/
+*.pyc
+data/
 
 # Environment & secrets
 .env
