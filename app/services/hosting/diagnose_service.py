@@ -2,7 +2,7 @@ import asyncio
 import logging
 import subprocess
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 
 from app.api.security import verify_token
 from app.core.alert_engine import check_alerts
@@ -27,7 +27,7 @@ async def _run_docker(*args, timeout: int = 30) -> subprocess.CompletedProcess:
     )
 
 
-async def diagnose_hosting(hosting_id: str, user: dict = Depends(verify_token)):
+async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depends(verify_token)):
     try:
         user_id = user.get("user_id")
 
@@ -87,11 +87,15 @@ async def diagnose_hosting(hosting_id: str, user: dict = Depends(verify_token)):
 
         # 5. Llamado al AI Orchestrator para enriquecimiento inteligente
         try:
-            from app.api.main import ai_orchestrator
+            # Recuperar el orquestador desde el estado de la app en lugar de importarlo directamente
+            ai_orchestrator = getattr(request.app.state, "ai_orchestrator", None)
 
-            diagnosis = await ai_orchestrator.enrich(decision=decision_base, debug_context=debug_context)
+            if ai_orchestrator:
+                diagnosis = await ai_orchestrator.enrich(decision=decision_base, debug_context=debug_context)
+            else:
+                diagnosis = {"summary": "AI Orchestrator no configurado.", "requires_human_attention": True}
         except Exception as e:
-            logging.error(f"AI Orchestrator failed: {e}")
+            logger.error(f"AI Orchestrator failed: {e}")
             diagnosis = {"summary": "Error en diagnóstico inteligente.", "requires_human_attention": True}
 
         # 6. Cálculo de salud y persistencia (Manual Sync)

@@ -512,9 +512,11 @@ from app.api.routes.admin import router as admin_router
 ai_orchestrator = AIOrchestrator(
     knowledge_provider=TenantInMemoryKnowledgeProvider(load_tenant_documents())
 )
+app.state.ai_orchestrator = ai_orchestrator
 
 # Motor de ejecución
 execution_engine = ExecutionEngine()
+app.state.execution_engine = execution_engine
 
 # Routers
 app.include_router(hosting_router)
