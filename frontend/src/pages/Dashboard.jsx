@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting, getHostingHealth } from '../services/api';
+import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting, getHostingHealth, getHostingHealthHistory } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import {
   Globe,
@@ -74,6 +74,7 @@ const Dashboard = () => {
   const [logsLoading, setLogsLoading] = useState(false);
   const [metrics, setMetrics] = useState({});
   const [healthData, setHealthData] = useState({});
+  const [healthHistory, setHealthHistory] = useState({});
   const [events, setEvents] = useState([]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showSupport, setShowSupport] = useState(false);
@@ -128,8 +129,19 @@ const Dashboard = () => {
     try {
       const data = await getHostingHealth(hostingId);
       setHealthData(prev => ({ ...prev, [hostingId]: data }));
+      // También traer historial cuando cambia la salud
+      fetchHealthHistory(hostingId);
     } catch (err) {
       console.error(`Error fetching health for ${hostingId}:`, err);
+    }
+  };
+
+  const fetchHealthHistory = async (hostingId) => {
+    try {
+      const data = await getHostingHealthHistory(hostingId);
+      setHealthHistory(prev => ({ ...prev, [hostingId]: data }));
+    } catch (err) {
+      console.error(`Error fetching health history for ${hostingId}:`, err);
     }
   };
 
@@ -175,6 +187,10 @@ const Dashboard = () => {
       const host = hostings.find(h => h.hosting_id === id);
       const result = await diagnoseHosting(id);
       setDiagnosisData({ hostingName: host?.name, ...result });
+      
+      // Actualizar salud e historial tras un diagnóstico manual exitoso que persistió en DB
+      fetchHealth(id);
+      fetchHealthHistory(id);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Fallo AI Engine al diagnosticar.');
       setShowDiagnosis(false);
@@ -278,6 +294,11 @@ const Dashboard = () => {
 
     fetchHostings();
     fetchEvents();
+    
+    // Traer historial inicial para todos
+    hostings.forEach(h => {
+        if (h.status === 'active') fetchHealthHistory(h.hosting_id);
+    });
 
     // Polling de métricas cada 10 segundos — lee hostingsRef para ver el estado actual
     const metricsInterval = setInterval(() => {
@@ -287,7 +308,7 @@ const Dashboard = () => {
           fetchHealth(h.hosting_id);
         }
       });
-    }, 10000);
+    }, 15000); // 15s para no saturar
 
     // Polling de eventos cada 15 segundos
     const eventsInterval = setInterval(fetchEvents, 15000);
@@ -297,6 +318,36 @@ const Dashboard = () => {
       clearInterval(eventsInterval);
     };
   }, [user?.role]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const renderTrendLine = (data, color = "#00ff88") => {
+    if (!data || data.length < 2) return <div className="h-[25px] flex items-center text-[9px] text-gray-700 font-mono italic">CALIBRANDO...</div>;
+    const scores = data.map(d => d.score);
+    const min = 0;
+    const max = 100;
+    const padding = 2;
+    const width = 80;
+    const height = 25;
+    
+    const points = scores.map((s, i) => {
+      const x = (i / (scores.length - 1)) * width;
+      const y = height - ((s - min) / (max - min)) * (height - padding * 2) - padding;
+      return `${x},${y}`;
+    }).join(' ');
+    
+    return (
+      <svg width={width} height={height} className="overflow-visible">
+        <polyline
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={points}
+          style={{ filter: `drop-shadow(0 0 5px ${color}40)` }}
+        />
+      </svg>
+    );
+  };
 
   if (user?.role === 'admin') {
     return <AdminDashboard />;
@@ -535,14 +586,28 @@ const Dashboard = () => {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                 {/* SALUD GENERAL */}
                 <div className="bg-[#0a0a0c] border border-[rgba(0,255,136,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #00ff88" }}>
-                  <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">Salud General</div>
-                  <div>
+                  <div className="flex justify-between items-start">
+                    <div className="text-[10px] font-black tracking-widest text-[#666] uppercase">Salud General</div>
+                    {hostings[0] && renderTrendLine(healthHistory[hostings[0].hosting_id])}
+                  </div>
+                  <div className="mt-3">
                     <div className="text-3xl font-black text-[#00ff88] [text-shadow:0_0_15px_rgba(0,255,136,0.5)]">
                       {hostings.length ? Math.round(hostings.reduce((acc, h) => acc + (healthData[h.hosting_id]?.score || 100), 0) / hostings.length) : "100"}
                       <span className="text-lg">/100</span>
                     </div>
-                    <div className="text-[11px] text-gray-400 mt-2 flex items-center gap-1">
-                      <span className="text-white">↔</span> Tendencia Estable
+                    <div className="text-[11px] text-gray-400 mt-2 flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        {(() => {
+                          const history = (hostings[0] && healthHistory[hostings[0].hosting_id]) || [];
+                          if (history.length < 2) return <><span className="text-white">↔</span><span>Estable</span></>;
+                          const last = history[history.length - 1].score;
+                          const prev = history[history.length - 2].score;
+                          if (last > prev) return <><span className="text-green-400">↑</span><span className="text-green-400">Mejorando</span></>;
+                          if (last < prev) return <><span className="text-red-400">↓</span><span className="text-red-400">Degradando</span></>;
+                          return <><span className="text-white">↔</span><span>Estable</span></>;
+                        })()}
+                      </div>
+                      <span className="text-[9px] font-mono text-gray-600">MODO PROACTIVO</span>
                     </div>
                   </div>
                 </div>

@@ -246,6 +246,17 @@ _SCHEMA_AUDIT_PG = """
         created_at TEXT NOT NULL,
         FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
     );
+
+    CREATE TABLE IF NOT EXISTS site_alerts (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        site_id INTEGER NOT NULL,
+        level TEXT NOT NULL,
+        message TEXT NOT NULL,
+        resolved INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
+    );
 """
 
 # Migraciones idempotentes: columnas añadidas después de la creación inicial
@@ -389,9 +400,24 @@ _MIGRATIONS_SQLITE = [
         ram REAL NOT NULL,
         error_count INTEGER DEFAULT 0,
         warning_count INTEGER DEFAULT 0,
+        alert_type TEXT,
+        alert_message TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
     )""",
+    "ALTER TABLE site_health_history ADD COLUMN warning_count INTEGER DEFAULT 0",
+    "ALTER TABLE site_health_history ADD COLUMN alert_type TEXT",
+    "ALTER TABLE site_health_history ADD COLUMN alert_message TEXT",
+    """CREATE TABLE IF NOT EXISTS site_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        site_id INTEGER NOT NULL,
+        level TEXT NOT NULL,
+        message TEXT NOT NULL,
+        resolved INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
+    )"""
 ]
 
 _MIGRATIONS_PG = [

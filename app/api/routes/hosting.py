@@ -13,11 +13,14 @@ from pydantic import BaseModel
 from app.api.security import verify_token, require_support_write
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.user_repository import UserRepository
+from app.infra.audit.health_repository import HealthRepository
 from app.core.ai_orchestrator import AIOrchestrator
 from app.core.debug_context_builder import build_debug_context
-_user_repo = UserRepository()
+from app.core.health_engine import calculate_health_score
 
+_user_repo = UserRepository()
 hosting_repo = HostingRepository()
+_health_repo = HealthRepository()
 
 # --- Constantes de seguridad ---
 MAX_ZIP_SIZE        = 50  * 1024 * 1024   # 50 MB en memoria
@@ -905,13 +908,45 @@ async def diagnose_hosting(hosting_id: str, user: dict = Depends(verify_token)):
         "metrics": metrics
     }
     
-    # 5. Llamado al AI Orchestrator para enriquezimiento inteligente
+    # 5. Llamado al AI Orchestrator para enriquecimiento inteligente
     orchestrator = AIOrchestrator()
     diagnosis = await orchestrator.enrich(decision=decision_base, debug_context=debug_context)
+
+    # 6. Cálculo de salud y persistencia (Manual Sync)
+    # Convertimos métricas de string ("10%") a float (10.0) para el engine
+    try:
+        cpu_val = float(metrics["cpu"].replace("%", ""))
+        # "3.5MiB / 256MiB" -> "3.5MiB" -> "3.5"
+        ram_val = float(metrics["memory"].split(" / ")[0].replace("MiB", "").replace("GiB", "").strip())
+        if "GiB" in metrics["memory"]: ram_val *= 1024
+    except:
+        cpu_val, ram_val = 0.0, 0.0
+
+    health_result = calculate_health_score(
+        container_status=status,
+        cpu_usage=cpu_val,
+        ram_usage=ram_val,
+        errors=debug_context["logs"]["parsed_errors"]
+    )
+
+    # Persistir en histórico de forma asíncrona (Threadpool)
+    await loop.run_in_executor(None, lambda: _health_repo.save_health_entry(
+        user_id=user_id,
+        site_id=hosting_id,
+        score=health_result["score"],
+        status=health_result["status"],
+        cpu=cpu_val,
+        ram=ram_val,
+        error_count=len(debug_context["logs"]["parsed_errors"]),
+        warning_count=0, # Por ahora solo hard errors
+        alert_type=None,
+        alert_message=None
+    ))
 
     return {
         "status": status,
         "metrics": metrics,
+        "health_score": health_result["score"],
         "diagnosis": diagnosis,
         "has_hard_errors": debug_context["logs"]["has_errors"],
         "debug_info": {

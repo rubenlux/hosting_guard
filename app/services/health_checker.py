@@ -110,6 +110,14 @@ def check_all_hostings() -> None:
             # 4. Alert Engine
             last_alert = _health_repo.get_last_alert(hosting_id)
             alert = process_alerts(health_result, last_alert)
+            
+            if alert:
+                _health_repo.create_alert(
+                    user_id=user_id,
+                    site_id=hosting_id,
+                    level="warning" if health_result["status"] == "warning" else "critical",
+                    message=alert["message"]
+                )
 
             # 5. Persistencia Histórica
             _health_repo.save_health_entry(

@@ -310,6 +310,16 @@ export const getHostingHealthHistory = async (hostingId, limit = 24) => {
   return response.data;
 };
 
+export const getUserAlerts = async (limit = 20) => {
+  const response = await api.get('/user/alerts', { params: { limit } });
+  return response.data;
+};
+
+export const resolveAlert = async (alertId) => {
+  const response = await api.post(`/alerts/${alertId}/resolve`);
+  return response.data;
+};
+
 export const saveFile = async (hostingId, path, content) => {
     const response = await api.post(`/files/${hostingId}/save`, { path, content });
     return response.data;
