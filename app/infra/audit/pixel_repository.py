@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
@@ -21,16 +22,25 @@ def _site_status(last_seen_at: Optional[str]) -> str:
     except Exception:
         return "dead"
 
-PIXEL_DB_PATH = Path("/app/data/pixel_events.sqlite")
+PIXEL_DB_PATH = Path(os.getenv("PIXEL_DB_PATH", "/app/data/pixel_events.sqlite"))
+# Safe Mode Flag: por defecto True para no romper analytics en el deploy
+USE_SQLITE = os.getenv("PIXEL_DB_SQLITE", "true").lower() == "true"
+
+from app.infra.audit.sqlite import get_connection
 
 
 def _get_connection():
-    conn = sqlite3.connect(PIXEL_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    # WAL mode: permite lecturas concurrentes durante escrituras
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    return conn
+    if USE_SQLITE:
+        # Mantenemos el comportamiento original de SQLite aislado
+        conn = sqlite3.connect(PIXEL_DB_PATH)
+        conn.row_factory = sqlite3.Row
+        # WAL mode: permite lecturas concurrentes durante escrituras
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+    else:
+        # Usamos la capa unificada (Postgres) cuando se desactive el Safe Mode
+        return get_connection()
 
 
 def init_pixel_db():
