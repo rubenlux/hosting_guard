@@ -212,84 +212,11 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/list-hostings")
-async def list_hostings(skip: int = 0, limit: int = 50, user: dict = Depends(verify_token)):
-    user_id       = user.get("user_id")
-    loop = asyncio.get_running_loop()
-    # Usar executor para no bloquear el event loop con las consultas síncronas a SQLite
-    hostings = await loop.run_in_executor(
-        None, 
-        lambda: hosting_repo.get_all_user_hostings_by_user(user_id, limit=limit, skip=skip)
-    )
-    hostings_list = [dict(h) for h in hostings]
+from app.services.hosting.list_service import list_hostings
 
-    if not hostings_list:
-        return hostings_list
+router.get("/list-hostings")(list_hostings)
 
-    status_map = {
-        "running":    "active",
-        "exited":     "stopped",
-        "restarting": "starting",
-        "paused":     "paused",
-        "created":    "starting",
-        "removing":   "stopped",
-        "dead":       "error"
-    }
 
-    names = [h["container_name"] for h in hostings_list]
-    
-    # 1. Obtener status (inspect)
-    status_by_name = {}
-    try:
-        res_inspect = await _run_docker(
-            "docker", "inspect",
-            "--format", "{{.Name}}|{{.State.Status}}",
-            *names,
-            timeout=10
-        )
-        for line in res_inspect.stdout.strip().splitlines():
-            if "|" in line:
-                cname, cstatus = line.lstrip("/").split("|", 1)
-                status_by_name[cname.strip()] = cstatus.strip()
-    except Exception as e:
-        pass
-
-    # 2. Obtener métricas (stats en batch)
-    metrics_by_name = {}
-    try:
-        # Solo pedimos stats de los corriendo para no trabar
-        active_names = [n for n in names if status_by_name.get(n) in ("running",)]
-        if active_names:
-            res_stats = await _run_docker(
-                "docker", "stats", "--no-stream",
-                "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}",
-                *active_names,
-                timeout=15
-            )
-            for line in res_stats.stdout.strip().splitlines():
-                if "|" in line:
-                    parts = line.lstrip("/").split("|")
-                    if len(parts) >= 3:
-                        metrics_by_name[parts[0].strip()] = {
-                            "cpu": parts[1].strip(),
-                            "memory": parts[2].strip()
-                        }
-    except Exception as e:
-        pass
-
-    # 3. Cruzar info para la UI
-    for h in hostings_list:
-        cname = h["container_name"]
-        docker_status = status_by_name.get(cname)
-        h["status"] = status_map.get(docker_status, "not_found") if docker_status else "not_found"
-        
-        # Métricas o valores por defecto
-        if h["status"] == "active" and cname in metrics_by_name:
-            h["metrics"] = metrics_by_name[cname]
-        else:
-            h["metrics"] = {"cpu": "0%", "memory": "0MiB / 0MiB"}
-
-    return hostings_list
 
 @router.delete("/delete-hosting/{hosting_id}")
 async def delete_hosting(hosting_id: int, user: dict = Depends(require_support_write)):
@@ -345,62 +272,16 @@ async def start_hosting(hosting_id: int, user: dict = Depends(verify_token)):
     await _run_docker("docker", "start", hosting["container_name"], timeout=20)
     return {"status": "starting"}
 
-@router.get("/hostings/{hosting_id}/logs")
-async def get_hosting_logs(hosting_id: int, since: Optional[str] = None, user: dict = Depends(verify_token)):
-    user_id = user.get("user_id")
-    hosting = hosting_repo.get_hosting(hosting_id, user_id)
-    if not hosting:
-        raise HTTPException(status_code=404, detail="Hosting not found")
+from app.services.hosting.logs_service import get_hosting_logs
 
-    if since and not _SINCE_REGEX.match(since):
-        raise HTTPException(
-            status_code=400,
-            detail="Formato de 'since' inválido. Usar: '5m', '2h', '3d' o 'YYYY-MM-DDTHH:MM:SS'."
-        )
+router.get("/hostings/{hosting_id}/logs")(get_hosting_logs)
 
-    command = ["docker", "logs"]
-    if since:
-        command.extend(["--since", since])
-    else:
-        command.extend(["--tail", "50"])
-    command.append(hosting["container_name"])
 
-    try:
-        # FIX #1: async docker
-        result = await _run_docker(*command, timeout=5)
-        logs = result.stdout if result.stdout else result.stderr
-        return {
-            "logs":      logs if logs else "",
-            "timestamp": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S')
-        }
-    except Exception:
-        return {
-            "logs": "Error al obtener los logs. Inténtalo de nuevo.",
-            "timestamp": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
-        }
 
-@router.get("/hostings/{hosting_id}/metrics")
-async def get_hosting_metrics(hosting_id: int, user: dict = Depends(verify_token)):
-    user_id = user.get("user_id")
-    hosting = hosting_repo.get_hosting(hosting_id, user_id)
-    if not hosting:
-        raise HTTPException(status_code=404, detail="Hosting not found")
+from app.services.hosting.metrics_service import get_hosting_metrics
 
-    try:
-        # FIX #1: async docker
-        result = await _run_docker(
-            "docker", "stats", "--no-stream",
-            "--format", "{{.CPUPerc}}|{{.MemUsage}}",
-            hosting["container_name"],
-            timeout=10
-        )
-        if result.returncode == 0:
-            parts = result.stdout.strip().split("|")
-            if len(parts) >= 2:
-                return {"cpu": parts[0], "memory": parts[1]}
-        return {"cpu": "0%", "memory": "0MiB / 0MiB"}
-    except Exception as e:
-        return {"error": str(e)}
+router.get("/hostings/{hosting_id}/metrics")(get_hosting_metrics)
+
 
 @router.post("/create-wordpress")
 async def create_wordpress(data: CreateHostingRequest, request: Request, user: dict = Depends(verify_token)):
@@ -857,139 +738,14 @@ async def upload_zip(
 
 
 
-@router.get("/orchestrator/events")
-def get_orchestrator_events(skip: int = 0, limit: int = 20, user: dict = Depends(verify_token)):
-    user_id = user.get("user_id")
-    # Al ser "def" y no "async def", FastAPI lo ejecuta en un ThreadPool
-    # y no bloqueamos el hilo principal asíncrono haciendo peticiones síncronas a SQLite!
-    events = hosting_repo.get_orchestrator_events(user_id, limit=limit, skip=skip)
-    return events
+from app.services.hosting.orchestrator_events_service import get_orchestrator_events
 
+dedicated_orchestrator_events_route = router.get("/orchestrator/events")(get_orchestrator_events)
 
-@router.post("/hosting/{hosting_id}/diagnose")
-async def diagnose_hosting(hosting_id: str, user: dict = Depends(verify_token)):
-    try:
-        user_id = user.get("user_id")
-        
-        # 1. Validar propiedad
-        loop = asyncio.get_running_loop()
-        
-        # Intentar convertir id a int si parece numérico para evitar fallos en repo
-        query_id = hosting_id
-        if hosting_id.isdigit(): query_id = int(hosting_id)
+from app.services.hosting.diagnose_service import diagnose_hosting
 
-        hosting = await loop.run_in_executor(None, lambda: hosting_repo.get_hosting(query_id, user_id))
-        
-        if not hosting or str(hosting['user_id']) != str(user_id):
-            raise HTTPException(status_code=404, detail="Hosting no encontrado o no tienes permisos")
-            
-        container_name = hosting['container_name']
-        
-        # 2. Conseguir metricas basales (CPU, RAM, Status) para el contexto
-        status = "unknown"
-        metrics = {"cpu": "0%", "memory": "0MiB"}
-        
-        try:
-            res_inspect = await _run_docker(
-                "docker", "inspect", "--format", "{{.State.Status}}", container_name, timeout=5
-            )
-            status = res_inspect.stdout.strip()
-            
-            if status == "running":
-                res_stats = await _run_docker(
-                    "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}|{{.MemUsage}}", container_name, timeout=10
-                )
-                pts = res_stats.stdout.strip().split("|")
-                if len(pts) == 2:
-                    metrics = {"cpu": pts[0], "memory": pts[1]}
-        except Exception:
-            pass
+router.post("/hosting/{hosting_id}/diagnose")(diagnose_hosting)
 
-        # 3. Construir Debug Context (Logs + Métricas + Parsed Errors)
-        debug_context = await build_debug_context(container_name, metrics=metrics, limit_logs=60)
-        
-        # 4. Decisión simulada de base que alimenta el motor
-        decision_base = {
-            "overall_status": "unknown" if status != "running" else "requires_human" if debug_context["logs"]["has_errors"] else "ready_for_execution",
-            "container_name": container_name,
-            "hosting_id": hosting_id,
-            "metrics": metrics
-        }
-        
-        # 5. Llamado al AI Orchestrator para enriquecimiento inteligente
-        try:
-            from app.api.main import ai_orchestrator
-            diagnosis = await ai_orchestrator.enrich(decision=decision_base, debug_context=debug_context)
-        except Exception as e:
-            logging.error(f"AI Orchestrator failed: {e}")
-            diagnosis = {"summary": "Error en diagnóstico inteligente.", "requires_human_attention": True}
-
-        # 6. Cálculo de salud y persistencia (Manual Sync)
-        try:
-            cpu_val = float(str(metrics.get("cpu", "0")).replace("%", ""))
-            mem_str = str(metrics.get("memory", "0"))
-            ram_val = float(mem_str.split(" / ")[0].replace("MiB", "").replace("GiB", "").strip())
-            if "GiB" in mem_str: ram_val *= 1024
-        except Exception as e:
-            logging.warning(f"Error parsing metrics: {e}")
-            cpu_val, ram_val = 0.0, 0.0
-
-        # Agrupar errores para el engine
-        grouped_errors = {}
-        for err in debug_context["logs"]["parsed_errors"]:
-            etype = err.get("type", "unknown")
-            grouped_errors[etype] = grouped_errors.get(etype, 0) + 1
-        
-        engine_errors = [{"type": k, "count": v} for k, v in grouped_errors.items()]
-
-        health_result = calculate_health_score({
-            "container_status": status,
-            "cpu": cpu_val,
-            "ram": ram_val,
-            "errors": engine_errors
-        })
-
-        # Persistir en histórico (Async)
-        try:
-            h_id_db = int(hosting_id) if str(hosting_id).isdigit() else 0
-            alert = check_alerts(health_result["score"])
-            await loop.run_in_executor(None, lambda: health_repo.save_health_entry(
-                user_id=user_id,
-                site_id=h_id_db,
-                score=health_result["score"],
-                status=health_result["status"],
-                cpu=cpu_val,
-                ram=ram_val,
-                error_count=len(debug_context["logs"]["parsed_errors"]),
-                warning_count=health_result["warning_count"],
-                alert_type=alert["type"] if alert else None,
-                alert_message=alert["message"] if alert else None,
-            ))
-            if alert:
-                await loop.run_in_executor(None, lambda: health_repo.create_alert(
-                    user_id=user_id,
-                    site_id=h_id_db,
-                    level="critical" if alert["type"] == "critical" else "warning",
-                    message=alert["message"],
-                ))
-        except Exception as e:
-            logging.error(f"Persistence failed in diagnosis: {e}")
-
-        return {
-            "status": status,
-            "metrics": metrics,
-            "health_score": health_result["score"],
-            "diagnosis": diagnosis,
-            "has_hard_errors": debug_context["logs"]["has_errors"],
-            "debug_info": {
-                "parsed_errors": debug_context["logs"]["parsed_errors"],
-                "raw_snippet": debug_context["logs"]["recent_raw_snippet"]
-            }
-        }
-    except Exception as main_err:
-        import traceback
-        logging.error(f"CRITICAL: diagnose_hosting failed: {main_err}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Fallo crítico en AI Engine: {str(main_err)}")
 
 @router.get("/{hosting_id}/health/history")
 async def get_health_history_legacy(hosting_id: int, user: dict = Depends(verify_token)):
@@ -1004,3 +760,4 @@ async def get_health_history_legacy(hosting_id: int, user: dict = Depends(verify
         }
         for row in data
     ]
+
