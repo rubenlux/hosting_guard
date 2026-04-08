@@ -128,12 +128,13 @@ class HostingRepository:
     def get_orchestrator_events(self, user_id: int, limit: int = 20, skip: int = 0) -> List[Dict]:
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """
+            f"""
             SELECT * FROM orchestrator_events
-            WHERE user_id = ?
+            WHERE user_id = {p}
             ORDER BY created_at DESC
-            LIMIT ? OFFSET ?
+            LIMIT {p} OFFSET {p}
             """,
             (user_id, limit, skip)
         )
