@@ -16,6 +16,8 @@ from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.user_repository import UserRepository
 from app.repositories import health_repo
 from app.core.ai_orchestrator import AIOrchestrator
+# Se importará de forma dinámica para evitar circulares si es necesario, 
+# pero idealmente inyectamos la instancia.
 from app.core.debug_context_builder import build_debug_context
 from app.core.health_engine import calculate_health_score
 from app.core.alert_engine import check_alerts
@@ -916,8 +918,8 @@ async def diagnose_hosting(hosting_id: str, user: dict = Depends(verify_token)):
         
         # 5. Llamado al AI Orchestrator para enriquecimiento inteligente
         try:
-            orchestrator = AIOrchestrator()
-            diagnosis = await orchestrator.enrich(decision=decision_base, debug_context=debug_context)
+            from app.api.main import ai_orchestrator
+            diagnosis = await ai_orchestrator.enrich(decision=decision_base, debug_context=debug_context)
         except Exception as e:
             logging.error(f"AI Orchestrator failed: {e}")
             diagnosis = {"summary": "Error en diagnóstico inteligente.", "requires_human_attention": True}

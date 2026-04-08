@@ -1,9 +1,12 @@
 import os
 import sqlite3
 import threading
+import logging
 from pathlib import Path
 
 from app.infra.db import BACKEND, _ConnectionAdapter, get_pg_connection, reset_pg_connection
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # SQLite pool thread-local (solo se usa cuando BACKEND == "sqlite")
@@ -563,6 +566,16 @@ _MIGRATIONS_PG = [
         created_at TEXT NOT NULL,
         FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
     )""",
+    """CREATE TABLE IF NOT EXISTS site_alerts (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        site_id INTEGER NOT NULL,
+        level TEXT NOT NULL,
+        message TEXT NOT NULL,
+        resolved INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
+    )""",
 ]
 
 _INDEXES = [
@@ -623,23 +636,44 @@ def _init_postgresql_audit():
     conn = get_pg_connection()
     cursor = conn.cursor()
     try:
+        # 1. Esquema base (split por ; y ejecutar)
         for statement in _SCHEMA_AUDIT_PG.strip().split(";"):
             sql = statement.strip()
             if sql:
-                cursor.execute(sql)
+                try:
+                    cursor.execute(sql)
+                except Exception as e:
+                    # Logeamos pero no detenemos si es un error de "ya existe" (aunque usamos IF NOT EXISTS)
+                    # o si hay inconsistencias menores en tablas secundarias.
+                    logger.warning(f"SQL statement partially failed in _SCHEMA_AUDIT_PG: {e}")
 
+        # 2. Migraciones incrementales
         for sql in _MIGRATIONS_PG:
-            cursor.execute(sql)
+            try:
+                cursor.execute(sql)
+            except Exception as e:
+                # Importante: ADD COLUMN IF NOT EXISTS puede fallar en versiones viejas de PG
+                # o si la columna ya existe por un parche manual anterior.
+                logger.warning(f"Migration partially failed in _MIGRATIONS_PG: {e}")
 
+        # 3. Índices
         for sql in _INDEXES:
-            cursor.execute(sql)
+            try:
+                cursor.execute(sql)
+            except Exception as e:
+                logger.warning(f"Index creation partially failed: {e}")
 
         # Invalidar cache técnico al deploy (startup)
-        cursor.execute("DELETE FROM support_chat_cache WHERE category IN ('Sitio caído', 'Sitio lento', 'Error en WordPress')")
+        try:
+            cursor.execute("DELETE FROM support_chat_cache WHERE category IN ('Sitio caído', 'Sitio lento', 'Error en WordPress')")
+        except Exception:
+            pass
 
         conn.commit()
-    except Exception:
+    except Exception as e:
         conn.rollback()
+        logger.error(f"CRITICAL failure in _init_postgresql_audit: {e}", exc_info=True)
+        # Re-raise para que sepamos que algo salió MUY mal
         raise
     finally:
         reset_pg_connection()
