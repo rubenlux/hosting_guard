@@ -951,27 +951,27 @@ async def diagnose_hosting(hosting_id: str, user: dict = Depends(verify_token)):
 
         # Persistir en histórico (Async)
         try:
-            # Aseguramos que el site_id sea numérico para el histórico
-            h_id_db = int(hosting_id) if hosting_id.isdigit() else 0
-            await loop.run_in_executor(None, lambda: health_repo.save_health({
-                "user_id": user_id,
-                "site_id": h_id_db,
-                "score": health_result["score"],
-                "status": health_result["status"],
-                "cpu": cpu_val,
-                "ram": ram_val,
-                "error_count": len(debug_context["logs"]["parsed_errors"]),
-                "warning_count": health_result["warning_count"]
-            }))
-
+            h_id_db = int(hosting_id) if str(hosting_id).isdigit() else 0
             alert = check_alerts(health_result["score"])
+            await loop.run_in_executor(None, lambda: health_repo.save_health_entry(
+                user_id=user_id,
+                site_id=h_id_db,
+                score=health_result["score"],
+                status=health_result["status"],
+                cpu=cpu_val,
+                ram=ram_val,
+                error_count=len(debug_context["logs"]["parsed_errors"]),
+                warning_count=health_result["warning_count"],
+                alert_type=alert["type"] if alert else None,
+                alert_message=alert["message"] if alert else None,
+            ))
             if alert:
-                await loop.run_in_executor(None, lambda: health_repo.save_alert({
-                    "user_id": user_id,
-                    "site_id": h_id_db,
-                    "type": alert["type"],
-                    "message": alert["message"]
-                }))
+                await loop.run_in_executor(None, lambda: health_repo.create_alert(
+                    user_id=user_id,
+                    site_id=h_id_db,
+                    level="critical" if alert["type"] == "critical" else "warning",
+                    message=alert["message"],
+                ))
         except Exception as e:
             logging.error(f"Persistence failed in diagnosis: {e}")
 

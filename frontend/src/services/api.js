@@ -315,6 +315,12 @@ export const getUserAlerts = async (limit = 20) => {
   return response.data;
 };
 
+export const getRecentActivity = async (limit = 20) => {
+  const response = await api.get('/user/recent-activity', { params: { limit } });
+  return response.data;
+};
+
+
 export const resolveAlert = async (alertId) => {
   const response = await api.post(`/alerts/${alertId}/resolve`);
   return response.data;

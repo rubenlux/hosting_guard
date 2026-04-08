@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting, getHostingHealth, getHostingHealthHistory, getUserAlerts } from '../services/api';
+import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting, getHostingHealth, getHostingHealthHistory, getUserAlerts, getRecentActivity } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import {
   Globe,
@@ -88,10 +88,10 @@ const Dashboard = () => {
   const [diagnosisLoading, setDiagnosisLoading] = useState(false);
 
   const expiringHostings = hostings.filter(
-    h => h.plan === 'free' && h.days_remaining !== null && h.days_remaining <= 3
+    h => h.plan === 'free' && h.expires_in_days != null && h.expires_in_days <= 3
   );
   const expiredHostings = hostings.filter(
-    h => h.plan === 'free' && h.days_remaining === 0
+    h => h.plan === 'free' && h.expires_in_days === 0
   );
 
   const getStatusClass = (status) => {
@@ -157,10 +157,10 @@ const Dashboard = () => {
 
   const fetchEvents = async () => {
     try {
-      const data = await getOrchestratorEvents();
+      const data = await getRecentActivity(20);
       setEvents(data);
     } catch (err) {
-      console.error("Error fetching events:", err);
+      console.error("Error fetching activity:", err);
     }
   };
 
@@ -559,16 +559,16 @@ const Dashboard = () => {
               {/* EXPIRATION WARNINGS */}
               {expiringHostings.map(h => (
                 <div key={h.hosting_id} className={`flex items-center justify-between gap-4 px-5 py-3 rounded-2xl border mb-3 ${
-                  h.days_remaining === 0
+                  h.expires_in_days === 0
                     ? 'bg-red-500/10 border-red-500/30 text-red-400'
                     : 'bg-warn/10 border-warn/30 text-warn'
                 }`}>
                   <div className="flex items-center gap-3">
                     <AlertTriangle className="w-4 h-4 shrink-0" />
                     <span className="text-xs font-medium">
-                      {h.days_remaining === 0
+                      {h.expires_in_days === 0
                         ? `Tu sitio "${h.name}" ha expirado. Actualizá tu plan para reactivarlo.`
-                        : `Tu sitio "${h.name}" vence en ${h.days_remaining} día${h.days_remaining === 1 ? '' : 's'}. ¡Actualizá tu plan!`
+                        : `Tu sitio "${h.name}" vence en ${h.expires_in_days} día${h.expires_in_days === 1 ? '' : 's'}. ¡Actualizá tu plan!`
                       }
                     </span>
                   </div>
@@ -699,15 +699,15 @@ const Dashboard = () => {
                           </div>
                           <div className="flex-1">
                             <div className="text-sm font-bold text-white group-hover:text-accent transition-colors">{h.name}</div>
-                            {h.plan === 'free' && h.days_remaining !== null && (
+                            {h.plan === 'free' && h.expires_in_days != null && (
                               <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                                h.days_remaining <= 0
+                                h.expires_in_days <= 0
                                   ? 'bg-red-500/20 text-red-400'
-                                  : h.days_remaining <= 3
+                                  : h.expires_in_days <= 3
                                   ? 'bg-warn/20 text-warn'
                                   : 'bg-accent/20 text-accent'
                               }`}>
-                                {h.days_remaining <= 0 ? 'Expirado' : `${h.days_remaining}d restantes`}
+                                {h.expires_in_days <= 0 ? 'Expirado' : `${h.expires_in_days}d restantes`}
                               </span>
                             )}
                             <div className="flex items-center gap-2">
@@ -819,30 +819,53 @@ const Dashboard = () => {
                   <div className="card-dash">
                     <div className="card-header-dash">
                       <div className="text-sm font-bold">Actividad Reciente</div>
+                      <button onClick={fetchEvents} className="text-muted hover:text-white transition-colors" title="Refrescar">
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                     <div className="p-4 space-y-4 max-h-[400px] overflow-y-auto">
                       {events.length === 0 ? (
                         <div className="text-[11px] text-muted italic p-2">Sin actividad reciente.</div>
-                      ) : events.map(event => (
-                        <div key={event.event_id} className="flex gap-4 items-start border-l-2 border-white/5 pl-4 ml-1">
-                          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${event.event_type === 'restart' ? 'bg-danger shadow-[0_0_8px_red] animate-led' :
-                              event.event_type === 'panic' ? 'bg-warn shadow-[0_0_8px_orange] animate-led' :
-                              event.event_type === 'PLAN_EXPIRED' ? 'bg-red-500 shadow-[0_0_8px_red] animate-led' :
-                              event.event_type === 'PLAN_EXPIRING_SOON' ? 'bg-warn shadow-[0_0_8px_orange] animate-led' :
-                                'bg-accent shadow-[0_0_8px_rgba(0,255,136,0.5)]'
-                            }`}></div>
-                          <div className="space-y-1">
-                            <div className="text-xs font-bold text-white flex items-center gap-2">
-                              {event.event_type.toUpperCase()}
-                              <span className="text-[9px] text-muted font-normal bg-white/5 px-1.5 py-0.5 rounded capitalize">{event.container_name.split('_').slice(-1)[0]}</span>
-                            </div>
-                            <div className="text-[11px] text-gray-400 leading-tight">{event.message}</div>
-                            <div className="text-[9px] text-muted font-mono uppercase tracking-tighter">
-                              {new Date(event.created_at).toLocaleString()}
+                      ) : events.map(event => {
+                        const isHealth = event.source === 'health';
+                        const isCritical = event.event_type === 'CRITICAL' || event.event_type === 'panic';
+                        const isWarning = event.event_type === 'WARNING' || event.event_type === 'throttle';
+                        const isRestart = event.event_type === 'restart';
+                        const dotColor = isCritical ? 'bg-danger shadow-[0_0_8px_red] animate-led'
+                          : isWarning ? 'bg-warn shadow-[0_0_8px_orange] animate-led'
+                          : isRestart ? 'bg-danger shadow-[0_0_8px_red] animate-led'
+                          : 'bg-accent shadow-[0_0_8px_rgba(0,255,136,0.5)]';
+                        const siteLabel = isHealth
+                          ? event.container_name
+                          : (event.container_name || '').split('_').slice(-1)[0];
+                        return (
+                          <div key={event.id || event.event_id} className="flex gap-4 items-start border-l-2 border-white/5 pl-4 ml-1">
+                            <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${dotColor}`}></div>
+                            <div className="space-y-1">
+                              <div className="text-xs font-bold text-white flex items-center gap-2">
+                                {event.event_type.toUpperCase()}
+                                <span className="text-[9px] text-muted font-normal bg-white/5 px-1.5 py-0.5 rounded capitalize">{siteLabel}</span>
+                                {isHealth && (
+                                  <span className="text-[9px] font-mono bg-ia/10 text-ia px-1.5 py-0.5 rounded">salud</span>
+                                )}
+                                {event.resolved && (
+                                  <span className="text-[9px] font-mono bg-accent/10 text-accent px-1.5 py-0.5 rounded">✓ resuelto</span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-gray-400 leading-tight">{event.message}</div>
+                              {(event.cpu_pct != null || event.mem_pct != null) && (
+                                <div className="flex gap-2 text-[9px] font-mono text-muted">
+                                  {event.cpu_pct != null && <span>CPU {event.cpu_pct.toFixed(1)}%</span>}
+                                  {event.mem_pct != null && <span>RAM {event.mem_pct.toFixed(1)}%</span>}
+                                </div>
+                              )}
+                              <div className="text-[9px] text-muted font-mono uppercase tracking-tighter">
+                                {new Date(event.created_at).toLocaleString()}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
