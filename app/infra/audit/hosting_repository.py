@@ -2,7 +2,9 @@ from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 from app.infra.audit.sqlite import get_connection
-from app.infra.db import SQL_MINUTES_SINCE_CREATED, SQL_DAYS_REMAINING_14
+from app.infra.db import SQL_MINUTES_SINCE_CREATED, SQL_DAYS_REMAINING_14, BACKEND
+
+_PH = "%s" if BACKEND == "postgresql" else "?"
 
 VALID_STATUSES = {"active", "stopped", "expired", "error", "starting", "expiring"}
 
@@ -14,10 +16,11 @@ class HostingRepository:
     def create_hosting(self, user_id: int, name: str, subdomain: str, container_name: str, plan: str, ip_address: Optional[str] = None) -> int:
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         cursor.execute(
-            """
+            f"""
             INSERT INTO hostings (user_id, name, subdomain, container_name, plan, status, created_at, ip_address)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
             """,
             (user_id, name, subdomain, container_name, plan, "active", datetime.now(timezone.utc).isoformat(), ip_address)
         )

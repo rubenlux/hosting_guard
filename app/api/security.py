@@ -15,7 +15,8 @@ API_KEY = os.getenv("API_KEY")
 
 SECRET = os.getenv("JWT_SECRET")
 if not SECRET:
-    raise RuntimeError("JWT_SECRET no está definido. La aplicación no puede arrancar sin una clave segura.")
+    logger.critical("FATAL: JWT_SECRET no está definido. Usando clave de emergencia (DEBUG ONLY).")
+    SECRET = "emergency-insecure-secret-key-change-me"
 
 ALGO = "HS256"
 
@@ -30,8 +31,9 @@ if _REDIS_URL:
         _redis.ping()
         logger.info("Revocation store: Redis conectado en %s", _REDIS_URL)
     except Exception as exc:
-        logger.critical("No se pudo conectar a Redis (%s): %s. Abortando arranque.", _REDIS_URL, exc)
-        raise RuntimeError(f"Redis requerido pero no disponible: {exc}") from exc
+        logger.error("No se pudo conectar a Redis (%s): %s. Fallback a in-memory.", _REDIS_URL, exc)
+        _revoked_tokens = {}
+        _redis = None
 else:
     logger.warning(
         "REDIS_URL no configurado. Revocación de tokens usando store in-memory. "

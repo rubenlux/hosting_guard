@@ -7,9 +7,11 @@ from typing import Dict
 
 from app.infra.audit.models import DecisionEvent
 from app.infra.audit.sqlite import get_connection, init_db
+from app.infra.db import BACKEND
 
 logger = logging.getLogger(__name__)
 
+_PH = "%s" if BACKEND == "postgresql" else "?"
 _db_initialized = False
 
 
@@ -48,15 +50,16 @@ class AuditRepository:
             raise ValueError(f"save_decision_event: missing required field {e}") from e
 
         conn = get_connection()
+        p = _PH
         try:
             cursor = conn.cursor()
             cursor.execute(
-                """
+                f"""
                 INSERT INTO decision_events (
                     event_id, timestamp, tenant_id, decision_id,
                     overall_status, confidence_level,
                     requires_human_attention, payload_min, version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
                 """,
                 (
                     event.event_id,

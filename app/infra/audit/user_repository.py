@@ -2,6 +2,9 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
 from app.infra.audit.sqlite import get_connection
+from app.infra.db import BACKEND
+
+_PH = "%s" if BACKEND == "postgresql" else "?"
 
 class UserRepository:
     def __init__(self):
@@ -10,12 +13,19 @@ class UserRepository:
     def create_user(self, email: str, password_hash: str, role: str = "user") -> int:
         conn = get_connection()
         cursor = conn.cursor()
+        p = _PH
         try:
             cursor.execute(
-                "INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                f"INSERT INTO users (email, password_hash, role, created_at) VALUES ({p}, {p}, {p}, {p})",
                 (email, password_hash, role, datetime.now(timezone.utc).isoformat())
             )
             user_id = cursor.lastrowid
+            # En PostgreSQL lastrowid no siempre está disponible tras execute simple, el adapter lo maneja pero por si acaso:
+            if user_id is None and BACKEND == "postgresql":
+                # Si falló la captura automática via lastval()
+                cursor.execute(f"SELECT user_id FROM users WHERE email = {p}", (email,))
+                row = cursor.fetchone()
+                user_id = row[0] if row else None
             conn.commit()
             return user_id
         except Exception as e:
@@ -27,7 +37,7 @@ class UserRepository:
     def get_user_by_email(self, email: str) -> Optional[Dict]:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+        cursor.execute(f"SELECT * FROM users WHERE email = {_PH}", (email,))
         row = cursor.fetchone()
         if row:
             return dict(row)
@@ -36,7 +46,7 @@ class UserRepository:
     def get_user_by_id(self, user_id: int) -> Optional[Dict]:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        cursor.execute(f"SELECT * FROM users WHERE user_id = {_PH}", (user_id,))
         row = cursor.fetchone()
         if row:
             return dict(row)

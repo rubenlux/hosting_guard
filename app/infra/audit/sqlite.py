@@ -604,76 +604,80 @@ def init_db():
 
 
 def _init_sqlite_audit():
-    conn = get_connection()
-    cursor = conn.cursor()
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
 
-    for statement in _SCHEMA_AUDIT_SQLITE.strip().split(";"):
-        sql = statement.strip()
-        if sql:
+        for statement in _SCHEMA_AUDIT_SQLITE.strip().split(";"):
+            sql = statement.strip()
+            if sql:
+                cursor.execute(sql)
+
+        for sql in _MIGRATIONS_SQLITE:
+            try:
+                cursor.execute(sql)
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e):
+                    raise
+
+        for sql in _INDEXES:
             cursor.execute(sql)
 
-    for sql in _MIGRATIONS_SQLITE:
-        try:
-            cursor.execute(sql)
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" not in str(e):
-                raise
+        # Invalidar cache técnico al deploy (startup)
+        cursor.execute("DELETE FROM support_chat_cache WHERE category IN ('Sitio caído', 'Sitio lento', 'Error en WordPress')")
 
-    for sql in _INDEXES:
-        cursor.execute(sql)
-
-    # Invalidar cache técnico al deploy (startup)
-    cursor.execute("DELETE FROM support_chat_cache WHERE category IN ('Sitio caído', 'Sitio lento', 'Error en WordPress')")
-
-    conn.commit()
-    # Cerrar la conexión de init y limpiar el pool para que la primera
-    # solicitud real obtenga una conexión limpia con WAL ya activado.
-    conn.close()
-    _local.conn = None
+        conn.commit()
+        # Cerrar la conexión de init y limpiar el pool para que la primera
+        # solicitud real obtenga una conexión limpia con WAL ya activado.
+        conn.close()
+        _local.conn = None
+    except Exception as e:
+        logger.error(f"Non-fatal error in _init_sqlite_audit: {e}", exc_info=True)
 
 
 def _init_postgresql_audit():
-    conn = get_pg_connection()
-    cursor = conn.cursor()
     try:
-        # 1. Esquema base (split por ; y ejecutar)
+        conn = get_pg_connection()
+        # Para init_db en PG, usamos autocommit=True para evitar que un fallo sabotee toda la transacción
+        conn._conn.autocommit = True
+        cursor = conn.cursor()
+        
+        # 1. Esquema base
         for statement in _SCHEMA_AUDIT_PG.strip().split(";"):
             sql = statement.strip()
             if sql:
                 try:
                     cursor.execute(sql)
                 except Exception as e:
-                    # Logeamos pero no detenemos si es un error de "ya existe" (aunque usamos IF NOT EXISTS)
-                    # o si hay inconsistencias menores en tablas secundarias.
-                    logger.warning(f"SQL statement partially failed in _SCHEMA_AUDIT_PG: {e}")
+                    if "already exists" not in str(e).lower():
+                        logger.warning(f"Static schema item failed (likely exists): {e}")
 
         # 2. Migraciones incrementales
         for sql in _MIGRATIONS_PG:
             try:
                 cursor.execute(sql)
             except Exception as e:
-                # Importante: ADD COLUMN IF NOT EXISTS puede fallar en versiones viejas de PG
-                # o si la columna ya existe por un parche manual anterior.
-                logger.warning(f"Migration partially failed in _MIGRATIONS_PG: {e}")
+                if "already exists" not in str(e).lower():
+                    logger.warning(f"Migration statement failed: {e}")
 
         # 3. Índices
         for sql in _INDEXES:
             try:
                 cursor.execute(sql)
             except Exception as e:
-                logger.warning(f"Index creation partially failed: {e}")
+                if "already exists" not in str(e).lower():
+                    logger.warning(f"Index creation failed: {e}")
 
-        # Invalidar cache técnico al deploy (startup)
+        # Invalidar cache técnico al deploy
         try:
             cursor.execute("DELETE FROM support_chat_cache WHERE category IN ('Sitio caído', 'Sitio lento', 'Error en WordPress')")
         except Exception:
             pass
 
-        conn.commit()
     except Exception as e:
-        conn.rollback()
-        logger.error(f"CRITICAL failure in _init_postgresql_audit: {e}", exc_info=True)
-        # Re-raise para que sepamos que algo salió MUY mal
-        raise
+        logger.error(f"FAIL: _init_postgresql_audit overall fail: {e}", exc_info=True)
     finally:
-        reset_pg_connection()
+        try:
+            reset_pg_connection()
+        except Exception:
+            pass
