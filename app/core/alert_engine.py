@@ -22,3 +22,20 @@ def check_alerts(score: int) -> Optional[Dict[str, str]]:
         }
 
     return None
+
+def process_alerts(health_result: Dict, last_alert: Optional[Dict] = None) -> Optional[Dict]:
+    """
+    Evalúa si se debe generar una nueva alerta basada en el resultado de salud.
+    Evita duplicados si la alerta es la misma que la anterior.
+    """
+    score = health_result["score"]
+    alert = check_alerts(score)
+    
+    if not alert:
+        return None
+        
+    # Evitar spam: si la alerta es idéntica a la última guardada, no la repetimos
+    if last_alert and last_alert.get("message") == alert["message"]:
+        return None
+        
+    return alert
