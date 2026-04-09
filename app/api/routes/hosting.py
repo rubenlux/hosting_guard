@@ -751,7 +751,7 @@ router.post("/hosting/{hosting_id}/diagnose")(diagnose_hosting)
 @router.get("/{hosting_id}/health/history")
 async def get_health_history_legacy(hosting_id: int, user: dict = Depends(verify_token)):
     """Endpoint solicitado por la guía de implementación."""
-    data = _health_repo.get_history(hosting_id)
+    data = _health_repo.get_health_history(hosting_id)
     return [
         {
             "score": row["score"],

@@ -159,6 +159,8 @@ _MIGRATIONS_PG = [
         ram REAL NOT NULL,
         error_count INTEGER DEFAULT 0,
         warning_count INTEGER DEFAULT 0,
+        alert_type TEXT,
+        alert_message TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY (site_id) REFERENCES hostings (hosting_id)
     )""",
