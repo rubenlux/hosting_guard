@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
-from app.infra.db import get_connection, reset_pg_connection
+from app.infra.db import get_connection
 from app.infra.migrations import init_db
 
 class MetricsRepository:
@@ -9,6 +9,7 @@ class MetricsRepository:
         init_db()
 
     def save_traffic_snapshot(self, container_name: str, total_requests: int, errors_4xx: int, errors_5xx: int) -> None:
+        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -24,10 +25,11 @@ class MetricsRepository:
             )
             conn.commit()
         finally:
-            reset_pg_connection()
+            release_connection(conn)
 
     def get_traffic_stats(self, container_name: str, hours: int = 24) -> Dict:
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -43,9 +45,10 @@ class MetricsRepository:
                 return {"total_requests": row["total"], "errors_4xx": row["e4xx"], "errors_5xx": row["e5xx"]}
             return {"total_requests": 0, "errors_4xx": 0, "errors_5xx": 0}
         finally:
-            reset_pg_connection()
+            release_connection(conn)
 
     def save_uptime_check(self, hosting_id: int, is_up: bool, response_ms: Optional[int] = None, status_code: Optional[int] = None) -> None:
+        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -60,10 +63,11 @@ class MetricsRepository:
             )
             conn.commit()
         finally:
-            reset_pg_connection()
+            release_connection(conn)
 
     def get_uptime_percentage(self, hosting_id: int, hours: int = 24) -> Optional[float]:
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -77,9 +81,10 @@ class MetricsRepository:
             up = row["up_count"] if row else 0
             return round((up / total) * 100, 1) if total > 0 else None
         finally:
-            reset_pg_connection()
+            release_connection(conn)
 
     def get_recent_uptime_checks(self, hosting_id: int, limit: int = 50) -> List[Dict]:
+        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -90,10 +95,11 @@ class MetricsRepository:
             )
             return [dict(r) for r in cursor.fetchall()]
         finally:
-            reset_pg_connection()
+            release_connection(conn)
 
     def get_avg_response_ms(self, hosting_id: int, hours: int = 24) -> Optional[float]:
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -106,4 +112,4 @@ class MetricsRepository:
             val = row["avg_ms"] if row else None
             return round(float(val), 1) if val is not None else None
         finally:
-            reset_pg_connection()
+            release_connection(conn)

@@ -3,7 +3,6 @@ import uuid
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
-from app.infra.db import get_connection
 from app.infra.migrations import init_db
 
 logger = logging.getLogger(__name__)
@@ -27,9 +26,10 @@ class PixelRepository:
 
     def create_site(self, user_id: int, name: str, domain: str = None) -> str:
         site_id = uuid.uuid4().hex[:12]
+        from app.infra.db import get_connection, release_connection
         conn = get_connection()
-        cursor = conn.cursor()
         try:
+            cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO pixel_sites (site_id, user_id, name, domain, created_at) VALUES (%s, %s, %s, %s, %s)",
                 (site_id, user_id, name, domain, datetime.now(timezone.utc))
@@ -39,33 +39,62 @@ class PixelRepository:
         except Exception:
             conn.rollback()
             raise
+        finally:
+            release_connection(conn)
 
     def get_user_sites(self, user_id: int) -> List[Dict]:
+        from app.infra.db import get_connection, release_connection
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM pixel_sites WHERE user_id = %s", (user_id,))
-        rows = cursor.fetchall()
-        sites = []
-        for r in rows:
-            d = dict(r)
-            d["status"] = _site_status(d.get("last_seen_at"))
-            sites.append(d)
-        return sites
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM pixel_sites WHERE user_id = %s", (user_id,))
+            rows = cursor.fetchall()
+            sites = []
+            for r in rows:
+                d = dict(r)
+                d["status"] = _site_status(d.get("last_seen_at"))
+                sites.append(d)
+            return sites
+        finally:
+            release_connection(conn)
 
     def get_site(self, site_id: str) -> Optional[Dict]:
+        from app.infra.db import get_connection, release_connection
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM pixel_sites WHERE site_id = %s", (site_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM pixel_sites WHERE site_id = %s", (site_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            release_connection(conn)
 
     def save_event(self, **kwargs) -> str:
         event_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
+        from app.infra.db import get_connection, release_connection
         conn = get_connection()
-        cursor = conn.cursor()
-        props = kwargs.get("properties", {})
         try:
+            cursor = conn.cursor()
+            props = kwargs.get("properties", {})
+            props_json = json.dumps(props) if isinstance(props, dict) else props
+            
+            # 1. Escritura Dual Atómica (Misma Transacción)
+            # Tabla Legacy (Plana)
+            cursor.execute(
+                """INSERT INTO pixel_events_legacy
+                   (event_id, site_id, user_id, event_type, url, referrer, user_agent,
+                    ip, country, device, browser, os, properties, session_id, created_at,
+                    visitor_id, region, city)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (event_id, kwargs.get("site_id"), kwargs.get("user_id"), kwargs.get("event_type"),
+                 kwargs.get("url"), kwargs.get("referrer"), kwargs.get("user_agent"), 
+                 kwargs.get("ip"), kwargs.get("country"), kwargs.get("device"), kwargs.get("browser"), 
+                 kwargs.get("os"), props_json,
+                 kwargs.get("session_id"), now, kwargs.get("visitor_id"), kwargs.get("region"), kwargs.get("city"))
+            )
+
+            # Nueva Tabla Particionada (Estructura espejo)
             cursor.execute(
                 """INSERT INTO pixel_events
                    (event_id, site_id, user_id, event_type, url, referrer, user_agent,
@@ -75,75 +104,96 @@ class PixelRepository:
                 (event_id, kwargs.get("site_id"), kwargs.get("user_id"), kwargs.get("event_type"),
                  kwargs.get("url"), kwargs.get("referrer"), kwargs.get("user_agent"), 
                  kwargs.get("ip"), kwargs.get("country"), kwargs.get("device"), kwargs.get("browser"), 
-                 kwargs.get("os"), json.dumps(props) if isinstance(props, dict) else props,
+                 kwargs.get("os"), props_json,
                  kwargs.get("session_id"), now, kwargs.get("visitor_id"), kwargs.get("region"), kwargs.get("city"))
             )
+
             cursor.execute("UPDATE pixel_sites SET last_seen_at = %s WHERE site_id = %s", (now, kwargs.get("site_id")))
             conn.commit()
             return event_id
         except Exception as e:
             conn.rollback()
-            logger.error(f"Error saving pixel event: {e}")
+            logger.error(f"Error during pixel dual write: {e}", exc_info=True)
             raise
+        finally:
+            release_connection(conn)
 
     def get_stats(self, site_id: str, days: int = 30) -> Dict:
+        from app.infra.db import get_connection, release_connection
         conn = get_connection()
-        cursor = conn.cursor()
-        since = datetime.now(timezone.utc) - timedelta(days=days)
-        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        try:
+            cursor = conn.cursor()
+            since = datetime.now(timezone.utc) - timedelta(days=days)
+            today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
-        cursor.execute("SELECT COUNT(*) FROM pixel_events WHERE site_id = %s AND created_at >= %s", (site_id, since))
-        total = cursor.fetchone()["count"]
+            # Query 1: Métricas calientes (Dashboard Core)
+            # Optimizada para no tener que scanear la tabla por el bounce_rate
+            cursor.execute(
+                """
+                SELECT 
+                    COUNT(*) as total_events,
+                    COUNT(*) FILTER (WHERE created_at >= %s) as today_events,
+                    COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL) as unique_sessions,
+                    AVG((properties->>'time_on_page')::float) FILTER (WHERE event_type = 'page_exit' AND (properties->>'time_on_page') IS NOT NULL) as avg_time,
+                    AVG((properties->>'load_time')::float) FILTER (WHERE event_type = 'performance') as avg_load,
+                    AVG((properties->>'ttfb')::float) FILTER (WHERE event_type = 'performance') as avg_ttfb
+                FROM pixel_events
+                WHERE site_id = %s AND created_at >= %s
+                """,
+                (today, site_id, since)
+            )
+            res = cursor.fetchone()
 
-        cursor.execute("SELECT COUNT(*) FROM pixel_events WHERE site_id = %s AND created_at >= %s", (site_id, today))
-        today_count = cursor.fetchone()["count"]
+            # Query 2: Bounce Rate (Aislada por costo de agregación)
+            # Usamos subquery para forzar el uso del índice en session_id
+            cursor.execute(
+                """
+                SELECT 
+                    COUNT(*) as total_sessions,
+                    COUNT(*) FILTER (WHERE pv_count = 1) as bounced_sessions
+                FROM (
+                    SELECT session_id, COUNT(*) FILTER (WHERE event_type = 'page_view') as pv_count
+                    FROM pixel_events 
+                    WHERE site_id = %s AND session_id IS NOT NULL AND created_at >= %s
+                    GROUP BY session_id
+                ) AS s
+                """,
+                (site_id, since)
+            )
+            bounce_res = cursor.fetchone()
 
-        cursor.execute("SELECT COUNT(DISTINCT session_id) FROM pixel_events WHERE site_id = %s AND session_id IS NOT NULL AND created_at >= %s", (site_id, since))
-        unique_sessions = cursor.fetchone()["count"]
+            # Query 3: Top Pages
+            cursor.execute(
+                """
+                SELECT url, COUNT(*) as views FROM pixel_events
+                WHERE site_id = %s AND event_type = 'page_view' AND created_at >= %s
+                GROUP BY url ORDER BY views DESC LIMIT 10
+                """,
+                (site_id, since)
+            )
+            top_pages = [dict(r) for r in cursor.fetchall()]
 
-        cursor.execute(
-            """SELECT url, COUNT(*) as views FROM pixel_events
-               WHERE site_id = %s AND event_type = 'page_view' AND created_at >= %s
-               GROUP BY url ORDER BY views DESC LIMIT 10""",
-            (site_id, since)
-        )
-        top_pages = [dict(r) for r in cursor.fetchall()]
+            total_sessions = bounce_res["total_sessions"] or 0
+            bounced = bounce_res["bounced_sessions"] or 0
+            bounce_rate = round((float(bounced) / total_sessions * 100), 1) if total_sessions > 0 else 0
 
-        cursor.execute(
-            """SELECT COUNT(*) AS total_sessions, SUM(CASE WHEN pv_count = 1 THEN 1 ELSE 0 END) AS bounced
-               FROM (SELECT session_id, SUM(CASE WHEN event_type='page_view' THEN 1 ELSE 0 END) AS pv_count
-                     FROM pixel_events WHERE site_id = %s AND session_id IS NOT NULL AND created_at >= %s
-                     GROUP BY session_id) AS s""", (site_id, since)
-        )
-        b = cursor.fetchone()
-        bounce_rate = round(float(b["bounced"]) / b["total_sessions"] * 100, 1) if b and b["total_sessions"] > 0 else 0
-
-        cursor.execute(
-            """SELECT AVG((properties->>'time_on_page')::float) as avg_time FROM pixel_events
-               WHERE site_id = %s AND event_type = 'page_exit' AND (properties->>'time_on_page') IS NOT NULL AND created_at >= %s""",
-            (site_id, since)
-        )
-        a = cursor.fetchone()
-        avg_time = round(float(a["avg_time"]), 1) if a and a["avg_time"] else 0
-
-        cursor.execute(
-            """SELECT AVG((properties->>'load_time')::float) AS avg_load, AVG((properties->>'ttfb')::float) AS avg_ttfb
-               FROM pixel_events WHERE site_id = %s AND event_type = 'performance' AND created_at >= %s""",
-            (site_id, since)
-        )
-        p = cursor.fetchone()
-        
-        return {
-            "total_events": total, "today_events": today_count, "unique_sessions": unique_sessions,
-            "bounce_rate": bounce_rate, "avg_time_on_page": avg_time,
-            "performance": {
-                "avg_load_ms": round(float(p["avg_load"]), 0) if p and p["avg_load"] else 0,
-                "avg_ttfb_ms": round(float(p["avg_ttfb"]), 0) if p and p["avg_ttfb"] else 0,
-            },
-            "top_pages": top_pages,
-        }
+            return {
+                "total_events": res["total_events"] or 0,
+                "today_events": res["today_events"] or 0,
+                "unique_sessions": res["unique_sessions"] or 0,
+                "bounce_rate": bounce_rate,
+                "avg_time_on_page": round(float(res["avg_time"] or 0), 1),
+                "performance": {
+                    "avg_load_ms": round(float(res["avg_load"] or 0), 0),
+                    "avg_ttfb_ms": round(float(res["avg_ttfb"] or 0), 0),
+                },
+                "top_pages": top_pages,
+            }
+        finally:
+            release_connection(conn)
 
     def delete_site(self, site_id: str, user_id: int):
+        from app.infra.db import get_connection, release_connection
         conn = get_connection()
         cursor = conn.cursor()
         try:

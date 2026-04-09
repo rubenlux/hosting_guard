@@ -88,7 +88,10 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
         # 5. Llamado al AI Orchestrator para enriquecimiento inteligente
         try:
             from app.core.registry import registry
-            ai_orchestrator = registry.orchestrator
+            try:
+                ai_orchestrator = registry.orchestrator
+            except RuntimeError:
+                ai_orchestrator = registry.get_orchestrator_safe()
 
             if ai_orchestrator:
                 diagnosis = await ai_orchestrator.enrich(decision=decision_base, debug_context=debug_context)

@@ -73,7 +73,7 @@ _SCHEMA_PG = """
     );
 
     CREATE TABLE IF NOT EXISTS pixel_events (
-        event_id TEXT PRIMARY KEY,
+        event_id TEXT,
         site_id TEXT NOT NULL,
         user_id INTEGER NOT NULL,
         event_type TEXT NOT NULL,
@@ -91,7 +91,7 @@ _SCHEMA_PG = """
         region TEXT,
         city TEXT,
         created_at TIMESTAMPTZ NOT NULL
-    );
+    ) PARTITION BY RANGE (created_at);
 """
 
 # Migraciones incrementales y Tablas Adicionales
@@ -214,10 +214,44 @@ _MIGRATIONS_PG = [
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_login_audit_email ON login_audit(email)",
     "CREATE INDEX IF NOT EXISTS idx_hostings_container ON hostings(container_name)",
-    "CREATE INDEX IF NOT EXISTS idx_hostings_user ON hostings(user_id)",
-    "CREATE INDEX IF NOT EXISTS idx_traffic_collected ON traffic_stats(collected_at)",
     "CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pixel_events_site_created ON pixel_events (site_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_pixel_events_site_type_created ON pixel_events (site_id, event_type, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_pixel_events_site_session_created ON pixel_events (site_id, session_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_pixel_events_recent ON pixel_events (site_id, created_at) WHERE created_at >= now() - interval '30 days'",
 ]
+
+def ensure_monthly_partitions(cursor):
+    """Garantiza que existan particiones para el mes actual y los próximos 2 meses."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+
+    for delta in [0, 1, 2]:
+        # Calcular primer día del mes objetivo
+        target_month = now.month + delta
+        target_year = now.year + (target_month - 1) // 12
+        target_month = (target_month - 1) % 12 + 1
+        
+        start_date = datetime(target_year, target_month, 1, tzinfo=timezone.utc)
+        
+        # Calcular primer día del mes siguiente
+        next_month = target_month + 1
+        next_year = target_year + (next_month - 1) // 12
+        next_month = (next_month - 1) % 12 + 1
+        end_date = datetime(next_year, next_month, 1, tzinfo=timezone.utc)
+
+        suffix = start_date.strftime("%Y_%m")
+        table_name = f"pixel_events_{suffix}"
+
+        # Usar parámetros para evitar inyección y errores de formato
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {table_name} 
+            PARTITION OF pixel_events 
+            FOR VALUES FROM (%s) TO (%s)
+        """, (start_date, end_date))
+    
+    # Crear partición default para evitar fallos de inserción
+    cursor.execute("CREATE TABLE IF NOT EXISTS pixel_events_default PARTITION OF pixel_events DEFAULT")
 
 def init_db():
     """Inicialización idempotente de PostgreSQL."""
@@ -244,7 +278,13 @@ def init_db():
                 if "already exists" not in str(e).lower():
                     logger.warning(f"Migration error: {e}")
 
-        # 3. Índices
+        # 3. Particiones de Analytics (Capa Temporal)
+        try:
+            ensure_monthly_partitions(cursor)
+        except Exception as e:
+            logger.warning(f"Partition maintenance error: {e}")
+
+        # 4. Índices
         for sql in _INDEXES:
             try:
                 cursor.execute(sql)
@@ -252,7 +292,7 @@ def init_db():
                 if "already exists" not in str(e).lower():
                     logger.warning(f"Index error: {e}")
 
-        logger.info("Database (PostgreSQL) Initialized.")
+        logger.info("Database (PostgreSQL) Initialized with Partitions.")
     except Exception as e:
         logger.error(f"FAIL: init_db (Postgres) failed: {e}", exc_info=True)
     finally:

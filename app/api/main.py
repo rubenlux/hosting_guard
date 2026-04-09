@@ -102,6 +102,9 @@ async def lifespan(app):
     yield
 
 
+from app.infra.db import init_db_pool
+init_db_pool(minconn=2, maxconn=30)
+
 app = FastAPI(
     title="Hosting Guard API",
     description="Decision API for hosting diagnostics and safety evaluation",
