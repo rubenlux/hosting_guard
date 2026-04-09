@@ -78,23 +78,7 @@ class PixelRepository:
             cursor = conn.cursor()
             props = kwargs.get("properties", {})
             props_json = json.dumps(props) if isinstance(props, dict) else props
-            
-            # 1. Escritura Dual Atómica (Misma Transacción)
-            # Tabla Legacy (Plana)
-            cursor.execute(
-                """INSERT INTO pixel_events_legacy
-                   (event_id, site_id, user_id, event_type, url, referrer, user_agent,
-                    ip, country, device, browser, os, properties, session_id, created_at,
-                    visitor_id, region, city)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (event_id, kwargs.get("site_id"), kwargs.get("user_id"), kwargs.get("event_type"),
-                 kwargs.get("url"), kwargs.get("referrer"), kwargs.get("user_agent"), 
-                 kwargs.get("ip"), kwargs.get("country"), kwargs.get("device"), kwargs.get("browser"), 
-                 kwargs.get("os"), props_json,
-                 kwargs.get("session_id"), now, kwargs.get("visitor_id"), kwargs.get("region"), kwargs.get("city"))
-            )
 
-            # Nueva Tabla Particionada (Estructura espejo)
             cursor.execute(
                 """INSERT INTO pixel_events
                    (event_id, site_id, user_id, event_type, url, referrer, user_agent,
@@ -102,18 +86,17 @@ class PixelRepository:
                     visitor_id, region, city)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (event_id, kwargs.get("site_id"), kwargs.get("user_id"), kwargs.get("event_type"),
-                 kwargs.get("url"), kwargs.get("referrer"), kwargs.get("user_agent"), 
-                 kwargs.get("ip"), kwargs.get("country"), kwargs.get("device"), kwargs.get("browser"), 
+                 kwargs.get("url"), kwargs.get("referrer"), kwargs.get("user_agent"),
+                 kwargs.get("ip"), kwargs.get("country"), kwargs.get("device"), kwargs.get("browser"),
                  kwargs.get("os"), props_json,
                  kwargs.get("session_id"), now, kwargs.get("visitor_id"), kwargs.get("region"), kwargs.get("city"))
             )
-
             cursor.execute("UPDATE pixel_sites SET last_seen_at = %s WHERE site_id = %s", (now, kwargs.get("site_id")))
             conn.commit()
             return event_id
         except Exception as e:
             conn.rollback()
-            logger.error(f"Error during pixel dual write: {e}", exc_info=True)
+            logger.error(f"Error saving pixel event: {e}", exc_info=True)
             raise
         finally:
             release_connection(conn)
