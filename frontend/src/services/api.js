@@ -239,6 +239,26 @@ export const getPixelSiteStats = async (siteId, days = 30) => {
     return response.data;
 };
 
+export const getPixelTimeseries = async (siteId, days = 30) => {
+    const response = await api.get(`/pixel/sites/${siteId}/timeseries?days=${days}`);
+    return response.data;
+};
+
+export const getPixelDevices = async (siteId, days = 30) => {
+    const response = await api.get(`/pixel/sites/${siteId}/devices?days=${days}`);
+    return response.data;
+};
+
+export const getPixelCountries = async (siteId, days = 30) => {
+    const response = await api.get(`/pixel/sites/${siteId}/countries?days=${days}`);
+    return response.data;
+};
+
+export const getPixelPages = async (siteId, days = 30) => {
+    const response = await api.get(`/pixel/sites/${siteId}/pages?days=${days}`);
+    return response.data;
+};
+
 export const startSupportSession = async (userId) => {
     const response = await api.post(`/admin/impersonate/${userId}`);
     return response.data;

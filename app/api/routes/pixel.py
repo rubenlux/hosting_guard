@@ -1,9 +1,10 @@
+import asyncio
 import hashlib
 import json
 import re
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, Request, HTTPException, Depends
 from fastapi.responses import Response
 
 _SITE_ID_RE = re.compile(r'^[a-f0-9\-]{8,36}$')
@@ -19,6 +20,69 @@ from app.infra.audit.pixel_repository import PixelRepository
 
 router = APIRouter()
 pixel_repo = PixelRepository()
+
+# ── GeoIP helpers ─────────────────────────────────────────────────────────────
+
+# In-memory cache: ip → {"country": str, "region": str, "city": str}
+# One entry per unique IP; stays alive for the lifetime of the process.
+_ip_cache: dict = {}
+
+_PRIVATE_PREFIXES = ("127.", "10.", "172.16.", "172.17.", "172.18.", "172.19.",
+                     "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
+                     "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
+                     "172.30.", "172.31.", "192.168.", "::1", "fc", "fd")
+
+
+def _get_real_ip(request: Request) -> Optional[str]:
+    """Extract the real client IP, skipping proxy/load-balancer addresses."""
+    for header in ("x-real-ip", "cf-connecting-ip", "x-forwarded-for"):
+        val = request.headers.get(header)
+        if val:
+            # x-forwarded-for may contain a comma-separated chain; first is client
+            return val.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
+async def _enrich_geo(event_id: str, ip: Optional[str]) -> None:
+    """
+    Background task: resolve country/region/city for `ip` via ip-api.com
+    (free tier, 45 req/min, no key required), then update the DB record.
+    Results are cached in-process so each unique IP is only looked up once.
+    """
+    if not ip:
+        return
+    if any(ip.startswith(p) for p in _PRIVATE_PREFIXES):
+        return
+
+    if ip not in _ip_cache:
+        try:
+            import requests as _req
+            r = await asyncio.to_thread(
+                lambda: _req.get(
+                    f"http://ip-api.com/json/{ip}?fields=countryCode,regionName,city",
+                    timeout=2,
+                )
+            )
+            if r.status_code == 200:
+                d = r.json()
+                _ip_cache[ip] = {
+                    "country": d.get("countryCode") or None,
+                    "region":  d.get("regionName")  or None,
+                    "city":    d.get("city")         or None,
+                }
+            else:
+                _ip_cache[ip] = {}
+        except Exception:
+            _ip_cache[ip] = {}
+
+    geo = _ip_cache.get(ip, {})
+    if geo.get("country"):
+        pixel_repo.update_event_geo(
+            event_id,
+            geo["country"],
+            geo.get("region"),
+            geo.get("city"),
+        )
 
 
 def _parse_user_agent(ua: str) -> dict:
@@ -74,13 +138,18 @@ async def pixel_script(id: str, request: Request):
   var sid=sessionStorage.getItem('hg_sid');
   if(!sid){{sid=Math.random().toString(36).substr(2);sessionStorage.setItem('hg_sid',sid);}}
 
+  // ── Client hints (screen, language) ──────────────────────────────────────
+  var _dv=window.innerWidth<=768?'mobile':window.innerWidth<=1024?'tablet':'desktop';
+  var _sw=(window.screen&&window.screen.width)||0;
+  var _lang=(navigator.language||'').split('-')[0].substr(0,5);
+
   // ── Transport ─────────────────────────────────────────────────────────────
 
   function _beacon(ev,props){{
     try{{
       var d=JSON.stringify({{site_id:S,event_type:ev,url:window.location.href,
         referrer:document.referrer,user_agent:navigator.userAgent,
-        session_id:sid,visitor_id:vid,properties:props||{{}}}});
+        session_id:sid,visitor_id:vid,properties:Object.assign({{}},{{device:_dv,sw:_sw,lang:_lang}},props||{{}})}});
       if(navigator.sendBeacon)navigator.sendBeacon(A+'/pixel/event',new Blob([d],{{type:'application/json'}}));
     }}catch(e){{}}
   }}
@@ -92,7 +161,7 @@ async def pixel_script(id: str, request: Request):
         headers:{{'Content-Type':'application/json'}},
         body:JSON.stringify({{site_id:S,event_type:ev,url:window.location.href,
           referrer:document.referrer,user_agent:navigator.userAgent,
-          session_id:sid,visitor_id:vid,properties:props||{{}}}}),
+          session_id:sid,visitor_id:vid,properties:Object.assign({{}},{{device:_dv,sw:_sw,lang:_lang}},props||{{}})}}),
         keepalive:true
       }}).catch(function(err){{
         if(ev!=='fetch_error')_beacon('fetch_error',{{failed_event:ev,error:(err&&err.name)||'NetworkError'}});
@@ -289,15 +358,23 @@ class PixelEventRequest(BaseModel):
 
 @router.post("/pixel/event")
 @limiter.limit("120/minute")
-async def receive_event(data: PixelEventRequest, request: Request):
+async def receive_event(data: PixelEventRequest, request: Request, background_tasks: BackgroundTasks):
     site = pixel_repo.get_site(data.site_id)
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
 
-    ip = request.client.host if request.client else None
+    ip = _get_real_ip(request)
     ua_info = _parse_user_agent(data.user_agent or "")
 
-    pixel_repo.save_event(
+    # Use client-side device hint (from screen width) as a fallback when UA parsing
+    # returns "unknown" — e.g. minimal/custom user agents or bots.
+    device = ua_info["device"]
+    if device == "unknown" and isinstance(data.properties, dict):
+        hint = data.properties.get("device")
+        if hint in ("mobile", "desktop", "tablet"):
+            device = hint
+
+    event_id = pixel_repo.save_event(
         site_id=data.site_id,
         user_id=site["user_id"],
         event_type=data.event_type,
@@ -305,13 +382,17 @@ async def receive_event(data: PixelEventRequest, request: Request):
         referrer=data.referrer,
         user_agent=data.user_agent,
         ip=ip,
-        device=ua_info["device"],
+        device=device,
         browser=ua_info["browser"],
         os=ua_info["os"],
         properties=data.properties,
         session_id=data.session_id,
         visitor_id=data.visitor_id,
     )
+
+    # GeoIP enrichment runs after response is sent — zero impact on latency.
+    background_tasks.add_task(_enrich_geo, event_id, ip)
+
     return Response(status_code=204)
 
 
@@ -348,6 +429,46 @@ async def get_stats(site_id: str, days: int = 30, user: dict = Depends(verify_to
     if site["user_id"] != user["user_id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Forbidden")
     return pixel_repo.get_stats(site_id, days=days)
+
+
+@router.get("/pixel/sites/{site_id}/timeseries")
+async def get_timeseries(site_id: str, days: int = 30, user: dict = Depends(verify_token)):
+    site = pixel_repo.get_site(site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if site["user_id"] != user["user_id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return pixel_repo.get_timeseries(site_id, days=days)
+
+
+@router.get("/pixel/sites/{site_id}/devices")
+async def get_devices(site_id: str, days: int = 30, user: dict = Depends(verify_token)):
+    site = pixel_repo.get_site(site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if site["user_id"] != user["user_id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return pixel_repo.get_devices(site_id, days=days)
+
+
+@router.get("/pixel/sites/{site_id}/countries")
+async def get_countries(site_id: str, days: int = 30, user: dict = Depends(verify_token)):
+    site = pixel_repo.get_site(site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if site["user_id"] != user["user_id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return pixel_repo.get_countries(site_id, days=days)
+
+
+@router.get("/pixel/sites/{site_id}/pages")
+async def get_pages(site_id: str, days: int = 30, user: dict = Depends(verify_token)):
+    site = pixel_repo.get_site(site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if site["user_id"] != user["user_id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return pixel_repo.get_pages(site_id, days=days)
 
 
 @router.delete("/pixel/sites/{site_id}")

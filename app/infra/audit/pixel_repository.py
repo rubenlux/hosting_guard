@@ -303,6 +303,101 @@ class PixelRepository:
         finally:
             release_connection(conn)
 
+    def update_event_geo(self, event_id: str, country: str,
+                         region: Optional[str] = None, city: Optional[str] = None) -> None:
+        """Update country/region/city on an event record after async GeoIP resolution."""
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE pixel_events SET country = %s, region = %s, city = %s WHERE event_id = %s",
+                (country, region, city, event_id)
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        finally:
+            release_connection(conn)
+
+    def get_timeseries(self, site_id: str, days: int = 30) -> List[Dict]:
+        """Page views y sesiones únicas por día."""
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            since = datetime.now(timezone.utc) - timedelta(days=days)
+            cursor.execute(
+                """
+                SELECT
+                    date_trunc('day', created_at)::date AS day,
+                    COUNT(*) FILTER (WHERE event_type = 'page_view') AS page_views,
+                    COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL) AS sessions
+                FROM pixel_events
+                WHERE site_id = %s AND created_at >= %s
+                GROUP BY day ORDER BY day
+                """,
+                (site_id, since)
+            )
+            return [{"day": str(r["day"]), "page_views": r["page_views"], "sessions": r["sessions"]}
+                    for r in cursor.fetchall()]
+        finally:
+            release_connection(conn)
+
+    def get_devices(self, site_id: str, days: int = 30) -> List[Dict]:
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            since = datetime.now(timezone.utc) - timedelta(days=days)
+            cursor.execute(
+                """
+                SELECT device, COUNT(*) AS count FROM pixel_events
+                WHERE site_id = %s AND created_at >= %s AND device IS NOT NULL
+                GROUP BY device ORDER BY count DESC
+                """,
+                (site_id, since)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+        finally:
+            release_connection(conn)
+
+    def get_countries(self, site_id: str, days: int = 30) -> List[Dict]:
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            since = datetime.now(timezone.utc) - timedelta(days=days)
+            cursor.execute(
+                """
+                SELECT country, COUNT(*) AS count FROM pixel_events
+                WHERE site_id = %s AND created_at >= %s AND country IS NOT NULL
+                GROUP BY country ORDER BY count DESC LIMIT 10
+                """,
+                (site_id, since)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+        finally:
+            release_connection(conn)
+
+    def get_pages(self, site_id: str, days: int = 30) -> List[Dict]:
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            since = datetime.now(timezone.utc) - timedelta(days=days)
+            cursor.execute(
+                """
+                SELECT url, COUNT(*) AS views FROM pixel_events
+                WHERE site_id = %s AND event_type = 'page_view' AND created_at >= %s
+                GROUP BY url ORDER BY views DESC LIMIT 10
+                """,
+                (site_id, since)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+        finally:
+            release_connection(conn)
+
     def cleanup_old_events(self, days: int = 90) -> int:
         """Elimina eventos más viejos que `days` días. Devuelve el número eliminado."""
         from app.infra.db import get_connection, release_connection
