@@ -105,7 +105,7 @@ class PixelRepository:
             since = datetime.now(timezone.utc) - timedelta(days=days)
             today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
-            # Query 1: métricas principales
+            # Query 1: métricas principales + métricas de engagement
             cursor.execute(
                 """
                 SELECT
@@ -115,13 +115,31 @@ class PixelRepository:
                     AVG((properties->>'time_on_page')::float)
                         FILTER (WHERE event_type = 'page_exit' AND (properties->>'time_on_page') IS NOT NULL) AS avg_time,
                     AVG((properties->>'load_time')::float) FILTER (WHERE event_type = 'performance') AS avg_load,
-                    AVG((properties->>'ttfb')::float)      FILTER (WHERE event_type = 'performance') AS avg_ttfb
+                    AVG((properties->>'ttfb')::float)      FILTER (WHERE event_type = 'performance') AS avg_ttfb,
+                    COUNT(*) FILTER (WHERE event_type = 'page_view') AS total_page_views,
+                    ROUND(
+                        COUNT(*) FILTER (WHERE event_type = 'page_view')::numeric
+                        / NULLIF(COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL), 0),
+                    2) AS avg_pages_per_session,
+                    ROUND(
+                        COUNT(*)::numeric
+                        / NULLIF(COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL), 0),
+                    2) AS avg_events_per_session
                 FROM pixel_events
                 WHERE site_id = %s AND created_at >= %s
                 """,
                 (today, site_id, since)
             )
             res = cursor.fetchone()
+
+            # Query 1b: usuarios activos últimos 5 min
+            cursor.execute(
+                """SELECT COUNT(DISTINCT COALESCE(visitor_id, session_id)) AS active_5min
+                   FROM pixel_events WHERE site_id = %s
+                   AND created_at >= NOW() - INTERVAL '5 minutes'""",
+                (site_id,)
+            )
+            active_row = cursor.fetchone()
 
             # Query 2: bounce rate
             cursor.execute(
@@ -192,18 +210,21 @@ class PixelRepository:
             bounce_rate = round(float(bounced) / total_sessions * 100, 1) if total_sessions > 0 else 0
 
             return {
-                "total_events":      res["total_events"] or 0,
-                "today_events":      res["today_events"] or 0,
-                "unique_sessions":   res["unique_sessions"] or 0,
-                "bounce_rate":       bounce_rate,
-                "avg_time_on_page":  round(float(res["avg_time"] or 0), 1),
+                "total_events":           res["total_events"] or 0,
+                "today_events":           res["today_events"] or 0,
+                "unique_sessions":        res["unique_sessions"] or 0,
+                "bounce_rate":            bounce_rate,
+                "avg_time_on_page":       round(float(res["avg_time"] or 0), 1),
+                "avg_pages_per_session":  round(float(res["avg_pages_per_session"] or 0), 1),
+                "avg_events_per_session": round(float(res["avg_events_per_session"] or 0), 1),
+                "active_users_5min":      int(active_row["active_5min"] or 0),
                 "performance": {
                     "avg_load_ms": round(float(res["avg_load"] or 0), 0),
                     "avg_ttfb_ms": round(float(res["avg_ttfb"] or 0), 0),
                 },
-                "top_pages":    top_pages,
-                "by_device":    by_device,
-                "by_country":   by_country,
+                "top_pages":     top_pages,
+                "by_device":     by_device,
+                "by_country":    by_country,
                 "events_by_day": events_by_day,
             }
         finally:
@@ -321,26 +342,181 @@ class PixelRepository:
             release_connection(conn)
 
     def get_timeseries(self, site_id: str, days: int = 30) -> List[Dict]:
-        """Page views y sesiones únicas por día."""
+        """
+        Gap-filled timeseries.
+        - days <= 1  → hourly buckets for the last 24 h
+        - days >  1  → daily  buckets with zeros for days with no events
+        """
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            now = datetime.now(timezone.utc)
+
+            if days <= 1:
+                since = now - timedelta(hours=24)
+                start = since.replace(minute=0, second=0, microsecond=0)
+                end   = now.replace(minute=0, second=0, microsecond=0)
+                cursor.execute(
+                    """
+                    WITH calendar AS (
+                        SELECT generate_series(%s::timestamptz, %s::timestamptz, '1 hour') AS bucket
+                    ),
+                    data AS (
+                        SELECT
+                            date_trunc('hour', created_at) AS bucket,
+                            COUNT(*) FILTER (WHERE event_type = 'page_view') AS page_views,
+                            COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL) AS sessions
+                        FROM pixel_events
+                        WHERE site_id = %s AND created_at >= %s
+                        GROUP BY 1
+                    )
+                    SELECT
+                        to_char(c.bucket AT TIME ZONE 'UTC', 'HH24:MI') AS label,
+                        COALESCE(d.page_views, 0) AS page_views,
+                        COALESCE(d.sessions,   0) AS sessions
+                    FROM calendar c LEFT JOIN data d ON c.bucket = d.bucket
+                    ORDER BY c.bucket
+                    """,
+                    (start, end, site_id, since)
+                )
+                return [
+                    {"day": r["label"], "label": r["label"],
+                     "page_views": int(r["page_views"]), "sessions": int(r["sessions"])}
+                    for r in cursor.fetchall()
+                ]
+            else:
+                since = now - timedelta(days=days)
+                cursor.execute(
+                    """
+                    WITH calendar AS (
+                        SELECT generate_series(%s::date, %s::date, '1 day'::interval)::date AS day
+                    ),
+                    data AS (
+                        SELECT
+                            date_trunc('day', created_at)::date AS day,
+                            COUNT(*) FILTER (WHERE event_type = 'page_view') AS page_views,
+                            COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL) AS sessions
+                        FROM pixel_events
+                        WHERE site_id = %s AND created_at >= %s
+                        GROUP BY 1
+                    )
+                    SELECT
+                        c.day::text AS day,
+                        COALESCE(d.page_views, 0) AS page_views,
+                        COALESCE(d.sessions,   0) AS sessions
+                    FROM calendar c LEFT JOIN data d ON c.day = d.day
+                    ORDER BY c.day
+                    """,
+                    (since.date(), now.date(), site_id, since)
+                )
+                return [
+                    {"day": r["day"], "label": r["day"][5:],   # "MM-DD"
+                     "page_views": int(r["page_views"]), "sessions": int(r["sessions"])}
+                    for r in cursor.fetchall()
+                ]
+        finally:
+            release_connection(conn)
+
+    def get_realtime(self, site_id: str) -> Dict:
+        """Active users (5 min), events last 60 s, recent page views."""
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            now = datetime.now(timezone.utc)
+
+            cursor.execute(
+                """SELECT COUNT(DISTINCT COALESCE(visitor_id, session_id)) AS active
+                   FROM pixel_events
+                   WHERE site_id = %s AND created_at >= %s""",
+                (site_id, now - timedelta(minutes=5))
+            )
+            active_row = cursor.fetchone()
+
+            cursor.execute(
+                """SELECT COUNT(*) AS cnt FROM pixel_events
+                   WHERE site_id = %s AND created_at >= %s""",
+                (site_id, now - timedelta(seconds=60))
+            )
+            ev60_row = cursor.fetchone()
+
+            cursor.execute(
+                """SELECT url, created_at, device, country FROM pixel_events
+                   WHERE site_id = %s AND event_type = 'page_view'
+                   ORDER BY created_at DESC LIMIT 10""",
+                (site_id,)
+            )
+            pages = []
+            for r in cursor.fetchall():
+                d = dict(r)
+                d["created_at"] = d["created_at"].isoformat() if d.get("created_at") else None
+                pages.append(d)
+
+            return {
+                "active_users": int(active_row["active"] or 0),
+                "events_60s":   int(ev60_row["cnt"]    or 0),
+                "recent_pages": pages,
+            }
+        finally:
+            release_connection(conn)
+
+    def get_funnel(self, site_id: str, days: int = 30) -> Dict:
+        """Entry pages, exit pages, drop-off rate."""
         from app.infra.db import get_connection, release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
             since = datetime.now(timezone.utc) - timedelta(days=days)
+
             cursor.execute(
-                """
-                SELECT
-                    date_trunc('day', created_at)::date AS day,
-                    COUNT(*) FILTER (WHERE event_type = 'page_view') AS page_views,
-                    COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL) AS sessions
-                FROM pixel_events
-                WHERE site_id = %s AND created_at >= %s
-                GROUP BY day ORDER BY day
-                """,
+                """SELECT url, COUNT(*) AS entries FROM (
+                       SELECT DISTINCT ON (session_id) session_id, url
+                       FROM pixel_events
+                       WHERE site_id = %s AND event_type = 'page_view'
+                         AND session_id IS NOT NULL AND created_at >= %s
+                       ORDER BY session_id, created_at ASC
+                   ) first GROUP BY url ORDER BY entries DESC LIMIT 5""",
                 (site_id, since)
             )
-            return [{"day": str(r["day"]), "page_views": r["page_views"], "sessions": r["sessions"]}
-                    for r in cursor.fetchall()]
+            entry_pages = [dict(r) for r in cursor.fetchall()]
+
+            cursor.execute(
+                """SELECT url, COUNT(*) AS exits FROM (
+                       SELECT DISTINCT ON (session_id) session_id, url
+                       FROM pixel_events
+                       WHERE site_id = %s AND event_type = 'page_view'
+                         AND session_id IS NOT NULL AND created_at >= %s
+                       ORDER BY session_id, created_at DESC
+                   ) last GROUP BY url ORDER BY exits DESC LIMIT 5""",
+                (site_id, since)
+            )
+            exit_pages = [dict(r) for r in cursor.fetchall()]
+
+            cursor.execute(
+                """SELECT
+                       COUNT(DISTINCT session_id) AS total,
+                       COUNT(DISTINCT session_id) FILTER (WHERE pv_count = 1) AS single_page
+                   FROM (
+                       SELECT session_id,
+                              COUNT(*) FILTER (WHERE event_type = 'page_view') AS pv_count
+                       FROM pixel_events
+                       WHERE site_id = %s AND session_id IS NOT NULL AND created_at >= %s
+                       GROUP BY session_id
+                   ) s""",
+                (site_id, since)
+            )
+            dr = cursor.fetchone()
+            total  = int(dr["total"]       or 0)
+            single = int(dr["single_page"] or 0)
+            dropoff = round(single / total * 100, 1) if total > 0 else 0
+
+            return {
+                "entry_pages":    entry_pages,
+                "exit_pages":     exit_pages,
+                "dropoff_rate":   dropoff,
+                "total_sessions": total,
+            }
         finally:
             release_connection(conn)
 

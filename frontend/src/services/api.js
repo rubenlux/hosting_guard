@@ -239,6 +239,16 @@ export const getPixelSiteStats = async (siteId, days = 30) => {
     return response.data;
 };
 
+export const getPixelRealtime = async (siteId) => {
+    const response = await api.get(`/pixel/sites/${siteId}/realtime`);
+    return response.data;
+};
+
+export const getPixelFunnel = async (siteId, days = 30) => {
+    const response = await api.get(`/pixel/sites/${siteId}/funnel?days=${days}`);
+    return response.data;
+};
+
 export const getPixelTimeseries = async (siteId, days = 30) => {
     const response = await api.get(`/pixel/sites/${siteId}/timeseries?days=${days}`);
     return response.data;

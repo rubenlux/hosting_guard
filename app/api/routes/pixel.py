@@ -443,6 +443,26 @@ async def get_stats(site_id: str, days: int = 30, user: dict = Depends(verify_to
     return pixel_repo.get_stats(site_id, days=days)
 
 
+@router.get("/pixel/sites/{site_id}/realtime")
+async def get_realtime(site_id: str, user: dict = Depends(verify_token)):
+    site = pixel_repo.get_site(site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if site["user_id"] != user["user_id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return pixel_repo.get_realtime(site_id)
+
+
+@router.get("/pixel/sites/{site_id}/funnel")
+async def get_funnel(site_id: str, days: int = 30, user: dict = Depends(verify_token)):
+    site = pixel_repo.get_site(site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if site["user_id"] != user["user_id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return pixel_repo.get_funnel(site_id, days=days)
+
+
 @router.get("/pixel/sites/{site_id}/timeseries")
 async def get_timeseries(site_id: str, days: int = 30, user: dict = Depends(verify_token)):
     site = pixel_repo.get_site(site_id)
