@@ -16,18 +16,9 @@ import os
 from app.api.rate_limit import limiter
 from app.api.security import verify_token, require_role
 from app.infra.audit.pixel_repository import PixelRepository
-from app.infra.audit.pixel_repository_pg import PixelRepositoryPG
-
-# El "Interruptor de Seguridad": por defecto usa SQLite para no romper nada
-USE_SQLITE = os.getenv("PIXEL_DB_SQLITE", "true").lower() == "true"
 
 router = APIRouter()
-
-if USE_SQLITE:
-    pixel_repo = PixelRepository()
-else:
-    # Solo se activa si PIXEL_DB_SQLITE=false
-    pixel_repo = PixelRepositoryPG()
+pixel_repo = PixelRepository()
 
 
 def _parse_user_agent(ua: str) -> dict:

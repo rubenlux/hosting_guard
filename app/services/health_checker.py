@@ -69,8 +69,8 @@ def check_all_hostings() -> None:
     Ejecuta el ciclo de salud completo: 
     Uptime -> Stats -> Scoring -> Alerts -> Persistencia
     """
-    from app.infra.audit.sqlite import release_connection
-    release_connection()
+    from app.infra.db import reset_pg_connection
+    reset_pg_connection()
 
     hostings = _hosting_repo.get_all_hostings()
     checkable = [h for h in hostings if h.get("status") not in ("expired", "not_found")]

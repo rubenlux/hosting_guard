@@ -66,7 +66,6 @@ async def support_ws_handler(websocket: WebSocket, ticket_id: int) -> None:
       app.add_api_websocket_route("/ws/support/{ticket_id}", support_ws_handler)
     """
     from app.infra.audit.ticket_repository import TicketRepository
-    from app.infra.audit.sqlite import get_connection  # noqa: needed for thread safety check
 
     ticket_repo = TicketRepository()
 

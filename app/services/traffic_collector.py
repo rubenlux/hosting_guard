@@ -50,8 +50,8 @@ def collect_traffic() -> None:
     # Reset thread-local DB connection before each cycle.
     # run_in_executor reuses threads, so the PostgreSQL connection cached from
     # the previous cycle may have been closed server-side after the 5-minute idle.
-    from app.infra.audit.sqlite import release_connection
-    release_connection()
+    from app.infra.db import reset_pg_connection
+    reset_pg_connection()
 
     hostings = _hosting_repo.get_all_hostings()
     active = [h for h in hostings if h.get("status") == "active"]

@@ -2,44 +2,26 @@ import json
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, Optional
-
 from app.infra.config.models import TenantConfigVersion
-from app.infra.config.sqlite import get_connection, init_db
-
+from app.infra.db import get_connection
+from app.infra.migrations import init_db
 
 class TenantConfigRepository:
-    """
-    Gestión de reglas/prompts versionados por tenant.
-    """
-
+    """Gestión de reglas/prompts versionados por tenant en PostgreSQL."""
     def __init__(self):
         init_db()
 
-    def create_new_version(
-        self,
-        tenant_id: str,
-        kind: str,
-        content: Dict,
-    ) -> TenantConfigVersion:
+    def create_new_version(self, tenant_id: str, kind: str, content: Dict) -> TenantConfigVersion:
         conn = get_connection()
         cur = conn.cursor()
-
-        # desactivar versión previa activa para este tenant y tipo
+        # 1. Desactivar versión previa
         cur.execute(
-            """
-            UPDATE tenant_configs
-            SET active = 0
-            WHERE tenant_id = ? AND kind = ? AND active = 1
-            """,
+            "UPDATE tenant_configs SET active = 0 WHERE tenant_id = %s AND kind = %s AND active = 1",
             (tenant_id, kind),
         )
-
-        # obtener siguiente versión incremental
+        # 2. Obtener siguiente versión
         cur.execute(
-            """
-            SELECT MAX(version) AS max_version FROM tenant_configs
-            WHERE tenant_id = ? AND kind = ?
-            """,
+            "SELECT MAX(version) AS max_version FROM tenant_configs WHERE tenant_id = %s AND kind = %s",
             (tenant_id, kind),
         )
         row = cur.fetchone()
@@ -55,62 +37,33 @@ class TenantConfigRepository:
             active=True,
         )
 
+        # 3. Insertar nueva versión
         cur.execute(
-            """
-            INSERT INTO tenant_configs
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                cfg.config_id,
-                cfg.tenant_id,
-                cfg.version,
-                cfg.kind,
-                json.dumps(cfg.content),
-                cfg.created_at.isoformat(),
-                1,
-            ),
+            "INSERT INTO tenant_configs (config_id, tenant_id, version, kind, content, created_at, active) "
+            "VALUES (%s, %s, %s, %s, %s, %s, 1)",
+            (cfg.config_id, cfg.tenant_id, cfg.version, cfg.kind, json.dumps(cfg.content), cfg.created_at.isoformat()),
         )
-
         conn.commit()
         return cfg
 
     def get_active(self, tenant_id: str, kind: str) -> Dict:
-        """
-        Retorna el contenido de la configuración activa.
-        """
         conn = get_connection()
         cur = conn.cursor()
-
         cur.execute(
-            """
-            SELECT content FROM tenant_configs
-            WHERE tenant_id = ? AND kind = ? AND active = 1
-            """,
+            "SELECT content FROM tenant_configs WHERE tenant_id = %s AND kind = %s AND active = 1",
             (tenant_id, kind),
         )
-
         row = cur.fetchone()
-
         return json.loads(row["content"]) if row else {}
 
     def get_all_versions(self, tenant_id: str, kind: str) -> list[TenantConfigVersion]:
-        """
-        Retorna historial de versiones para un tenant y tipo.
-        """
         conn = get_connection()
         cur = conn.cursor()
-
         cur.execute(
-            """
-            SELECT * FROM tenant_configs
-            WHERE tenant_id = ? AND kind = ?
-            ORDER BY version DESC
-            """,
+            "SELECT * FROM tenant_configs WHERE tenant_id = %s AND kind = %s ORDER BY version DESC",
             (tenant_id, kind),
         )
-
         rows = cur.fetchall()
-
         return [
             TenantConfigVersion(
                 config_id=r["config_id"],

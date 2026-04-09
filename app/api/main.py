@@ -90,6 +90,10 @@ _background_tasks: set = set()
 
 @asynccontextmanager
 async def lifespan(app):
+    # Initialize Database Schema (Idempotent)
+    from app.infra.migrations import init_db
+    init_db()
+
     for coro in (expiration_scheduler(), traffic_scheduler(), health_scheduler()):
         task = asyncio.create_task(coro)
         _background_tasks.add(task)          # prevent garbage collection

@@ -11,23 +11,16 @@ from app.api.security import require_role
 from app.infra.audit.user_repository import UserRepository
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.pixel_repository import PixelRepository
-from app.infra.audit.pixel_repository_pg import PixelRepositoryPG
 from app.infra.audit.metrics_repository import MetricsRepository
 from app.infra.audit.sqlite import get_connection
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-# El "Interruptor de Seguridad": por defecto usa SQLite
-USE_SQLITE = os.getenv("PIXEL_DB_SQLITE", "true").lower() == "true"
-
 _user_repo    = UserRepository()
 _hosting_repo = HostingRepository()
+_pixel_repo   = PixelRepository()
 _metrics_repo = MetricsRepository()
 
-if USE_SQLITE:
-    _pixel_repo = PixelRepository()
-else:
-    _pixel_repo = PixelRepositoryPG()
 
 # Container prefix used by HostingGuard (same as orchestrator.py)
 _CONTAINER_PREFIX = "user_"
