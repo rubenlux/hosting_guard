@@ -1,5 +1,5 @@
 import logging
-from app.infra.db import get_pg_connection, reset_pg_connection
+from app.infra.db import get_connection, reset_pg_connection
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +256,7 @@ def ensure_monthly_partitions(cursor):
 def init_db():
     """Inicialización idempotente de PostgreSQL."""
     try:
-        conn = get_pg_connection()
+        conn = get_connection()
         conn._conn.autocommit = True
         cursor = conn.cursor()
         
