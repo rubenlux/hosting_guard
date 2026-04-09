@@ -98,18 +98,15 @@ class _AdaptedCursor:
             else:
                 self._cur.execute(sql)
             # Capturar lastrowid para INSERT en tablas con SERIAL.
-            # Se usa SAVEPOINT para evitar que un fallo de lastval() (tablas con
-            # PK no-SERIAL, e.g. TEXT) aborte la transacción completa en PostgreSQL.
+            # En Postgres usamos lastval() directamente. 
+            # El SAVEPOINT se elimina para evitar errores de bloque de transacción.
             if sql.strip().upper().startswith("INSERT"):
                 try:
-                    self._cur.execute("SAVEPOINT _lastval_sp")
                     self._cur.execute("SELECT lastval()")
                     row = self._cur.fetchone()
-                    # RealDictCursor devuelve {"lastval": N}
                     self._lastrowid = row["lastval"] if row else None
-                    self._cur.execute("RELEASE SAVEPOINT _lastval_sp")
                 except Exception:
-                    self._cur.execute("ROLLBACK TO SAVEPOINT _lastval_sp")
+                    # Si falla (ej. tabla con PK de texto), no pasa nada
                     self._lastrowid = None
         else:
             if params is not None:

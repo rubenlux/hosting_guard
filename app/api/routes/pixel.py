@@ -67,7 +67,7 @@ async def pixel_script(id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid site id")
 
     safe_id = json.dumps(id)
-    script = f"""(function(){{
+    script = fr"""(function(){{
   // Guard: evita que el script se inicialice más de una vez por sesión de tab.
   // En SPAs con SSR o lazy-loading, el <script> puede ejecutarse múltiples veces.
   if(window.__hg_init)return;

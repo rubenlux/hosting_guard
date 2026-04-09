@@ -741,9 +741,9 @@ def update_tenant_config(
 
 
 @app.get("/metrics")
-def metrics(user=Depends(verify_token)):
+def metrics():
     """
-    Expone métricas para Prometheus.
+    Expone métricas para Prometheus. Accesible internamente sin token.
     """
     return PlainTextResponse(generate_latest())
 
