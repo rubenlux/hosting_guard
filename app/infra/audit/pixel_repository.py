@@ -3,7 +3,6 @@ import uuid
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
-from app.infra.migrations import init_db
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +20,6 @@ def _site_status(last_seen_at: Optional[str]) -> str:
 
 class PixelRepository:
     """Implementación PostgreSQL limpia para Analytics."""
-    def __init__(self):
-        init_db()
 
     def create_site(self, user_id: int, name: str, domain: str = None) -> str:
         site_id = uuid.uuid4().hex[:12]

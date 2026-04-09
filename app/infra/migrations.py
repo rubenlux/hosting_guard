@@ -1,5 +1,5 @@
 import logging
-from app.infra.db import get_connection, reset_pg_connection
+from app.infra.db import get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +271,8 @@ def ensure_monthly_partitions(cursor):
 
 def init_db():
     """Inicialización idempotente de PostgreSQL."""
+    from app.infra.db import release_connection
+    conn = None
     try:
         conn = get_connection()
         conn._conn.autocommit = True
@@ -312,4 +314,6 @@ def init_db():
     except Exception as e:
         logger.error(f"FAIL: init_db (Postgres) failed: {e}", exc_info=True)
     finally:
-        reset_pg_connection()
+        if conn is not None:
+            conn._conn.autocommit = False
+            release_connection(conn)
