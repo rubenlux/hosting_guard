@@ -301,7 +301,7 @@ export default function PixelAnalytics() {
                       { title: "Vistas Hoy", val: stats.today_events, icon: <Activity className="w-4 h-4 opacity-50" />, color: "text-[#00ff88]", bc: "border-[#00ff88]/20" },
                       { title: "Eventos Totales", val: stats.total_events, icon: <Database className="w-4 h-4 opacity-50" />, color: "text-[#00aaff]", bc: "border-[#00aaff]/20" },
                       { title: "Sesiones Únicas", val: stats.unique_sessions, icon: <Users className="w-4 h-4 opacity-50" />, color: "text-[#ffaa00]", bc: "border-[#ffaa00]/20" },
-                      { title: "Actividad (Últ. Mes)", val: stats.events_by_day?.length || 0, icon: <Clock className="w-4 h-4 opacity-50" />, color: "text-[#aa00ff]", bc: "border-[#aa00ff]/20" }
+                      { title: "Bounce Rate", val: `${stats.bounce_rate ?? 0}%`, icon: <Clock className="w-4 h-4 opacity-50" />, color: "text-[#aa00ff]", bc: "border-[#aa00ff]/20" }
                     ].map((m, i) => (
                       <div key={i} className={`p-4 bg-[#050505] rounded-xl border ${m.bc} relative overflow-hidden`}>
                         <div className="flex justify-between items-start mb-2">
@@ -312,6 +312,49 @@ export default function PixelAnalytics() {
                       </div>
                     ))}
                   </div>
+
+                  {/* Time series chart */}
+                  {stats.events_by_day?.length > 1 && (
+                    <div className="card-dash p-4">
+                      <div className="text-xs font-mono font-bold uppercase mb-4 text-white flex items-center gap-2">
+                        <Activity className="w-3.5 h-3.5 text-accent" /> Vistas por Día (últimos {stats.events_by_day.length} días)
+                      </div>
+                      <div className="w-full overflow-x-auto">
+                        {(() => {
+                          const data = stats.events_by_day;
+                          const max = Math.max(...data.map(d => d.events), 1);
+                          const W = 600, H = 80, pad = 4;
+                          const pts = data.map((d, i) => {
+                            const x = (i / (data.length - 1)) * W;
+                            const y = H - ((d.events / max) * (H - pad * 2)) - pad;
+                            return `${x},${y}`;
+                          }).join(' ');
+                          return (
+                            <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-16" preserveAspectRatio="none">
+                              <defs>
+                                <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="0%" stopColor="#00ff88" stopOpacity="0.3"/>
+                                  <stop offset="100%" stopColor="#00ff88" stopOpacity="0"/>
+                                </linearGradient>
+                              </defs>
+                              <polygon points={`0,${H} ${pts} ${W},${H}`} fill="url(#pg)" />
+                              <polyline fill="none" stroke="#00ff88" strokeWidth="2"
+                                strokeLinecap="round" strokeLinejoin="round" points={pts} />
+                              {data.map((d, i) => {
+                                const x = (i / (data.length - 1)) * W;
+                                const y = H - ((d.events / max) * (H - pad * 2)) - pad;
+                                return <circle key={i} cx={x} cy={y} r="3" fill="#00ff88" opacity="0.8" />;
+                              })}
+                            </svg>
+                          );
+                        })()}
+                        <div className="flex justify-between text-[9px] font-mono text-muted mt-1">
+                          <span>{stats.events_by_day[0]?.day}</span>
+                          <span>{stats.events_by_day[stats.events_by_day.length - 1]?.day}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Complex Data */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
