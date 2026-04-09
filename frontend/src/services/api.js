@@ -326,6 +326,11 @@ export const resolveAlert = async (alertId) => {
   return response.data;
 };
 
+export const getDashboardSummary = async () => {
+  const response = await api.get('/dashboard/summary');
+  return response.data;
+};
+
 export const saveFile = async (hostingId, path, content) => {
     const response = await api.post(`/files/${hostingId}/save`, { path, content });
     return response.data;

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { listHostings, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, getMetrics, getOrchestratorEvents, updateUserConfig, topupBalance, getMe, diagnoseHosting, getHostingHealth, getHostingHealthHistory, getUserAlerts, getRecentActivity } from '../services/api';
+import { getDashboardSummary, deleteHosting, restartHosting, stopHosting, startHosting, getLogs, updateUserConfig, topupBalance, getMe, diagnoseHosting, getHostingHealth, getHostingHealthHistory } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import {
   Globe,
@@ -105,33 +105,33 @@ const Dashboard = () => {
     }
   };
 
-  const fetchHostings = async () => {
+  const fetchDashboard = async (isInitial = false) => {
     try {
-      setLoading(true);
-      const data = await listHostings();
-      setHostings(data);
+      if (isInitial) setLoading(true);
+      const data = await getDashboardSummary();
+      setHostings(data.hostings ?? []);
+      setHealthData(data.health ?? {});
+      setHealthHistory(data.health_history ?? {});
+      setAlerts(data.alerts ?? []);
+      setEvents(data.events ?? []);
     } catch (err) {
-      console.error(err);
+      console.error('Error fetching dashboard summary:', err);
     } finally {
-      setLoading(false);
+      if (isInitial) setLoading(false);
     }
   };
 
-  const fetchMetrics = async (hostingId) => {
-    try {
-      const data = await getMetrics(hostingId);
-      setMetrics(prev => ({ ...prev, [hostingId]: data }));
-    } catch (err) {
-      console.error(`Error fetching metrics for ${hostingId}:`, err);
-    }
-  };
+  // Alias para compatibilidad con callbacks en JSX que llaman fetchHostings/fetchEvents
+  const fetchHostings = () => fetchDashboard(false);
+  const fetchEvents   = () => fetchDashboard(false);
 
+  // Fallback individual para diagnóstico posterior (actualiza health de un hosting puntual)
   const fetchHealth = async (hostingId) => {
     try {
       const data = await getHostingHealth(hostingId);
       setHealthData(prev => ({ ...prev, [hostingId]: data }));
-      // También traer historial cuando cambia la salud
-      fetchHealthHistory(hostingId);
+      const history = await getHostingHealthHistory(hostingId);
+      setHealthHistory(prev => ({ ...prev, [hostingId]: history }));
     } catch (err) {
       console.error(`Error fetching health for ${hostingId}:`, err);
     }
@@ -143,24 +143,6 @@ const Dashboard = () => {
       setHealthHistory(prev => ({ ...prev, [hostingId]: data }));
     } catch (err) {
       console.error(`Error fetching health history for ${hostingId}:`, err);
-    }
-  };
-
-  const fetchAlerts = async () => {
-    try {
-      const data = await getUserAlerts();
-      setAlerts(data);
-    } catch (err) {
-      console.error(`Error fetching alerts:`, err);
-    }
-  };
-
-  const fetchEvents = async () => {
-    try {
-      const data = await getRecentActivity(20);
-      setEvents(data);
-    } catch (err) {
-      console.error("Error fetching activity:", err);
     }
   };
 
@@ -295,42 +277,19 @@ const Dashboard = () => {
     }
   };
 
-  // Ref always points to latest hostings so the metrics interval never closes over a stale snapshot
+  // Ref para que el intervalo siempre lea el closure actualizado
   const hostingsRef = useRef(hostings);
   useEffect(() => { hostingsRef.current = hostings; }, [hostings]);
 
   useEffect(() => {
     if (user?.role === 'admin') return;
 
-    fetchHostings();
-    fetchEvents();
-    fetchAlerts();
-    
-    // Traer historial inicial para todos
-    hostings.forEach(h => {
-        if (h.status === 'active') fetchHealthHistory(h.hosting_id);
-    });
+    fetchDashboard(true);
 
-    // Polling de métricas cada 10 segundos — lee hostingsRef para ver el estado actual
-    const metricsInterval = setInterval(() => {
-      hostingsRef.current.forEach(h => {
-        if (h.status === 'active') {
-          fetchMetrics(h.hosting_id);
-          fetchHealth(h.hosting_id);
-        }
-      });
-    }, 15000); // 15s para no saturar
+    // Un único intervalo de polling — 1 request cada 15s en lugar de 2+N×3
+    const pollInterval = setInterval(() => fetchDashboard(false), 15000);
 
-    // Polling de eventos cada 15 segundos
-    const eventsInterval = setInterval(() => {
-      fetchEvents();
-      fetchAlerts();
-    }, 15000);
-
-    return () => {
-      clearInterval(metricsInterval);
-      clearInterval(eventsInterval);
-    };
+    return () => clearInterval(pollInterval);
   }, [user?.role]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const renderTrendLine = (data, color = "#00ff88") => {

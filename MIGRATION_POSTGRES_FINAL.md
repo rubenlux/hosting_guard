@@ -1000,3 +1000,18 @@ pixel_repository.py delete_site —
 execution_repository.py save_execution_event Eliminado init_db() en **init**
 human_repository.py save_action Eliminado init_db() en **init**
 metrics_repository.py — Eliminado init_db() en **init**
+Lo que realmente se cambió (vs lo que era ruido):
+
+Lo que la IA dijo	Realidad
+"Auth manejo débil, no hay interceptor"	❌ Falso — interceptor con refresh queue ya existía en api.js:23-64
+"Token sin control, localStorage"	❌ Falso — HttpOnly cookies, sin localStorage
+"user.id rompe UI"	❌ Falso — 0 referencias a user.id en el código
+"No hay API layer centralizada"	❌ Falso — api.js con 65+ funciones
+N+1 requests en dashboard	✅ Real — solucionado con /dashboard/summary
+React Router warnings	✅ Real — solucionado con future flags
+Impacto real del cambio:
+
+Dashboard: de 2 + N×3 requests por ciclo → 1 request por ciclo
+Con 1 hosting activo: 5 requests → 1 (80% reducción)
+Con 3 hostings activos: 11 requests → 1 (91% reducción)
+Los CORS 500 del screenshot eran consecuencia del pool exhaustion (ya arreglado en el backend)
