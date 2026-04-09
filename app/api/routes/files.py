@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -166,10 +167,28 @@ def save_file(
     except PermissionError:
         raise HTTPException(status_code=403, detail="Sin permiso para escribir el archivo.")
     except Exception as exc:
-        # Intentar restaurar el backup
         if bak.exists():
             shutil.copy2(bak, target)
         raise HTTPException(status_code=500, detail=f"Error guardando: {exc}")
+
+    # Sincronizar el archivo editado al contenedor y recargar nginx.
+    # Los contenedores creados sin volume mount sirven desde /usr/share/nginx/html/
+    # (filesystem interno), por lo que el host necesita hacer docker cp explícito.
+    container_name = hosting["container_name"]
+    # La ruta dentro del contenedor es la misma ruta relativa dentro de /usr/share/nginx/html/
+    container_dest = f"{container_name}:/usr/share/nginx/html/{body.path.lstrip('/')}"
+    try:
+        subprocess.run(
+            ["docker", "cp", str(target), container_dest],
+            timeout=10, capture_output=True
+        )
+        subprocess.run(
+            ["docker", "exec", container_name, "nginx", "-s", "reload"],
+            timeout=5, capture_output=True
+        )
+    except Exception:
+        # No bloquear el guardado si docker cp falla (p.ej. contenedor detenido)
+        pass
 
     return {"ok": True, "path": body.path, "size": len(encoded)}
 
