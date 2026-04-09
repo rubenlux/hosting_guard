@@ -218,12 +218,27 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_pixel_events_site_created ON pixel_events (site_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_pixel_events_site_type_created ON pixel_events (site_id, event_type, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_pixel_events_site_session_created ON pixel_events (site_id, session_id, created_at)",
-    "CREATE INDEX IF NOT EXISTS idx_pixel_events_recent ON pixel_events (site_id, created_at) WHERE created_at >= now() - interval '30 days'",
 ]
 
 def ensure_monthly_partitions(cursor):
-    """Garantiza que existan particiones para el mes actual y los próximos 2 meses."""
+    """Garantiza que existan particiones para el mes actual y los próximos 2 meses.
+
+    Si pixel_events no es una tabla particionada (p.ej. fue creada antes de la
+    migración a particiones), omite silenciosamente el mantenimiento.
+    """
     from datetime import datetime, timedelta, timezone
+
+    # Verificar si pixel_events es realmente una tabla particionada
+    cursor.execute("""
+        SELECT COUNT(*) FROM pg_partitioned_table pt
+        JOIN pg_class c ON c.oid = pt.partrelid
+        WHERE c.relname = 'pixel_events'
+    """)
+    row = cursor.fetchone()
+    if not row or row[0] == 0:
+        logger.debug("pixel_events is not a partitioned table — skipping partition maintenance")
+        return
+
     now = datetime.now(timezone.utc)
 
     for delta in [0, 1, 2]:
