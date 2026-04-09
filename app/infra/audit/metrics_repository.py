@@ -1,12 +1,9 @@
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from app.infra.db import get_connection
-from app.infra.migrations import init_db
 
 class MetricsRepository:
     """Implementación PostgreSQL limpia para Métricas y Uptime."""
-    def __init__(self):
-        init_db()
 
     def save_traffic_snapshot(self, container_name: str, total_requests: int, errors_4xx: int, errors_5xx: int) -> None:
         from app.infra.db import release_connection

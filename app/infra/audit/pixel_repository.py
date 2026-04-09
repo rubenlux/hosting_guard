@@ -175,11 +175,13 @@ class PixelRepository:
     def delete_site(self, site_id: str, user_id: int):
         from app.infra.db import get_connection, release_connection
         conn = get_connection()
-        cursor = conn.cursor()
         try:
+            cursor = conn.cursor()
             cursor.execute("DELETE FROM pixel_sites WHERE site_id = %s AND user_id = %s", (site_id, user_id))
             cursor.execute("DELETE FROM pixel_events WHERE site_id = %s", (site_id,))
             conn.commit()
         except Exception:
             conn.rollback()
             raise
+        finally:
+            release_connection(conn)

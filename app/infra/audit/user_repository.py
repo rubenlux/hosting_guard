@@ -1,30 +1,25 @@
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
 import logging
-from app.infra.db import get_connection
+from app.infra.db import get_connection, release_connection
 
 logger = logging.getLogger(__name__)
 
 class UserRepository:
     """Repositorio de Usuarios - Versión PostgreSQL."""
-    def __init__(self):
-        pass
 
     def create_user(self, email: str, password_hash: str, role: str = "user") -> int:
-        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            # Usamos RETURNING para obtener el ID de forma atómica en Postgres
             cursor.execute(
                 "INSERT INTO users (email, password_hash, role, created_at) "
                 "VALUES (%s, %s, %s, %s) RETURNING user_id",
                 (email, password_hash, role, datetime.now(timezone.utc).isoformat())
             )
             row = cursor.fetchone()
-            user_id = row[0] if row else None
             conn.commit()
-            return user_id
+            return row["user_id"] if row else None
         except Exception as e:
             conn.rollback()
             if "unique" in str(e).lower() or "duplicate" in str(e).lower():
@@ -34,7 +29,6 @@ class UserRepository:
             release_connection(conn)
 
     def get_user_by_email(self, email: str) -> Optional[Dict]:
-        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -45,7 +39,6 @@ class UserRepository:
             release_connection(conn)
 
     def get_user_by_id(self, user_id: int) -> Optional[Dict]:
-        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -56,7 +49,6 @@ class UserRepository:
             release_connection(conn)
 
     def deduct_balance_if_sufficient(self, user_id: int, amount: float) -> bool:
-        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -71,7 +63,6 @@ class UserRepository:
             release_connection(conn)
 
     def update_balance(self, user_id: int, amount: float):
-        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -82,18 +73,23 @@ class UserRepository:
 
     def update_payment_method(self, user_id: int, has_method: bool):
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET has_payment_method = %s WHERE user_id = %s", (1 if has_method else 0, user_id))
-        conn.commit()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET has_payment_method = %s WHERE user_id = %s", (1 if has_method else 0, user_id))
+            conn.commit()
+        finally:
+            release_connection(conn)
 
     def update_autoscale(self, user_id: int, enabled: bool):
         conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET autoscale_enabled = %s WHERE user_id = %s", (1 if enabled else 0, user_id))
-        conn.commit()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET autoscale_enabled = %s WHERE user_id = %s", (1 if enabled else 0, user_id))
+            conn.commit()
+        finally:
+            release_connection(conn)
 
     def get_all_users(self) -> List[Dict]:
-        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
@@ -106,7 +102,6 @@ class UserRepository:
             release_connection(conn)
 
     def log_login_attempt(self, email: str, ip: str, success: bool, detail: str = "") -> None:
-        from app.infra.db import release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()

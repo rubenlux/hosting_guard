@@ -1,4 +1,3 @@
-# app/infra/audit/repository.py
 import json
 import logging
 import uuid
@@ -6,20 +5,12 @@ from datetime import datetime, timezone
 from typing import Dict
 
 from app.infra.audit.models import DecisionEvent
-from app.infra.db import get_connection
-from app.infra.migrations import init_db
+from app.infra.db import get_connection, release_connection
 
 logger = logging.getLogger(__name__)
 
-_db_initialized = False
-
 class AuditRepository:
     """Persistencia PostgreSQL para eventos de decisión."""
-    def __init__(self):
-        global _db_initialized
-        if not _db_initialized:
-            init_db()
-            _db_initialized = True
 
     def save_decision_event(self, tenant_id: str, decision: Dict, advisory: Dict) -> DecisionEvent:
         try:
@@ -55,7 +46,10 @@ class AuditRepository:
                 ),
             )
             conn.commit()
+            return event
         except Exception:
+            conn.rollback()
             logger.exception("Failed to persist decision event for tenant=%s decision=%s", tenant_id, decision.get("decision_id"))
             raise
-        return event
+        finally:
+            release_connection(conn)
