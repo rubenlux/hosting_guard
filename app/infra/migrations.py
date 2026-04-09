@@ -228,14 +228,15 @@ def ensure_monthly_partitions(cursor):
     """
     from datetime import datetime, timedelta, timezone
 
-    # Verificar si pixel_events es realmente una tabla particionada
+    # Verificar si pixel_events es realmente una tabla particionada.
+    # RealDictCursor devuelve dicts, no tuplas — usamos alias explícito.
     cursor.execute("""
-        SELECT COUNT(*) FROM pg_partitioned_table pt
+        SELECT COUNT(*) AS cnt FROM pg_partitioned_table pt
         JOIN pg_class c ON c.oid = pt.partrelid
         WHERE c.relname = 'pixel_events'
     """)
     row = cursor.fetchone()
-    if not row or row[0] == 0:
+    if not row or row["cnt"] == 0:
         logger.debug("pixel_events is not a partitioned table — skipping partition maintenance")
         return
 
