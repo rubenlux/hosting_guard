@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
 import logging
-from app.infra.audit.sqlite import get_connection
+from app.infra.db import get_connection
 
 logger = logging.getLogger(__name__)
 

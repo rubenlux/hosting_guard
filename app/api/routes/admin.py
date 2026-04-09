@@ -12,7 +12,7 @@ from app.infra.audit.user_repository import UserRepository
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.pixel_repository import PixelRepository
 from app.infra.audit.metrics_repository import MetricsRepository
-from app.infra.audit.sqlite import get_connection
+from app.infra.db import get_connection
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -124,24 +124,23 @@ def get_user_full(user_id: int, _: dict = Depends(require_role("admin"))):
     decision_events = [
         dict(r) for r in cur.execute(
             "SELECT event_id, timestamp, overall_status, confidence_level, requires_human_attention "
-            "FROM decision_events WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 20",
+            "FROM decision_events WHERE tenant_id = %s ORDER BY timestamp DESC LIMIT 20",
             (tenant_id,)
         ).fetchall()
     ]
-    execution_events = [
-        dict(r) for r in cur.execute(
-            "SELECT execution_id, timestamp, action_type, status "
-            "FROM execution_events WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 20",
-            (tenant_id,)
-        ).fetchall()
-    ]
-    human_events = [
-        dict(r) for r in cur.execute(
-            "SELECT action_event_id, timestamp, action_type, actor, reason "
-            "FROM human_action_events WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 20",
-            (tenant_id,)
-        ).fetchall()
-    ]
+    cur.execute(
+        "SELECT execution_id, timestamp, action_type, status "
+        "FROM execution_events WHERE tenant_id = %s ORDER BY timestamp DESC LIMIT 20",
+        (tenant_id,)
+    )
+    execution_events = [dict(r) for r in cur.fetchall()]
+
+    cur.execute(
+        "SELECT action_event_id, timestamp, action_type, actor, reason "
+        "FROM human_action_events WHERE tenant_id = %s ORDER BY timestamp DESC LIMIT 20",
+        (tenant_id,)
+    )
+    human_events = [dict(r) for r in cur.fetchall()]
 
     # Per-hosting: stored traffic + uptime (no live docker call to keep response fast)
     hosting_details = []
@@ -179,14 +178,15 @@ def pixel_events(limit: int = 100, offset: int = 0, _: dict = Depends(require_ro
 @router.get("/orchestrator/events")
 def get_orchestrator_events(limit: int = 200, _: dict = Depends(require_role("admin"))):
     """Eventos globales del orquestador (throttle, autoscale, restart) de todos los usuarios."""
-    conn = get_connection()
-    rows = conn.cursor().execute(
+    cur = conn.cursor()
+    cur.execute(
         "SELECT oe.event_id, oe.container_name, oe.user_id, oe.event_type, oe.message, oe.created_at, "
         "u.email FROM orchestrator_events oe "
         "LEFT JOIN users u ON oe.user_id = u.user_id "
-        "ORDER BY oe.created_at DESC LIMIT ?",
+        "ORDER BY oe.created_at DESC LIMIT %s",
         (limit,)
-    ).fetchall()
+    )
+    rows = cur.fetchall()
     return [dict(r) for r in rows]
 
 
