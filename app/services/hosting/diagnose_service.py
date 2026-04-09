@@ -87,8 +87,8 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
 
         # 5. Llamado al AI Orchestrator para enriquecimiento inteligente
         try:
-            # Recuperar el orquestador desde el estado de la app en lugar de importarlo directamente
-            ai_orchestrator = getattr(request.app.state, "ai_orchestrator", None)
+            from app.core.registry import registry
+            ai_orchestrator = registry.orchestrator
 
             if ai_orchestrator:
                 diagnosis = await ai_orchestrator.enrich(decision=decision_base, debug_context=debug_context)

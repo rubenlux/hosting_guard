@@ -60,17 +60,6 @@ class _AdaptedCursor:
         else:
             self._cur.execute(sql)
             
-        # Captura automática de lastval() solo en INSERTs
-        if sql.strip().upper().startswith("INSERT"):
-            try:
-                # Intentamos lastval() si el código no usó RETURNING
-                if "RETURNING" not in sql.upper():
-                    self._cur.execute("SELECT lastval()")
-                    row = self._cur.fetchone()
-                    # RealDictCursor devuelve {"lastval": N}
-                    self._lastrowid = row["lastval"] if row else None
-            except Exception:
-                self._lastrowid = None
         return self
 
     def fetchone(self):

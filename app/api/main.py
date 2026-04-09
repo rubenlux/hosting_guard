@@ -516,7 +516,8 @@ from app.api.routes.admin import router as admin_router
 ai_orchestrator = AIOrchestrator(
     knowledge_provider=TenantInMemoryKnowledgeProvider(load_tenant_documents())
 )
-app.state.ai_orchestrator = ai_orchestrator
+from app.core.registry import registry
+registry.orchestrator = ai_orchestrator
 
 # Motor de ejecución
 execution_engine = ExecutionEngine()
