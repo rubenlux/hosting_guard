@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from app.api.security import verify_token, require_support_write
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.user_repository import UserRepository
-from app.repositories import health_repo
+from app.infra.audit.health_repository import HealthRepository
 from app.core.ai_orchestrator import AIOrchestrator
 # Se importará de forma dinámica para evitar circulares si es necesario, 
 # pero idealmente inyectamos la instancia.
@@ -24,6 +24,7 @@ from app.core.alert_engine import check_alerts
 
 _user_repo = UserRepository()
 hosting_repo = HostingRepository()
+_health_repo = HealthRepository()
 
 # --- Constantes de seguridad ---
 MAX_ZIP_SIZE        = 50  * 1024 * 1024   # 50 MB en memoria
@@ -750,7 +751,7 @@ router.post("/hosting/{hosting_id}/diagnose")(diagnose_hosting)
 @router.get("/{hosting_id}/health/history")
 async def get_health_history_legacy(hosting_id: int, user: dict = Depends(verify_token)):
     """Endpoint solicitado por la guía de implementación."""
-    data = health_repo.get_history(hosting_id)
+    data = _health_repo.get_history(hosting_id)
     return [
         {
             "score": row["score"],
