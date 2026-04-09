@@ -374,6 +374,17 @@ async def receive_event(data: PixelEventRequest, request: Request, background_ta
         if hint in ("mobile", "desktop", "tablet"):
             device = hint
 
+    # Country resolution:
+    #   cache hit  → resolve synchronously (zero latency, IP already known)
+    #   cache miss → save with NULL now, enrich via BackgroundTask after response
+    country = None
+    schedule_geo = False
+    if ip and not any(ip.startswith(p) for p in _PRIVATE_PREFIXES):
+        if ip in _ip_cache:
+            country = _ip_cache[ip].get("country")
+        else:
+            schedule_geo = True
+
     event_id = pixel_repo.save_event(
         site_id=data.site_id,
         user_id=site["user_id"],
@@ -382,6 +393,7 @@ async def receive_event(data: PixelEventRequest, request: Request, background_ta
         referrer=data.referrer,
         user_agent=data.user_agent,
         ip=ip,
+        country=country,
         device=device,
         browser=ua_info["browser"],
         os=ua_info["os"],
@@ -390,8 +402,8 @@ async def receive_event(data: PixelEventRequest, request: Request, background_ta
         visitor_id=data.visitor_id,
     )
 
-    # GeoIP enrichment runs after response is sent — zero impact on latency.
-    background_tasks.add_task(_enrich_geo, event_id, ip)
+    if schedule_geo:
+        background_tasks.add_task(_enrich_geo, event_id, ip)
 
     return Response(status_code=204)
 
