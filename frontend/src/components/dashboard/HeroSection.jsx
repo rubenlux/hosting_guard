@@ -1,54 +1,44 @@
 /**
- * Hero section — first thing the user sees.
- * Shows global system status: active users + last event.
+ * Hero section — global system status at a glance.
  *
  * Props:
  *   realtime — { active, lastPath, lastTime, isLive }
+ *   kpis     — { visits, sessions, bounceRate, active }
  */
-export default function HeroSection({ realtime }) {
-  const { active, lastPath, lastTime, isLive } = realtime;
-  const isActive = active > 0;
+export default function HeroSection({ realtime, kpis }) {
+  const isLive = realtime?.active > 0;
 
   return (
-    <div className="flex items-center justify-between py-3 mb-4 border-b border-white/5">
+    <div className="bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border border-white/10 rounded-xl p-4 mb-4">
 
-      {/* Status badge */}
-      <div className="flex items-center gap-2">
-        <span
-          className={`w-2 h-2 rounded-full shrink-0 ${
-            isActive ? 'bg-[#00ff88] animate-pulse' : 'bg-white/20'
-          }`}
-        />
-        <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-gray-400">
-          {isActive ? 'Sistema activo' : 'Sin actividad'}
-        </span>
+      <div className="flex items-center justify-between">
+
+        <div>
+          <p className="text-[11px] font-mono text-gray-400">
+            Estado del sistema
+          </p>
+
+          <h2 className="text-lg font-semibold text-white mt-1">
+            {isLive ? '🟢 Usuarios activos ahora' : '⚪ Sin actividad en tiempo real'}
+          </h2>
+
+          <p className="text-xs text-gray-400 mt-1">
+            {realtime?.lastPath
+              ? `${realtime.lastPath} · hace ${realtime.lastTime}`
+              : 'Sin tráfico reciente'}
+          </p>
+        </div>
+
+        <div className="text-right">
+          <p className="text-2xl font-bold text-emerald-400">
+            {realtime?.active ?? 0}
+          </p>
+          <p className="text-[10px] text-gray-500 font-mono">
+            activos
+          </p>
+        </div>
+
       </div>
-
-      {/* Active users — big */}
-      <div className="text-right">
-        <div className={`text-2xl font-black font-mono leading-none ${isActive ? 'text-[#00ff88]' : 'text-gray-600'}`}>
-          {active}
-        </div>
-        <div className="text-[9px] font-mono text-gray-500 mt-0.5">
-          {active === 1 ? 'usuario activo' : 'usuarios activos'}
-        </div>
-      </div>
-
-      {/* Last event */}
-      {lastPath && (
-        <div className="text-right max-w-[140px]">
-          <div className="text-[9px] font-mono text-gray-500 uppercase tracking-widest mb-0.5">
-            Última actividad
-          </div>
-          <div className="text-[10px] font-mono text-gray-300 truncate" title={lastPath}>
-            {lastPath}
-          </div>
-          {lastTime && (
-            <div className="text-[9px] font-mono text-gray-600">{lastTime} ago</div>
-          )}
-        </div>
-      )}
-
     </div>
   );
 }

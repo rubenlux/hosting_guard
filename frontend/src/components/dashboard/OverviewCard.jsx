@@ -32,7 +32,9 @@ export default function OverviewCard({ siteName, headerExtra, children }) {
         </div>
       </div>
 
-      {children}
+      <div className="space-y-4">
+        {children}
+      </div>
     </div>
   );
 }

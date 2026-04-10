@@ -5,23 +5,26 @@ import EmptyState            from './EmptyState';
 import ErrorState            from './ErrorState';
 import SiteSelector          from './SiteSelector';
 import HeroSection           from './HeroSection';
-import IAInsightCard         from './IAInsightCard';
-import MonitoringSection     from './MonitoringSection';
-import TrafficSection        from './TrafficSection';
+import InsightCard           from './InsightCard';
+import KPISection            from './KPISection';
+import SparklineChart        from './SparklineChart';
+import TopPagesMini          from './TopPagesMini';
+import RealtimeMini          from './RealtimeMini';
 
 /**
  * Dashboard analytics overview — pure composition, zero business logic.
  *
  * Visual hierarchy:
  *   1. Hero     — system status at a glance
- *   2. IA       — insight chips as protagonist
- *   3. Monitoring — KPIs + realtime
- *   4. Traffic  — sparkline + top pages
+ *   2. IA       — insight advisory
+ *   3. KPIs     — supporting metrics
+ *   4. Sparkline + top pages
+ *   5. Realtime status bar
  */
 export default function BusinessOverview() {
   const {
     sites, site, selectSite, retry,
-    kpis, sparkline, topPages, chips, realtime,
+    kpis, sparkline, topPages, realtime,
     loading, error,
   } = useDashboardData();
 
@@ -47,13 +50,23 @@ export default function BusinessOverview() {
       }
     >
 
-      <HeroSection realtime={realtime} />
+      <HeroSection realtime={realtime} kpis={kpis} />
 
-      <IAInsightCard chips={chips} />
+      <InsightCard
+        insight={{
+          message: 'Detectamos aumento del 40% en CPU. Posible plugin mal configurado.',
+        }}
+      />
 
-      <MonitoringSection kpis={kpis} realtime={realtime} />
+      <KPISection kpis={kpis} />
 
-      <TrafficSection sparkline={sparkline} topPages={topPages} />
+      <div className="mb-3">
+        <SparklineChart data={sparkline} />
+      </div>
+
+      <TopPagesMini pages={topPages} />
+
+      <RealtimeMini {...realtime} />
 
     </OverviewCard>
   );

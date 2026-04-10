@@ -5,11 +5,17 @@
  *   kpis — { visits, sessions, bounceRate, active }
  */
 export default function KPISection({ kpis }) {
+  const bounceColor = kpis.bounceRate > 50 ? 'text-red-400'
+    : kpis.bounceRate > 30 ? 'text-yellow-400'
+    : 'text-emerald-400';
+
+  const bounceLabel = kpis.bounceRate > 40 ? 'bounce alto' : 'bounce normal';
+
   const items = [
-    { value: kpis.visits,     label: 'visitas',  color: 'text-[#00ff88]' },
-    { value: kpis.sessions,   label: 'sesiones', color: 'text-[#00aaff]' },
-    { value: `${kpis.bounceRate}%`, label: 'bounce', color: 'text-[#ffaa00]' },
-    { value: kpis.active,     label: 'activos',  color: 'text-[#00ff88]' },
+    { value: kpis.visits,              label: 'visitas',     color: 'text-[#00ff88]' },
+    { value: kpis.sessions,            label: 'sesiones',    color: 'text-[#00aaff]' },
+    { value: `${kpis.bounceRate}%`,    label: bounceLabel,   color: bounceColor       },
+    { value: kpis.active,              label: 'activos',     color: 'text-[#00ff88]' },
   ];
 
   return (
