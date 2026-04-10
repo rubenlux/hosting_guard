@@ -47,6 +47,7 @@ import SupportBanner from '../components/SupportBanner';
 import SupportChat from '../components/SupportChat';
 import SupportTicketList from '../components/SupportTicketList';
 import SiteManagement from '../components/SiteManagement';
+import PixelOverview from '../components/PixelOverview';
 
 const Dashboard = () => {
   const { user, logoutAction, setUser, isSupportSession, supportSession, deactivateSupportSession } = useAuth();
@@ -537,6 +538,9 @@ const Dashboard = () => {
                 </div>
               ))}
 
+              {/* BUSINESS OVERVIEW — pixel analytics summary */}
+              <PixelOverview />
+
               {/* AI ADVISORY */}
               <div className="advisory-box-dash border-scanner-warn flex flex-col md:flex-row gap-4 items-start md:items-center bg-[#050505] mb-6">
                 <div className="flex-1">
@@ -554,84 +558,6 @@ const Dashboard = () => {
                   <button className="btn-dash btn-ghost-dash text-xs border border-white/10 hover:bg-white/5">Cerrar</button>
                 </div>
               </div>
-
-              {/* DASHBOARD SUMMARY CARDS (DYNAMIC) */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                {/* SALUD GENERAL */}
-                <div className="bg-[#0a0a0c] border border-[rgba(0,255,136,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #00ff88" }}>
-                  <div className="flex justify-between items-start">
-                    <div className="text-[10px] font-black tracking-widest text-[#666] uppercase">Salud General</div>
-                    {hostings[0] && renderTrendLine(healthHistory[hostings[0].hosting_id])}
-                  </div>
-                  <div className="mt-3">
-                    <div className="text-3xl font-black text-[#00ff88] [text-shadow:0_0_15px_rgba(0,255,136,0.5)]">
-                      {hostings.length ? Math.round(hostings.reduce((acc, h) => acc + (healthData[h.hosting_id]?.score || 100), 0) / hostings.length) : "100"}
-                      <span className="text-lg">/100</span>
-                    </div>
-                    <div className="text-[11px] text-gray-400 mt-2 flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        {(() => {
-                          const history = (hostings[0] && healthHistory[hostings[0].hosting_id]) || [];
-                          if (history.length < 2) return <><span className="text-white">↔</span><span>Estable</span></>;
-                          const last = history[history.length - 1].score;
-                          const prev = history[history.length - 2].score;
-                          if (last > prev) return <><span className="text-green-400">↑</span><span className="text-green-400">Mejorando</span></>;
-                          if (last < prev) return <><span className="text-red-400">↓</span><span className="text-red-400">Degradando</span></>;
-                          return <><span className="text-white">↔</span><span>Estable</span></>;
-                        })()}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[9px] font-mono text-gray-600">MODO PROACTIVO</span>
-                        {alerts.filter(a => !a.resolved).length > 0 && (
-                          <span className="bg-red-500/20 text-red-500 px-1.5 py-0.5 rounded-md font-black text-[9px] border border-red-500/30 animate-pulse">
-                            {alerts.filter(a => !a.resolved).length} ALERTAS
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* CPU */}
-                <div className="bg-[#0a0a0c] border border-[rgba(0,195,255,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #00c3ff" }}>
-                  <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">CPU Promedio</div>
-                  <div>
-                    <div className="text-3xl font-black text-[#00c3ff] [text-shadow:0_0_15px_rgba(0,195,255,0.5)]">
-                      {hostings.length ? (hostings.reduce((acc, h) => acc + parseFloat(h.metrics?.cpu || 0), 0) / hostings.length).toFixed(1) : "0"}<span className="text-lg">%</span>
-                    </div>
-                    <div className="w-16 h-1 bg-[#00c3ff] rounded-full mt-3 shadow-[0_0_8px_rgba(0,195,255,0.8)]"></div>
-                  </div>
-                </div>
-
-                {/* RAM */}
-                <div className="bg-[#0a0a0c] border border-[rgba(255,170,0,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #ffaa00" }}>
-                  <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">RAM Usada</div>
-                  <div>
-                    <div className="text-3xl font-black text-[#ffaa00] [text-shadow:0_0_15px_rgba(255,170,0,0.5)]">
-                      {(() => {
-                        let totalMiB = hostings.reduce((acc, h) => {
-                          const memStr = h.metrics?.memory || "0MiB";
-                          const val = parseFloat(memStr);
-                          return acc + (isNaN(val) ? 0 : (memStr.includes('GiB') ? val * 1024 : val));
-                        }, 0);
-                        return totalMiB > 1024 ? (totalMiB / 1024).toFixed(1) + " GB" : totalMiB.toFixed(1) + " MB";
-                      })()}
-                    </div>
-                    <div className="text-[11px] text-gray-400 mt-2">Medición en tiempo real</div>
-                  </div>
-                </div>
-
-                {/* ALMACENAMIENTO */}
-                <div className="bg-[#0a0a0c] border border-[rgba(166,0,255,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #a600ff" }}>
-                  <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">Almacenamiento</div>
-                  <div>
-                    <div className="text-3xl font-black text-[#a600ff] [text-shadow:0_0_15px_rgba(166,0,255,0.5)]">
-                      18<span className="text-lg font-bold text-gray-300"> GB</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
 
               {/* GRID */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -891,6 +817,88 @@ const Dashboard = () => {
                     <div className="p-3 bg-warn/10 border border-warn/20 rounded-xl">
                       <div className="text-[10px] font-bold text-warn uppercase mb-1">Alerta de CPU</div>
                       <div className="text-[10px] text-gray-400">Picos detectados en tu proyecto principal.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* INFRA METRICS */}
+              <div className="mt-6">
+                <div className="text-[10px] font-mono text-muted uppercase tracking-widest mb-3 flex items-center gap-2">
+                  <span className="w-3 h-px bg-white/20" /> Infraestructura
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  {/* SALUD GENERAL */}
+                  <div className="bg-[#0a0a0c] border border-[rgba(0,255,136,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #00ff88" }}>
+                    <div className="flex justify-between items-start">
+                      <div className="text-[10px] font-black tracking-widest text-[#666] uppercase">Salud General</div>
+                      {hostings[0] && renderTrendLine(healthHistory[hostings[0].hosting_id])}
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-3xl font-black text-[#00ff88] [text-shadow:0_0_15px_rgba(0,255,136,0.5)]">
+                        {hostings.length ? Math.round(hostings.reduce((acc, h) => acc + (healthData[h.hosting_id]?.score || 100), 0) / hostings.length) : "100"}
+                        <span className="text-lg">/100</span>
+                      </div>
+                      <div className="text-[11px] text-gray-400 mt-2 flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                          {(() => {
+                            const history = (hostings[0] && healthHistory[hostings[0].hosting_id]) || [];
+                            if (history.length < 2) return <><span className="text-white">↔</span><span>Estable</span></>;
+                            const last = history[history.length - 1].score;
+                            const prev = history[history.length - 2].score;
+                            if (last > prev) return <><span className="text-green-400">↑</span><span className="text-green-400">Mejorando</span></>;
+                            if (last < prev) return <><span className="text-red-400">↓</span><span className="text-red-400">Degradando</span></>;
+                            return <><span className="text-white">↔</span><span>Estable</span></>;
+                          })()}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-mono text-gray-600">MODO PROACTIVO</span>
+                          {alerts.filter(a => !a.resolved).length > 0 && (
+                            <span className="bg-red-500/20 text-red-500 px-1.5 py-0.5 rounded-md font-black text-[9px] border border-red-500/30 animate-pulse">
+                              {alerts.filter(a => !a.resolved).length} ALERTAS
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CPU */}
+                  <div className="bg-[#0a0a0c] border border-[rgba(0,195,255,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #00c3ff" }}>
+                    <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">CPU Promedio</div>
+                    <div>
+                      <div className="text-3xl font-black text-[#00c3ff] [text-shadow:0_0_15px_rgba(0,195,255,0.5)]">
+                        {hostings.length ? (hostings.reduce((acc, h) => acc + parseFloat(h.metrics?.cpu || 0), 0) / hostings.length).toFixed(1) : "0"}<span className="text-lg">%</span>
+                      </div>
+                      <div className="w-16 h-1 bg-[#00c3ff] rounded-full mt-3 shadow-[0_0_8px_rgba(0,195,255,0.8)]"></div>
+                    </div>
+                  </div>
+
+                  {/* RAM */}
+                  <div className="bg-[#0a0a0c] border border-[rgba(255,170,0,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #ffaa00" }}>
+                    <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">RAM Usada</div>
+                    <div>
+                      <div className="text-3xl font-black text-[#ffaa00] [text-shadow:0_0_15px_rgba(255,170,0,0.5)]">
+                        {(() => {
+                          let totalMiB = hostings.reduce((acc, h) => {
+                            const memStr = h.metrics?.memory || "0MiB";
+                            const val = parseFloat(memStr);
+                            return acc + (isNaN(val) ? 0 : (memStr.includes('GiB') ? val * 1024 : val));
+                          }, 0);
+                          return totalMiB > 1024 ? (totalMiB / 1024).toFixed(1) + " GB" : totalMiB.toFixed(1) + " MB";
+                        })()}
+                      </div>
+                      <div className="text-[11px] text-gray-400 mt-2">Medición en tiempo real</div>
+                    </div>
+                  </div>
+
+                  {/* ALMACENAMIENTO */}
+                  <div className="bg-[#0a0a0c] border border-[rgba(166,0,255,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: "2px solid #a600ff" }}>
+                    <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">Almacenamiento</div>
+                    <div>
+                      <div className="text-3xl font-black text-[#a600ff] [text-shadow:0_0_15px_rgba(166,0,255,0.5)]">
+                        18<span className="text-lg font-bold text-gray-300"> GB</span>
+                      </div>
                     </div>
                   </div>
                 </div>
