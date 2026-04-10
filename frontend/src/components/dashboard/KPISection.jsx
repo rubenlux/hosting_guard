@@ -1,31 +1,43 @@
 /**
- * Four-column KPI grid for the analytics overview.
+ * Horizontal KPI strip — no cards, Vercel-style minimal layout.
  *
  * Props:
  *   kpis — { visits, sessions, bounceRate, active }
  */
 export default function KPISection({ kpis }) {
-  const bounceColor = kpis.bounceRate > 50 ? 'text-red-400'
-    : kpis.bounceRate > 30 ? 'text-yellow-400'
-    : 'text-emerald-400';
-
-  const bounceLabel = kpis.bounceRate > 40 ? 'bounce alto' : 'bounce normal';
-
-  const items = [
-    { value: kpis.visits,              label: 'visitas',     color: 'text-[#00ff88]' },
-    { value: kpis.sessions,            label: 'sesiones',    color: 'text-[#00aaff]' },
-    { value: `${kpis.bounceRate}%`,    label: bounceLabel,   color: bounceColor       },
-    { value: kpis.active,              label: 'activos',     color: 'text-[#00ff88]' },
-  ];
+  if (!kpis) return null;
 
   return (
-    <div className="grid grid-cols-4 text-center">
-      {items.map(({ value, label, color }) => (
-        <div key={label}>
-          <div className={`text-base font-black font-mono ${color}`}>{value}</div>
-          <div className="text-[9px] text-gray-600 font-mono uppercase tracking-wider mt-0.5">{label}</div>
-        </div>
-      ))}
+    <div className="grid grid-cols-4 gap-6 mb-6">
+
+      <KPI label="Visitas"  value={kpis.visits} />
+      <KPI label="Sesiones" value={kpis.sessions} />
+
+      <KPI
+        label="Bounce"
+        value={`${kpis.bounceRate}%`}
+        color={
+          kpis.bounceRate > 50 ? 'text-red-400'
+          : kpis.bounceRate > 30 ? 'text-yellow-400'
+          : 'text-emerald-400'
+        }
+      />
+
+      <KPI label="Activos" value={kpis.active} />
+
+    </div>
+  );
+}
+
+function KPI({ label, value, color = 'text-white' }) {
+  return (
+    <div>
+      <p className="text-[10px] font-mono text-gray-500 uppercase tracking-wide">
+        {label}
+      </p>
+      <p className={`text-xl font-semibold mt-1 ${color}`}>
+        {value}
+      </p>
     </div>
   );
 }

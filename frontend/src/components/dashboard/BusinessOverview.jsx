@@ -14,12 +14,10 @@ import RealtimeMini          from './RealtimeMini';
 /**
  * Dashboard analytics overview — pure composition, zero business logic.
  *
- * Visual hierarchy:
- *   1. Hero     — system status at a glance
- *   2. IA       — insight advisory
- *   3. KPIs     — supporting metrics
- *   4. Sparkline + top pages
- *   5. Realtime status bar
+ * Layout:
+ *   [ Hero — full width ]
+ *   [ KPI strip — 4 columns ]
+ *   [ Left 8/12: Sparkline + TopPages ]   [ Right 4/12: Realtime + InsightCard ]
  */
 export default function BusinessOverview() {
   const {
@@ -50,23 +48,29 @@ export default function BusinessOverview() {
       }
     >
 
-      <HeroSection realtime={realtime} kpis={kpis} />
-
-      <InsightCard
-        insight={{
-          message: 'Detectamos aumento del 40% en CPU. Posible plugin mal configurado.',
-        }}
-      />
+      <HeroSection realtime={realtime} />
 
       <KPISection kpis={kpis} />
 
-      <div className="mb-3">
-        <SparklineChart data={sparkline} />
+      <div className="grid grid-cols-12 gap-6">
+
+        {/* Left column — traffic */}
+        <div className="col-span-8 space-y-6">
+          <SparklineChart data={sparkline} />
+          <TopPagesMini pages={topPages} />
+        </div>
+
+        {/* Right column — realtime + insight */}
+        <div className="col-span-4 space-y-6">
+          <RealtimeMini {...realtime} />
+          <InsightCard
+            insight={{
+              message: 'Detectamos aumento del 40% en CPU. Posible plugin mal configurado.',
+            }}
+          />
+        </div>
+
       </div>
-
-      <TopPagesMini pages={topPages} />
-
-      <RealtimeMini {...realtime} />
 
     </OverviewCard>
   );

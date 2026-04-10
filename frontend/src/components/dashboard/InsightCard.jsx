@@ -1,5 +1,5 @@
 /**
- * IA Advisory insight card — protagonist placement, above KPIs.
+ * IA Advisory insight card — subtle amber, no heavy gradient.
  *
  * Props:
  *   insight — { message: string } | null
@@ -8,25 +8,25 @@ export default function InsightCard({ insight }) {
   if (!insight) return null;
 
   return (
-    <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-400/20 rounded-xl p-4 mb-4">
+    <div className="bg-amber-500/5 border border-amber-400/20 rounded-lg p-4">
 
-      <div className="flex justify-between items-start">
+      <div className="flex justify-between items-start gap-3">
 
         <div>
-          <p className="text-[10px] font-mono text-amber-300">
-            IA ADVISORY
+          <p className="text-[10px] font-mono text-amber-300 uppercase tracking-wide mb-1">
+            IA Advisory
           </p>
-
-          <p className="text-sm text-white mt-1">
+          <p className="text-sm text-white">
             {insight.message}
           </p>
         </div>
 
-        <button className="text-xs bg-emerald-500 text-black px-3 py-1 rounded shrink-0 ml-3">
+        <button className="text-xs bg-emerald-500 text-black px-3 py-1 rounded shrink-0">
           Diagnosticar
         </button>
 
       </div>
+
     </div>
   );
 }
