@@ -1,3 +1,5 @@
+import { motion } from 'framer-motion';
+
 /**
  * IA Advisory insight card — subtle amber, no heavy gradient.
  *
@@ -8,7 +10,11 @@ export default function InsightCard({ insight }) {
   if (!insight) return null;
 
   return (
-    <div className="bg-amber-500/5 border border-amber-400/20 rounded-lg p-4">
+    <motion.div
+      whileHover={{ scale: 1.01 }}
+      transition={{ duration: 0.2 }}
+      className="bg-amber-500/5 border border-amber-400/20 rounded-lg p-4"
+    >
 
       <div className="flex justify-between items-start gap-3">
 
@@ -21,12 +27,16 @@ export default function InsightCard({ insight }) {
           </p>
         </div>
 
-        <button className="text-xs bg-emerald-500 text-black px-3 py-1 rounded shrink-0">
+        <motion.button
+          whileTap={{ scale: 0.96 }}
+          whileHover={{ scale: 1.03 }}
+          className="text-xs bg-emerald-500 text-black px-3 py-1 rounded shrink-0"
+        >
           Diagnosticar
-        </button>
+        </motion.button>
 
       </div>
 
-    </div>
+    </motion.div>
   );
 }

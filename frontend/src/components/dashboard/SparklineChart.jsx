@@ -1,6 +1,7 @@
+import { motion } from 'framer-motion';
+
 /**
- * Minimal SVG sparkline — polyline only, no fill, no animation.
- * Wrapped in an ultra-subtle container (Vercel style).
+ * Minimal SVG sparkline — animated path draw on mount.
  *
  * Props:
  *   data — array of objects with a `page_views` numeric field
@@ -15,11 +16,11 @@ export default function SparklineChart({ data }) {
   const n     = vals.length;
   const W = 300, H = 48, px = 2, py = 4;
 
-  const points = vals
+  const d = vals
     .map((v, i) => {
       const x = px + (i / (n - 1)) * (W - px * 2);
       const y = H - py - (v / maxY) * (H - py * 2);
-      return `${x},${y}`;
+      return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
     })
     .join(' ');
 
@@ -31,14 +32,17 @@ export default function SparklineChart({ data }) {
         style={{ height: 48 }}
         preserveAspectRatio="none"
       >
-        <polyline
+        <motion.path
+          d={d}
           fill="none"
           stroke="#00ff88"
           strokeWidth="1.5"
           strokeLinecap="round"
           strokeLinejoin="round"
-          points={points}
           opacity="0.65"
+          initial={{ pathLength: 0 }}
+          animate={{ pathLength: 1 }}
+          transition={{ duration: 0.8, ease: 'easeOut' }}
         />
       </svg>
     </div>
