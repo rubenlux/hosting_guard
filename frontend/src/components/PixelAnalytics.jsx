@@ -3,7 +3,7 @@ import api from '../services/api';
 import { getAdminPixelOverview, getAdminPixelEvents } from '../services/api';
 import {
   Plus, Trash2, Copy, CheckCircle, BarChart3, Globe, Users, Clock,
-  Monitor, X, Loader, Activity, Database, Zap, TrendingUp, ArrowRight,
+  Monitor, X, Loader, Activity, Zap, TrendingUp,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
@@ -12,7 +12,7 @@ import { useAuth } from '../hooks/useAuth';
 function formatTimeAgo(iso) {
   if (!iso) return '';
   const s = Math.floor((Date.now() - new Date(iso)) / 1000);
-  if (s < 60)  return `${s}s`;
+  if (s < 60)   return `${s}s`;
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   return `${Math.floor(s / 3600)}h`;
 }
@@ -41,92 +41,237 @@ function areaPath(pts, bottom) {
   return `${bezierPath(pts)} L ${pts[pts.length - 1][0]},${bottom} L ${pts[0][0]},${bottom} Z`;
 }
 
+// ── Hook: Animated Counter ──────────────────────────────────────────────────
+
+function useAnimatedCount(target, duration = 500) {
+  const safe    = target ?? 0;
+  const [value, setValue] = useState(safe);
+  const prevRef = useRef(safe);
+  const rafRef  = useRef(null);
+
+  useEffect(() => {
+    const from = prevRef.current;
+    const to   = safe;
+    prevRef.current = to;
+    if (from === to) return;
+
+    const start = performance.now();
+    const tick  = (now) => {
+      const t      = Math.min((now - start) / duration, 1);
+      const eased  = 1 - Math.pow(1 - t, 3); // cubic ease-out
+      setValue(Math.round(from + (to - from) * eased));
+      if (t < 1) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [safe, duration]);
+
+  return value;
+}
+
+// ── Insights engine ─────────────────────────────────────────────────────────
+
+function computeInsights(stats, devices, countries, pages, timeseries) {
+  const out = [];
+  if (!stats) return out;
+
+  // Trend: compare second half vs first half of timeseries
+  if (timeseries?.length >= 6) {
+    const half = Math.floor(timeseries.length / 2);
+    const a = timeseries.slice(0, half).reduce((s, d) => s + (d.page_views || 0), 0);
+    const b = timeseries.slice(half).reduce((s, d) => s + (d.page_views || 0), 0);
+    if (a > 0) {
+      const pct = Math.round(((b - a) / a) * 100);
+      if (pct > 5)       out.push({ icon: '📈', main: `+${pct}%`, sub: 'tráfico subiendo', type: 'up' });
+      else if (pct < -5) out.push({ icon: '📉', main: `${pct}%`,  sub: 'tráfico bajando',  type: 'down' });
+    }
+  }
+
+  // Device split
+  if (devices?.length > 0) {
+    const total = devices.reduce((s, d) => s + Number(d.count), 0);
+    const mob   = devices.find(d => d.device === 'mobile');
+    if (mob && total > 0) {
+      const pct = Math.round((Number(mob.count) / total) * 100);
+      out.push({
+        icon: '📱',
+        main: pct >= 50 ? `${pct}% móvil` : `${100 - pct}% desktop`,
+        sub:  pct >= 50 ? 'optimiza para móvil' : 'mayoría en desktop',
+        type: 'device',
+      });
+    }
+  }
+
+  // Top country
+  if (countries?.length > 0) {
+    const total = countries.reduce((s, c) => s + Number(c.count), 0);
+    const top   = countries[0];
+    const pct   = Math.round((Number(top.count) / total) * 100);
+    out.push({
+      icon: countryFlag(top.country),
+      main: `${pct}% ${top.country}`,
+      sub:  'mercado principal',
+      type: 'geo',
+    });
+  }
+
+  // Top page
+  if (pages?.length > 0) {
+    const p    = pages[0];
+    const path = (p.url || '/').replace(/^https?:\/\/[^/]+/, '') || '/';
+    out.push({
+      icon: '🔥',
+      main: path.length > 22 ? path.slice(0, 20) + '…' : path,
+      sub:  `${p.views} vistas`,
+      type: 'page',
+    });
+  }
+
+  // Bounce rate warning
+  if (stats.bounce_rate >= 75 && stats.unique_sessions >= 5) {
+    out.push({ icon: '⚠️', main: `Bounce ${stats.bounce_rate}%`, sub: 'tasa alta', type: 'warn' });
+  }
+
+  return out.slice(0, 4);
+}
+
+// ── Insights Bar ─────────────────────────────────────────────────────────────
+
+const INSIGHT_STYLE = {
+  up:     'bg-[#00ff88]/[0.07] border-[#00ff88]/20 text-[#00ff88]',
+  down:   'bg-[#ff4466]/[0.07] border-[#ff4466]/20 text-[#ff4466]',
+  device: 'bg-[#00aaff]/[0.07] border-[#00aaff]/20 text-[#00aaff]',
+  geo:    'bg-[#aa44ff]/[0.07] border-[#aa44ff]/20 text-[#aa44ff]',
+  page:   'bg-[#ffaa00]/[0.07] border-[#ffaa00]/20 text-[#ffaa00]',
+  warn:   'bg-[#ff8800]/[0.07] border-[#ff8800]/20 text-[#ff8800]',
+};
+
+function InsightsBar({ stats, devices, countries, pages, timeseries }) {
+  const insights = computeInsights(stats, devices, countries, pages, timeseries);
+  if (!insights.length) return null;
+
+  return (
+    <div className="flex gap-2 flex-wrap">
+      {insights.map((ins, i) => (
+        <div
+          key={i}
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border text-xs ${INSIGHT_STYLE[ins.type] || INSIGHT_STYLE.page}`}
+        >
+          <span className="text-base leading-none select-none">{ins.icon}</span>
+          <div>
+            <div className="font-mono font-bold leading-tight">{ins.main}</div>
+            <div className="text-[9px] text-muted leading-tight mt-px">{ins.sub}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Chart: Time Series ──────────────────────────────────────────────────────
 
 function TimeSeriesChart({ data }) {
   const [tooltip, setTooltip] = useState(null);
+  const [clipW, setClipW]     = useState(0);
+  const r1 = useRef(null);
+  const r2 = useRef(null);
+
+  const W = 560, H = 175, padL = 34, padR = 10, padT = 22, padB = 30;
+  const cW = W - padL - padR;
+  const cH = H - padT - padB;
+
+  // Animate line drawing whenever data reference changes (period switch or initial load)
+  useEffect(() => {
+    setClipW(0);
+    r1.current = requestAnimationFrame(() => {
+      r2.current = requestAnimationFrame(() => setClipW(cW + padR + 2));
+    });
+    return () => { cancelAnimationFrame(r1.current); cancelAnimationFrame(r2.current); };
+  }, [data, cW]);
 
   if (data === null) {
     return (
-      <div className="flex items-center justify-center py-8 gap-2 text-xs text-muted">
+      <div className="flex items-center justify-center py-12 gap-2 text-xs text-muted">
         <Loader className="w-3.5 h-3.5 animate-spin text-accent" /> Cargando...
       </div>
     );
   }
   if (data.length === 0) {
     return (
-      <div className="py-8 text-center">
+      <div className="py-12 text-center">
         <Activity className="w-5 h-5 mx-auto mb-2 opacity-20" />
         <div className="text-xs text-muted italic">Recolectando datos...</div>
       </div>
     );
   }
 
-  const W = 560, H = 130, padL = 30, padR = 10, padT = 20, padB = 26;
-  const cW = W - padL - padR;
-  const cH = H - padT - padB;
-  const n  = data.length;
+  const n    = data.length;
+  const maxY = Math.max(...data.map(d => Math.max(d.page_views || 0, d.sessions || 0)), 1);
 
-  const maxY = Math.max(...data.map(d => Math.max(d.page_views, d.sessions)), 1);
+  const xOf = i => padL + (n > 1 ? (i / (n - 1)) * cW : cW / 2);
+  const yOf = v => padT + cH - Math.min((v / maxY) * cH, cH);
 
-  const xOf = i  => padL + (n > 1 ? (i / (n - 1)) * cW : cW / 2);
-  const yOf = v  => padT + cH - Math.min((v / maxY) * cH, cH);
-
-  const pvPts  = data.map((d, i) => [xOf(i), yOf(d.page_views)]);
-  const sesPts = data.map((d, i) => [xOf(i), yOf(d.sessions)]);
+  const pvPts  = data.map((d, i) => [xOf(i), yOf(d.page_views || 0)]);
+  const sesPts = data.map((d, i) => [xOf(i), yOf(d.sessions   || 0)]);
   const bottom = padT + cH;
 
-  // Grid: 3 horizontal lines
   const gridVals = [0, Math.round(maxY / 2), maxY];
-
-  // X-axis: ~5 evenly-spaced labels
-  const step = Math.max(1, Math.floor(n / 5));
+  const step  = Math.max(1, Math.floor(n / 5));
   const xIdxs = [];
   for (let i = 0; i < n; i += step) xIdxs.push(i);
   if (xIdxs[xIdxs.length - 1] !== n - 1) xIdxs.push(n - 1);
 
-  // Hover hit-zone per column
   const colWidth = n > 1 ? cW / (n - 1) : cW;
 
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
       className="w-full select-none"
-      style={{ height: 150 }}
+      style={{ height: 186 }}
       preserveAspectRatio="xMidYMid meet"
     >
       <defs>
         <linearGradient id="pvArea" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor="#00ff88" stopOpacity="0.22" />
+          <stop offset="0%"   stopColor="#00ff88" stopOpacity="0.32" />
+          <stop offset="70%"  stopColor="#00ff88" stopOpacity="0.06" />
           <stop offset="100%" stopColor="#00ff88" stopOpacity="0"    />
         </linearGradient>
         <linearGradient id="sesArea" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor="#00aaff" stopOpacity="0.14" />
+          <stop offset="0%"   stopColor="#00aaff" stopOpacity="0.20" />
           <stop offset="100%" stopColor="#00aaff" stopOpacity="0"    />
         </linearGradient>
+        {/* Clip rect that animates from 0 to full width */}
+        <clipPath id="tsReveal">
+          <rect
+            x={padL - 4} y={0}
+            width={clipW}
+            height={H}
+            style={{ transition: clipW > 0 ? 'width 0.9s cubic-bezier(0.4,0,0.2,1)' : 'none' }}
+          />
+        </clipPath>
       </defs>
 
-      {/* Grid */}
-      {gridVals.map((v, i) => (
-        <g key={i}>
+      {/* Grid (not clipped) */}
+      {gridVals.map((v, gi) => (
+        <g key={gi}>
           <line x1={padL} y1={yOf(v)} x2={W - padR} y2={yOf(v)}
                 stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
-          <text x={padL - 4} y={yOf(v)} textAnchor="end" fontSize="7"
-                fill="rgba(255,255,255,0.28)" dy="0.3em">{v}</text>
+          <text x={padL - 5} y={yOf(v)} textAnchor="end" fontSize="8"
+                fill="rgba(255,255,255,0.28)" dy="0.35em">{v}</text>
         </g>
       ))}
 
-      {/* Areas */}
-      <path d={areaPath(pvPts,  bottom)} fill="url(#pvArea)"  />
-      <path d={areaPath(sesPts, bottom)} fill="url(#sesArea)" />
+      {/* Animated chart content */}
+      <g clipPath="url(#tsReveal)">
+        <path d={areaPath(pvPts,  bottom)} fill="url(#pvArea)"  />
+        <path d={areaPath(sesPts, bottom)} fill="url(#sesArea)" />
+        <path d={bezierPath(pvPts)}  fill="none" stroke="#00ff88" strokeWidth="2.5"
+              strokeLinecap="round" strokeLinejoin="round" />
+        <path d={bezierPath(sesPts)} fill="none" stroke="#00aaff" strokeWidth="1.5"
+              strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4,3" />
+      </g>
 
-      {/* Lines */}
-      <path d={bezierPath(pvPts)}  fill="none" stroke="#00ff88" strokeWidth="2"
-            strokeLinecap="round" strokeLinejoin="round" />
-      <path d={bezierPath(sesPts)} fill="none" stroke="#00aaff" strokeWidth="1.5"
-            strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4,2" />
-
-      {/* Invisible hit columns */}
+      {/* Invisible hover columns */}
       {data.map((d, i) => {
         const cx = xOf(i);
         const hw = colWidth / 2;
@@ -145,44 +290,40 @@ function TimeSeriesChart({ data }) {
 
       {/* Tooltip */}
       {tooltip !== null && (() => {
-        const ttx = tooltip < n * 0.65 ? xOf(tooltip) + 9 : xOf(tooltip) - 90;
-        const tty = padT + 6;
+        const flip  = tooltip > n * 0.62;
+        const ttx   = flip ? xOf(tooltip) - 96 : xOf(tooltip) + 10;
+        const tty   = padT + 4;
+        const pv    = data[tooltip]?.page_views ?? 0;
+        const ses   = data[tooltip]?.sessions   ?? 0;
+        const label = data[tooltip]?.label || data[tooltip]?.day?.slice(5) || '';
         return (
           <g>
             <line x1={xOf(tooltip)} y1={padT} x2={xOf(tooltip)} y2={bottom}
-                  stroke="rgba(255,255,255,0.18)" strokeWidth="1" strokeDasharray="3,2" />
-            <rect x={ttx} y={tty} width="82" height="47" rx="5"
-                  fill="#0a0a0a" stroke="rgba(255,255,255,0.13)" strokeWidth="0.5" />
-            <text x={ttx + 7} y={tty + 13} fontSize="7.5" fill="rgba(255,255,255,0.45)">
-              {data[tooltip]?.label || data[tooltip]?.day?.slice(5)}
-            </text>
-            <text x={ttx + 7} y={tty + 28} fontSize="9" fill="#00ff88">
-              ▲ {data[tooltip]?.page_views} vistas
-            </text>
-            <text x={ttx + 7} y={tty + 42} fontSize="9" fill="#00aaff">
-              ◈ {data[tooltip]?.sessions} sesiones
-            </text>
-            <circle cx={xOf(tooltip)} cy={yOf(data[tooltip]?.page_views)} r="4.5"
-                    fill="#00ff88" stroke="#000" strokeWidth="1.5" />
-            <circle cx={xOf(tooltip)} cy={yOf(data[tooltip]?.sessions)} r="3.5"
-                    fill="#00aaff" stroke="#000" strokeWidth="1.5" />
+                  stroke="rgba(255,255,255,0.22)" strokeWidth="1" strokeDasharray="3,2" />
+            <rect x={ttx} y={tty} width="88" height="54" rx="7"
+                  fill="rgba(6,6,6,0.95)" stroke="rgba(255,255,255,0.12)" strokeWidth="0.6" />
+            <text x={ttx + 8} y={tty + 14} fontSize="7.5" fill="rgba(255,255,255,0.5)">{label}</text>
+            <text x={ttx + 8} y={tty + 31} fontSize="10.5" fill="#00ff88">▲ {pv} vistas</text>
+            <text x={ttx + 8} y={tty + 47} fontSize="10.5" fill="#00aaff">◈ {ses} sesiones</text>
+            <circle cx={xOf(tooltip)} cy={yOf(pv)}  r="5"   fill="#00ff88" stroke="#000" strokeWidth="1.5" />
+            <circle cx={xOf(tooltip)} cy={yOf(ses)} r="3.5" fill="#00aaff" stroke="#000" strokeWidth="1.5" />
           </g>
         );
       })()}
 
-      {/* X labels */}
+      {/* X-axis labels */}
       {xIdxs.map(i => (
-        <text key={i} x={xOf(i)} y={H - 5} textAnchor="middle"
-              fontSize="7" fill="rgba(255,255,255,0.38)">
+        <text key={i} x={xOf(i)} y={H - 4} textAnchor="middle"
+              fontSize="7.5" fill="rgba(255,255,255,0.38)">
           {data[i]?.label || data[i]?.day?.slice(5)}
         </text>
       ))}
 
       {/* Legend */}
-      <rect x={padL} y={4} width="8" height="8" fill="#00ff88" rx="2" />
-      <text x={padL + 11} y={10.5} fontSize="8" fill="#00ff88">Page views</text>
-      <rect x={padL + 76} y={4} width="8" height="8" fill="#00aaff" rx="2" />
-      <text x={padL + 87} y={10.5} fontSize="8" fill="#00aaff">Sesiones</text>
+      <rect x={padL} y={5} width="8" height="8" fill="#00ff88" rx="2" />
+      <text x={padL + 11} y={11.5} fontSize="8.5" fill="#00ff88">Page views</text>
+      <rect x={padL + 80} y={5} width="8" height="8" fill="#00aaff" rx="2" />
+      <text x={padL + 91} y={11.5} fontSize="8.5" fill="#00aaff">Sesiones</text>
     </svg>
   );
 }
@@ -214,8 +355,8 @@ function DonutChart({ data, colorMap }) {
   const slices = data.map((d, i) => {
     const frac  = Number(d.count) / total;
     const sweep = frac * 2 * Math.PI;
-    const x1 = cx + outerR * Math.cos(angle),           y1 = cy + outerR * Math.sin(angle);
-    const x2 = cx + outerR * Math.cos(angle + sweep),   y2 = cy + outerR * Math.sin(angle + sweep);
+    const x1  = cx + outerR * Math.cos(angle),          y1  = cy + outerR * Math.sin(angle);
+    const x2  = cx + outerR * Math.cos(angle + sweep),  y2  = cy + outerR * Math.sin(angle + sweep);
     const ix1 = cx + innerR * Math.cos(angle + sweep),  iy1 = cy + innerR * Math.sin(angle + sweep);
     const ix2 = cx + innerR * Math.cos(angle),          iy2 = cy + innerR * Math.sin(angle);
     const large = sweep > Math.PI ? 1 : 0;
@@ -278,60 +419,110 @@ function HBarChart({ data, labelKey, valueKey, color = '#00ff88', formatLabel })
 // ── Panel: Realtime ─────────────────────────────────────────────────────────
 
 function RealtimePanel({ siteId }) {
-  const [data, setData] = useState(null);
-  const [tick, setTick] = useState(0);
+  const [data, setData]     = useState(null);
+  const [newSet, setNewSet] = useState(new Set());
+  const prevPagesRef        = useRef([]);
+
+  const activeCount = useAnimatedCount(data?.active_users ?? 0);
+  const ev60Count   = useAnimatedCount(data?.events_60s   ?? 0);
 
   useEffect(() => {
     if (!siteId) return;
-    api.get(`/pixel/sites/${siteId}/realtime`).then(r => setData(r.data)).catch(() => {});
-    const iv = setInterval(() => {
-      api.get(`/pixel/sites/${siteId}/realtime`).then(r => { setData(r.data); setTick(t => t + 1); }).catch(() => {});
-    }, 10000);
+
+    const fetchRt = () =>
+      api.get(`/pixel/sites/${siteId}/realtime`)
+        .then(r => {
+          const d = r.data;
+          // Detect new pages since last poll
+          const prevTimes = new Set(prevPagesRef.current.map(p => p.created_at));
+          const news = new Set(
+            (d.recent_pages || [])
+              .filter(p => p.created_at && !prevTimes.has(p.created_at))
+              .map(p => p.created_at)
+          );
+          if (news.size > 0) {
+            setNewSet(news);
+            setTimeout(() => setNewSet(new Set()), 2500);
+          }
+          prevPagesRef.current = d.recent_pages || [];
+          setData(d);
+        })
+        .catch(() => {});
+
+    fetchRt();
+    const iv = setInterval(fetchRt, 10000);
     return () => clearInterval(iv);
   }, [siteId]);
 
+  const lastEventTime = data?.recent_pages?.[0]?.created_at;
+
   return (
-    <div className="card-dash p-4">
-      <div className="flex items-center justify-between mb-4">
+    <div className="card-dash p-4 flex flex-col" style={{ minHeight: 260 }}>
+      <div className="flex items-center justify-between mb-3">
         <div className="text-xs font-mono font-bold uppercase text-white flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
           Tiempo Real
         </div>
-        <div className="text-[10px] text-muted font-mono">actualiza cada 10 s</div>
+        {lastEventTime ? (
+          <div className="text-[9px] text-muted font-mono">
+            último: <span className="text-accent">{formatTimeAgo(lastEventTime)}</span>
+          </div>
+        ) : (
+          <div className="text-[9px] text-muted font-mono">10 s</div>
+        )}
       </div>
 
       {!data ? (
-        <div className="flex justify-center py-4"><Loader className="w-4 h-4 animate-spin text-accent" /></div>
+        <div className="flex justify-center items-center flex-1">
+          <Loader className="w-4 h-4 animate-spin text-accent" />
+        </div>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            {[
-              { val: data.active_users, label: 'Activos ahora',  color: 'text-[#00ff88]' },
-              { val: data.events_60s,   label: 'Eventos / 60 s', color: 'text-[#ffaa00]' },
-              { val: data.recent_pages?.length ?? 0, label: 'Páginas (log)', color: 'text-[#00aaff]' },
-            ].map((m, i) => (
-              <div key={i} className="text-center bg-white/3 rounded-xl p-2">
-                <div className={`text-xl font-black font-mono text-glow ${m.color}`}>{m.val}</div>
-                <div className="text-[9px] text-muted uppercase font-mono mt-0.5">{m.label}</div>
+          {/* Animated KPI counters */}
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <div className="text-center bg-white/[0.04] rounded-xl p-2.5">
+              <div className="text-2xl font-black font-mono text-glow tabular-nums" style={{ color: '#00ff88' }}>
+                {activeCount}
               </div>
-            ))}
+              <div className="text-[9px] text-muted uppercase font-mono mt-0.5">activos ahora</div>
+            </div>
+            <div className="text-center bg-white/[0.04] rounded-xl p-2.5">
+              <div className="text-2xl font-black font-mono text-glow tabular-nums" style={{ color: '#ffaa00' }}>
+                {ev60Count}
+              </div>
+              <div className="text-[9px] text-muted uppercase font-mono mt-0.5">eventos/60s</div>
+            </div>
           </div>
 
-          {data.recent_pages?.length > 0 && (
-            <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
-              {data.recent_pages.map((p, i) => (
-                <div key={i} className="flex items-center gap-2 text-[10px] font-mono bg-white/3 rounded px-2 py-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" style={{ opacity: 1 - i * 0.08 }} />
-                  <span className="text-gray-300 truncate flex-1" title={p.url}>
-                    {p.url?.replace(/^https?:\/\/[^/]+/, '') || '/'}
-                  </span>
-                  <span className="text-muted shrink-0 w-10 text-center">{p.device || '?'}</span>
-                  <span className="text-muted shrink-0 w-8 text-center" title={p.country}>
-                    {p.country ? countryFlag(p.country) : '??'}
-                  </span>
-                  <span className="text-muted shrink-0 w-6 text-right">{formatTimeAgo(p.created_at)}</span>
-                </div>
-              ))}
+          {/* Live page feed */}
+          {data.recent_pages?.length > 0 ? (
+            <div className="space-y-1 overflow-y-auto flex-1 pr-0.5" style={{ maxHeight: 210 }}>
+              {data.recent_pages.map((p, i) => {
+                const isNew = newSet.has(p.created_at);
+                return (
+                  <div
+                    key={p.created_at || i}
+                    className={`flex items-center gap-1.5 text-[10px] font-mono rounded px-2 py-1.5 transition-all duration-500 ${
+                      isNew ? 'bg-accent/10 border border-accent/25' : i === 0 ? 'bg-white/5' : 'bg-white/[0.03]'
+                    }`}
+                    style={{ opacity: isNew ? 1 : Math.max(0.4, 1 - i * 0.09) }}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isNew ? 'bg-accent animate-pulse' : 'bg-white/20'}`} />
+                    <span className="text-gray-300 truncate flex-1" title={p.url}>
+                      {p.url?.replace(/^https?:\/\/[^/]+/, '') || '/'}
+                    </span>
+                    <span className="text-muted shrink-0 text-[9px]">{p.device || '?'}</span>
+                    <span className="shrink-0 text-[11px]" title={p.country}>
+                      {p.country ? countryFlag(p.country) : '??'}
+                    </span>
+                    <span className="text-muted shrink-0 w-5 text-right">{formatTimeAgo(p.created_at)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-xs text-muted italic text-center">Sin actividad reciente</div>
             </div>
           )}
         </>
@@ -350,8 +541,7 @@ function FunnelPanel({ siteId, days }) {
     api.get(`/pixel/sites/${siteId}/funnel?days=${days}`).then(r => setData(r.data)).catch(() => {});
   }, [siteId, days]);
 
-  if (!data) return null;
-  if (!data.total_sessions) return null;
+  if (!data || !data.total_sessions) return null;
 
   const stripDomain = url => url?.replace(/^https?:\/\/[^/]+/, '') || '/';
 
@@ -414,36 +604,7 @@ function FunnelPanel({ siteId, days }) {
   );
 }
 
-// ── Gate: collecting data ───────────────────────────────────────────────────
-
-function CollectingGate({ total, threshold = 50, children }) {
-  if (total < threshold) {
-    const pct = Math.min(100, Math.round((total / threshold) * 100));
-    return (
-      <div className="card-dash p-6 text-center border border-dashed border-accent/20">
-        <div className="text-3xl mb-3">📡</div>
-        <div className="text-sm font-bold text-white mb-1">Recolectando datos...</div>
-        <div className="text-xs text-muted mb-4">
-          Vuelve en unos minutos. Los gráficos se activarán con más tráfico.
-        </div>
-        <div className="max-w-xs mx-auto">
-          <div className="flex justify-between text-[10px] font-mono text-muted mb-1.5">
-            <span>{total} eventos recibidos</span>
-            <span>objetivo: {threshold}</span>
-          </div>
-          <div className="bg-white/5 rounded-full h-2 overflow-hidden">
-            <div className="bg-accent rounded-full h-2 transition-all duration-700"
-                 style={{ width: `${pct}%` }} />
-          </div>
-          <div className="text-[10px] text-accent mt-1.5">{pct}% completo</div>
-        </div>
-      </div>
-    );
-  }
-  return children;
-}
-
-// ── Main Component ─────────────────────────────────────────────────────────
+// ── Main Component ──────────────────────────────────────────────────────────
 
 export default function PixelAnalytics() {
   const { user } = useAuth();
@@ -452,21 +613,21 @@ export default function PixelAnalytics() {
   const [selectedSite, setSelectedSite] = useState(null);
   const [days, setDays]                 = useState(30);
 
-  const [stats, setStats]         = useState(null);
+  const [stats, setStats]           = useState(null);
   const [timeseries, setTimeseries] = useState(null);
-  const [devices, setDevices]     = useState(null);
-  const [countries, setCountries] = useState(null);
-  const [pages, setPages]         = useState(null);
+  const [devices, setDevices]       = useState(null);
+  const [countries, setCountries]   = useState(null);
+  const [pages, setPages]           = useState(null);
   const [chartsLoading, setChartsLoading] = useState(false);
 
   const [adminStats, setAdminStats]       = useState(null);
   const [adminOverview, setAdminOverview] = useState(null);
   const [adminEvents, setAdminEvents]     = useState([]);
 
-  const [showCreate, setShowCreate] = useState(false);
-  const [newName, setNewName]       = useState('');
-  const [newDomain, setNewDomain]   = useState('');
-  const [creating, setCreating]     = useState(false);
+  const [showCreate, setShowCreate]     = useState(false);
+  const [newName, setNewName]           = useState('');
+  const [newDomain, setNewDomain]       = useState('');
+  const [creating, setCreating]         = useState(false);
   const [copiedScript, setCopiedScript] = useState(null);
 
   const fetchSites = async () => {
@@ -508,7 +669,6 @@ export default function PixelAnalytics() {
       setDevices(devRes.data);
       setCountries(cntRes.data);
       setPages(pgRes.data);
-      console.log('[PixelAnalytics]', { stats: statsRes.data, timeseries: tsRes.data, devices: devRes.data, countries: cntRes.data, pages: pgRes.data });
     } catch (err) { console.error('[PixelAnalytics] fetch error:', err); }
     finally { setChartsLoading(false); }
   }, []);
@@ -548,6 +708,8 @@ export default function PixelAnalytics() {
     setCopiedScript(siteId);
     setTimeout(() => setCopiedScript(null), 2000);
   };
+
+  const hasEnoughData = stats && stats.total_events >= 50;
 
   return (
     <div className="flex flex-col gap-6">
@@ -614,7 +776,7 @@ export default function PixelAnalytics() {
             </thead>
             <tbody>
               {adminEvents.map(e => (
-                <tr key={e.event_id} className="border-b border-white/5 hover:bg-white/3">
+                <tr key={e.event_id} className="border-b border-white/5 hover:bg-white/[0.03]">
                   <td className="p-3 text-[#aa00ff]">{e.site_name || e.site_id?.slice(0, 8)}</td>
                   <td className="p-3 text-white">{e.event_type}</td>
                   <td className="p-3 text-muted truncate max-w-[200px]" title={e.url}>{e.url?.replace(/^https?:\/\//, '') || '—'}</td>
@@ -695,7 +857,7 @@ export default function PixelAnalytics() {
               </div>
             </div>
           ) : (
-            <div className="space-y-5">
+            <div className="space-y-4">
 
               {/* Snippet */}
               <div className="card-dash p-4 bg-[#050505] border-dashed border-white/20">
@@ -732,62 +894,101 @@ export default function PixelAnalytics() {
                 {chartsLoading && <Loader className="w-3.5 h-3.5 animate-spin text-accent ml-1" />}
               </div>
 
-              {/* Realtime panel — always visible */}
-              <RealtimePanel siteId={selectedSite.site_id} />
-
+              {/* ── Stats content ── */}
               {!stats ? (
-                <div className="p-10 flex justify-center"><Loader className="w-6 h-6 animate-spin text-accent" /></div>
+                <div className="p-12 flex justify-center"><Loader className="w-6 h-6 animate-spin text-accent" /></div>
               ) : (
-                <div className="space-y-5">
+                <div className="space-y-4">
 
                   {/* KPI row 1 — primary metrics */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     {[
-                      { title: 'Vistas Hoy',    val: stats.today_events,              color: 'text-[#00ff88]', bc: 'border-[#00ff88]/20', icon: <Activity className="w-4 h-4 opacity-40" /> },
-                      { title: 'Sesiones',       val: stats.unique_sessions,           color: 'text-[#00aaff]', bc: 'border-[#00aaff]/20', icon: <Users    className="w-4 h-4 opacity-40" /> },
-                      { title: 'Bounce Rate',    val: `${stats.bounce_rate ?? 0}%`,    color: 'text-[#ffaa00]', bc: 'border-[#ffaa00]/20', icon: <Clock    className="w-4 h-4 opacity-40" /> },
-                      { title: 'Activos 5 min',  val: stats.active_users_5min ?? 0,   color: 'text-[#00ff88]', bc: 'border-[#00ff88]/20', icon: <Zap      className="w-4 h-4 opacity-40" /> },
+                      { title: 'Vistas Hoy',   val: stats.today_events,            color: '#00ff88', bc: 'border-[#00ff88]/20', icon: <Activity className="w-4 h-4 opacity-30" /> },
+                      { title: 'Sesiones',      val: stats.unique_sessions,         color: '#00aaff', bc: 'border-[#00aaff]/20', icon: <Users    className="w-4 h-4 opacity-30" /> },
+                      { title: 'Bounce Rate',   val: `${stats.bounce_rate ?? 0}%`,  color: '#ffaa00', bc: 'border-[#ffaa00]/20', icon: <Clock    className="w-4 h-4 opacity-30" /> },
+                      { title: 'Activos 5 min', val: stats.active_users_5min ?? 0, color: '#00ff88', bc: 'border-[#00ff88]/20', icon: <Zap      className="w-4 h-4 opacity-30" /> },
                     ].map((m, i) => (
                       <div key={i} className={`p-3 bg-[#050505] rounded-xl border ${m.bc}`}>
                         <div className="flex justify-between items-start mb-1.5">
                           <div className="text-[9px] font-mono tracking-widest uppercase text-muted">{m.title}</div>
                           {m.icon}
                         </div>
-                        <div className={`text-2xl font-black font-mono text-glow ${m.color}`}>{m.val}</div>
+                        <div className="text-2xl font-black font-mono text-glow" style={{ color: m.color }}>{m.val}</div>
                       </div>
                     ))}
                   </div>
 
-                  {/* KPI row 2 — engagement metrics */}
+                  {/* KPI row 2 — engagement */}
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      { title: 'Páginas / Sesión', val: stats.avg_pages_per_session  ?? 0, color: 'text-[#aa44ff]' },
-                      { title: 'Tiempo en Pág.',   val: `${stats.avg_time_on_page    ?? 0}s`, color: 'text-[#00aaff]' },
-                      { title: 'Eventos / Sesión', val: stats.avg_events_per_session ?? 0, color: 'text-[#ffaa00]' },
+                      { title: 'Páginas / Sesión', val: stats.avg_pages_per_session  ?? 0, color: '#aa44ff' },
+                      { title: 'Tiempo en Pág.',   val: `${stats.avg_time_on_page    ?? 0}s`, color: '#00aaff' },
+                      { title: 'Eventos / Sesión', val: stats.avg_events_per_session ?? 0, color: '#ffaa00' },
                     ].map((m, i) => (
                       <div key={i} className="p-3 bg-[#050505] rounded-xl border border-white/5 text-center">
                         <div className="text-[9px] font-mono text-muted uppercase mb-1">{m.title}</div>
-                        <div className={`font-mono font-bold text-lg ${m.color}`}>{m.val}</div>
+                        <div className="font-mono font-bold text-lg" style={{ color: m.color }}>{m.val}</div>
                       </div>
                     ))}
                   </div>
 
-                  {/* Gate: charts only after 50 events */}
-                  <CollectingGate total={stats.total_events}>
-                    <div className="space-y-5">
+                  {/* Insights bar */}
+                  <InsightsBar
+                    stats={stats}
+                    devices={devices}
+                    countries={countries}
+                    pages={pages}
+                    timeseries={timeseries}
+                  />
 
-                      {/* Time series */}
-                      <div className="card-dash p-4">
-                        <div className="text-xs font-mono font-bold uppercase mb-3 text-white flex items-center gap-2">
-                          <Activity className="w-3.5 h-3.5 text-accent" />
-                          Actividad — {days <= 1 ? 'últimas 24 h (por hora)' : `últimos ${days} días`}
+                  {/* Hero: TimeSeries (2/3) + Realtime (1/3) */}
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+                    {/* TimeSeries or collecting gate */}
+                    <div className="lg:col-span-2">
+                      {hasEnoughData ? (
+                        <div className="card-dash p-4">
+                          <div className="text-xs font-mono font-bold uppercase mb-3 text-white flex items-center gap-2">
+                            <Activity className="w-3.5 h-3.5 text-accent" />
+                            Actividad — {days <= 1 ? 'últimas 24 h (por hora)' : `últimos ${days} días`}
+                          </div>
+                          <TimeSeriesChart data={timeseries} />
                         </div>
-                        <TimeSeriesChart data={timeseries} />
-                      </div>
+                      ) : (
+                        <div className="card-dash p-6 border border-dashed border-accent/20 text-center h-full flex flex-col justify-center min-h-[200px]">
+                          <div className="text-3xl mb-3">📡</div>
+                          <div className="text-sm font-bold text-white mb-1">Recolectando datos...</div>
+                          <div className="text-xs text-muted mb-5">
+                            Los gráficos se activarán cuando haya suficiente tráfico.
+                          </div>
+                          <div className="max-w-[200px] mx-auto w-full">
+                            <div className="flex justify-between text-[10px] font-mono text-muted mb-1.5">
+                              <span>{stats.total_events} eventos</span>
+                              <span>objetivo: 50</span>
+                            </div>
+                            <div className="bg-white/5 rounded-full h-2 overflow-hidden">
+                              <div className="bg-accent rounded-full h-2 transition-all duration-700"
+                                   style={{ width: `${Math.min(100, Math.round((stats.total_events / 50) * 100))}%` }} />
+                            </div>
+                            <div className="text-[10px] text-accent mt-1.5 font-mono">
+                              {Math.min(100, Math.round((stats.total_events / 50) * 100))}% completo
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Realtime — always visible */}
+                    <div className="lg:col-span-1">
+                      <RealtimePanel siteId={selectedSite.site_id} />
+                    </div>
+                  </div>
+
+                  {/* Extended charts — only with enough data */}
+                  {hasEnoughData && (
+                    <div className="space-y-4">
 
                       {/* Pages + Devices/Countries */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
                         <div className="card-dash p-4">
                           <div className="text-xs font-mono font-bold uppercase mb-4 text-white flex items-center gap-2">
                             <Globe className="w-3.5 h-3.5 text-accent" /> Top Páginas
@@ -825,8 +1026,8 @@ export default function PixelAnalytics() {
                       {/* Funnel */}
                       <FunnelPanel siteId={selectedSite.site_id} days={days} />
 
-                      {/* Performance (only if data exists) */}
-                      {(stats.performance?.avg_load_ms > 0) && (
+                      {/* Performance */}
+                      {stats.performance?.avg_load_ms > 0 && (
                         <div className="grid grid-cols-2 gap-3">
                           <div className="p-3 bg-[#050505] rounded-xl border border-white/5 text-center">
                             <div className="text-[9px] font-mono text-muted uppercase mb-1">Carga Prom.</div>
@@ -840,7 +1041,7 @@ export default function PixelAnalytics() {
                       )}
 
                     </div>
-                  </CollectingGate>
+                  )}
 
                 </div>
               )}
