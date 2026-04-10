@@ -18,6 +18,8 @@ def calculate_health_score(data: dict) -> dict:
     score = 100
     status = "good"
     color = "green"
+    error_count = 0
+    warning_count = 0
 
     container_status = data.get("container_status", "unknown")
     cpu = data.get("cpu", 0)
