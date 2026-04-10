@@ -50,17 +50,21 @@ def calculate_health_score(data: dict) -> dict:
 
         # 🟡 404 y Errores Graves
         for err in errors:
+            # Probes externos (bots/scanners) no afectan el health score
+            if err.get("source") == "external_probe":
+                continue
+
             err_type = err.get("type", "").lower()
             count = err.get("count", 0)
-            
+
             if "http_404" in err_type and count > 10:
                 score -= 10
                 warning_count += count
-            
+
             if "php_fatal" in err_type:
                 score -= 50
                 error_count += count
-                
+
             if "db_error" in err_type or "database_error" in err_type:
                 score -= 70
                 error_count += count
