@@ -10,18 +10,24 @@
  */
 export default function RealtimeMini({ active, lastPath, lastTime, isLive }) {
   return (
-    <div className="text-[10px] font-mono text-gray-500 border-t border-white/5 pt-2 flex items-center gap-2">
-      <span
-        className={`w-1.5 h-1.5 rounded-full bg-accent shrink-0 ${isLive ? 'animate-pulse' : 'opacity-30'}`}
-      />
-      <span className="text-white">{active} activos</span>
+    <div className="text-[10px] font-mono text-gray-500 border-t border-white/5 pt-2">
+      <div className="flex items-center gap-2">
+        <span
+          className={`w-1.5 h-1.5 rounded-full bg-accent shrink-0 ${isLive ? 'animate-pulse' : 'opacity-30'}`}
+        />
+        <span className="text-white">
+          {active === 0
+            ? 'Sin usuarios activos'
+            : `${active} ${active === 1 ? 'usuario activo' : 'usuarios activos'} ahora`}
+        </span>
+      </div>
 
       {lastPath && (
-        <>
-          <span>│</span>
-          <span className="truncate max-w-[160px]">{lastPath}</span>
-          {lastTime && <span>{lastTime}</span>}
-        </>
+        <div className="mt-1 ml-3.5 flex items-center gap-1.5">
+          <span className="text-gray-600">Última visita:</span>
+          <span className="truncate max-w-[160px] text-gray-400">{lastPath}</span>
+          {lastTime && <span className="text-gray-600">· {lastTime}</span>}
+        </div>
       )}
     </div>
   );

@@ -1,19 +1,22 @@
 import { useDashboardData }  from '../../hooks/useDashboardData';
 import OverviewCard          from './OverviewCard';
-import KPISection            from './KPISection';
-import SparklineChart        from './SparklineChart';
-import TopPagesMini          from './TopPagesMini';
-import RealtimeMini          from './RealtimeMini';
 import DashboardSkeleton     from './DashboardSkeleton';
 import EmptyState            from './EmptyState';
 import ErrorState            from './ErrorState';
 import SiteSelector          from './SiteSelector';
+import HeroSection           from './HeroSection';
+import IAInsightCard         from './IAInsightCard';
+import MonitoringSection     from './MonitoringSection';
+import TrafficSection        from './TrafficSection';
 
 /**
  * Dashboard analytics overview — pure composition, zero business logic.
  *
- * All data fetching and transformation lives in useDashboardData.
- * All rendering lives in the atomic sub-components.
+ * Visual hierarchy:
+ *   1. Hero     — system status at a glance
+ *   2. IA       — insight chips as protagonist
+ *   3. Monitoring — KPIs + realtime
+ *   4. Traffic  — sparkline + top pages
  */
 export default function BusinessOverview() {
   const {
@@ -44,28 +47,13 @@ export default function BusinessOverview() {
       }
     >
 
-      <KPISection kpis={kpis} />
+      <HeroSection realtime={realtime} />
 
-      {chips.length > 0 && (
-        <div className="flex gap-1.5 flex-wrap mb-3">
-          {chips.map((chip, i) => (
-            <span
-              key={i}
-              className="bg-white/5 border border-white/8 px-2 py-0.5 rounded text-[10px] font-mono text-gray-300"
-            >
-              {chip}
-            </span>
-          ))}
-        </div>
-      )}
+      <IAInsightCard chips={chips} />
 
-      <div className="mb-3">
-        <SparklineChart data={sparkline} />
-      </div>
+      <MonitoringSection kpis={kpis} realtime={realtime} />
 
-      <TopPagesMini pages={topPages} />
-
-      <RealtimeMini {...realtime} />
+      <TrafficSection sparkline={sparkline} topPages={topPages} />
 
     </OverviewCard>
   );

@@ -13,11 +13,11 @@ export default function KPISection({ kpis }) {
   ];
 
   return (
-    <div className="grid grid-cols-4 text-center mb-3">
+    <div className="grid grid-cols-4 text-center">
       {items.map(({ value, label, color }) => (
         <div key={label}>
-          <div className={`text-xl font-black font-mono ${color}`}>{value}</div>
-          <div className="text-[9px] text-gray-500 font-mono">{label}</div>
+          <div className={`text-base font-black font-mono ${color}`}>{value}</div>
+          <div className="text-[9px] text-gray-600 font-mono uppercase tracking-wider mt-0.5">{label}</div>
         </div>
       ))}
     </div>
