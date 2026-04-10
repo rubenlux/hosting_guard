@@ -29,6 +29,16 @@ def calculate_health_score(data: dict) -> dict:
     # 🔴 CRÍTICO: Contenedor no está corriendo
     if container_status != "running":
         score = 0
+        error_count = 1  # contenedor caído = error crítico
+        status = "down"
+        color = "red"
+        return {
+            "score": score,
+            "status": status,
+            "color": color,
+            "error_count": error_count,
+            "warning_count": warning_count,
+        }
     else:
         # 🟠 CPU
         if cpu > 85:
@@ -39,9 +49,6 @@ def calculate_health_score(data: dict) -> dict:
             score -= 15
 
         # 🟡 404 y Errores Graves
-        error_count = 0
-        warning_count = 0
-        
         for err in errors:
             err_type = err.get("type", "").lower()
             count = err.get("count", 0)
