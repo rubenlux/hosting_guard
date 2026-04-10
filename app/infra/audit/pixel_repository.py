@@ -426,8 +426,14 @@ class PixelRepository:
             cursor = conn.cursor()
             now = datetime.now(timezone.utc)
 
+            # Avoid COALESCE which prevents index use on visitor_id.
+            # Sum two index-friendly counts: identified visitors + anonymous sessions.
             cursor.execute(
-                """SELECT COUNT(DISTINCT COALESCE(visitor_id, session_id)) AS active
+                """SELECT
+                       COUNT(DISTINCT visitor_id)
+                           FILTER (WHERE visitor_id IS NOT NULL) AS active_visitors,
+                       COUNT(DISTINCT session_id)
+                           FILTER (WHERE session_id IS NOT NULL AND visitor_id IS NULL) AS active_anon
                    FROM pixel_events
                    WHERE site_id = %s AND created_at >= %s""",
                 (site_id, now - timedelta(minutes=5))
@@ -453,9 +459,10 @@ class PixelRepository:
                 d["created_at"] = d["created_at"].isoformat() if d.get("created_at") else None
                 pages.append(d)
 
+            active = int(active_row["active_visitors"] or 0) + int(active_row["active_anon"] or 0)
             return {
-                "active_users": int(active_row["active"] or 0),
-                "events_60s":   int(ev60_row["cnt"]    or 0),
+                "active_users": active,
+                "events_60s":   int(ev60_row["cnt"] or 0),
                 "recent_pages": pages,
             }
         finally:
@@ -574,13 +581,243 @@ class PixelRepository:
         finally:
             release_connection(conn)
 
+    def get_dashboard_summary_data(self, site_id: str, days: int = 7) -> Dict:
+        """
+        Single-connection aggregation for the dashboard-summary endpoint.
+        4 queries on one connection (down from 7):
+
+          Query A — stats + active_5min     (1 scan, was 2 separate queries)
+          Query B — bounce rate             (1 subquery scan)
+          Query C — sparkline               (CTE + gap-fill)
+          Query D — pages + devices + countries  (1 CTE scan, was 3 separate queries)
+        """
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            now   = datetime.now(timezone.utc)
+            since = now - timedelta(days=days)
+            today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+            # ── Query A: stats + active_5min in one scan ───────────────────────
+            # active_5min uses FILTER with the 5-minute window; the outer WHERE
+            # already covers the last `days` days which includes the 5-min window.
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE created_at >= %s)                       AS today_events,
+                    COUNT(DISTINCT session_id)
+                        FILTER (WHERE session_id IS NOT NULL)                      AS unique_sessions,
+                    COUNT(DISTINCT visitor_id)
+                        FILTER (WHERE created_at >= NOW() - INTERVAL '5 minutes'
+                                AND visitor_id IS NOT NULL)                        AS active_visitors,
+                    COUNT(DISTINCT session_id)
+                        FILTER (WHERE created_at >= NOW() - INTERVAL '5 minutes'
+                                AND session_id IS NOT NULL
+                                AND visitor_id IS NULL)                            AS active_sessions_fallback
+                FROM pixel_events
+                WHERE site_id = %s AND created_at >= %s
+                """,
+                (today, site_id, since)
+            )
+            stats_row = cursor.fetchone()
+
+            # ── Query B: bounce rate ───────────────────────────────────────────
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_sessions,
+                    COUNT(*) FILTER (WHERE pv_count = 1) AS bounced
+                FROM (
+                    SELECT session_id,
+                           COUNT(*) FILTER (WHERE event_type = 'page_view') AS pv_count
+                    FROM pixel_events
+                    WHERE site_id = %s AND session_id IS NOT NULL AND created_at >= %s
+                    GROUP BY session_id
+                ) s
+                """,
+                (site_id, since)
+            )
+            bounce_row = cursor.fetchone()
+
+            # ── Query C: sparkline — gap-filled daily timeseries ───────────────
+            cursor.execute(
+                """
+                WITH calendar AS (
+                    SELECT generate_series(%s::date, %s::date, '1 day'::interval)::date AS day
+                ),
+                data AS (
+                    SELECT date_trunc('day', created_at)::date AS day,
+                           COUNT(*) FILTER (WHERE event_type = 'page_view') AS page_views
+                    FROM pixel_events
+                    WHERE site_id = %s AND created_at >= %s
+                    GROUP BY 1
+                )
+                SELECT COALESCE(d.page_views, 0) AS page_views
+                FROM calendar c LEFT JOIN data d ON c.day = d.day
+                ORDER BY c.day
+                """,
+                (since.date(), now.date(), site_id, since)
+            )
+            sparkline = [int(r["page_views"]) for r in cursor.fetchall()]
+
+            # ── Query D: pages + devices + countries — single CTE scan ─────────
+            # MATERIALIZED forces Postgres to execute the base scan exactly once
+            # and store the result set, preventing the planner from re-scanning
+            # pixel_events three times if it chooses to inline the CTE.
+            # The predicates (site_id, created_at) are already pushed into `base`,
+            # so the partition pruning happens before materialization.
+            #
+            # Tradeoff: the materialized result set is held in work_mem (default 4MB).
+            # At ~200 bytes/row this handles ~20k rows comfortably before spilling to
+            # disk. For a 7-day dashboard window that covers tens of thousands of
+            # events this is fine. If days grows large (>90) and volume is high,
+            # switch to NOT MATERIALIZED and let the planner inline it instead.
+            cursor.execute(
+                """
+                WITH base AS MATERIALIZED (
+                    SELECT event_type, url, device, country
+                    FROM pixel_events
+                    WHERE site_id = %s AND created_at >= %s
+                )
+                SELECT
+                    (
+                        SELECT COALESCE(json_agg(r), '[]'::json) FROM (
+                            SELECT url, COUNT(*) AS views
+                            FROM base WHERE event_type = 'page_view'
+                            GROUP BY url ORDER BY views DESC LIMIT 3
+                        ) r
+                    ) AS pages,
+                    (
+                        SELECT COALESCE(json_agg(r), '[]'::json) FROM (
+                            SELECT device, COUNT(*) AS count
+                            FROM base WHERE device IS NOT NULL
+                            GROUP BY device ORDER BY count DESC
+                        ) r
+                    ) AS devices,
+                    (
+                        SELECT COALESCE(json_agg(r), '[]'::json) FROM (
+                            SELECT country, COUNT(*) AS count
+                            FROM base WHERE country IS NOT NULL
+                            GROUP BY country ORDER BY count DESC LIMIT 3
+                        ) r
+                    ) AS countries
+                """,
+                (site_id, since)
+            )
+            agg_row = cursor.fetchone()
+
+            def _parse_json_col(col):
+                """psycopg2 returns JSONB as dict/list already; handle both."""
+                v = agg_row[col]
+                if v is None:
+                    return []
+                if isinstance(v, list):
+                    return [dict(item) for item in v]
+                import json
+                return json.loads(v)
+
+            pages_raw    = _parse_json_col("pages")
+            devices_raw  = _parse_json_col("devices")
+            countries_raw = _parse_json_col("countries")
+
+            # ── Assemble ───────────────────────────────────────────────────────
+            total_s = int(bounce_row["total_sessions"] or 0)
+            bounced = int(bounce_row["bounced"] or 0)
+            bounce_rate = round(bounced / total_s * 100, 1) if total_s > 0 else 0
+
+            # Combine visitor + session fallback to approximate active unique users
+            active_5min = int(stats_row["active_visitors"] or 0) + int(stats_row["active_sessions_fallback"] or 0)
+
+            stats = {
+                "today_events":      int(stats_row["today_events"]    or 0),
+                "unique_sessions":   int(stats_row["unique_sessions"]  or 0),
+                "bounce_rate":       bounce_rate,
+                "active_users_5min": active_5min,
+            }
+
+            return {
+                "stats":         stats,
+                "sparkline":     sparkline,
+                "pages_raw":     pages_raw,
+                "devices_raw":   devices_raw,
+                "countries_raw": countries_raw,
+            }
+        finally:
+            release_connection(conn)
+
     def cleanup_old_events(self, days: int = 90) -> int:
-        """Elimina eventos más viejos que `days` días. Devuelve el número eliminado."""
+        """
+        Elimina eventos más viejos que `days` días.
+
+        Para tablas particionadas por RANGE(created_at), DROP TABLE sobre la
+        partición es O(1) — instantáneo. DELETE es O(n) — escanea y marca cada
+        fila como muerta, genera WAL, requiere VACUUM posterior.
+
+        Estrategia:
+          1. Detectar particiones mensuales cuyo rango completo queda antes del cutoff.
+          2. DROP TABLE de cada una (instantáneo, sin WAL de rows).
+          3. Si no hay particiones elegibles (tabla sin particionar o cutoff dentro
+             del mes actual), caer back a DELETE para compatibilidad.
+
+        Devuelve el número de particiones eliminadas (o -1 si se usó DELETE fallback).
+        """
         from app.infra.db import get_connection, release_connection
         conn = get_connection()
         try:
             cursor = conn.cursor()
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+            # Find monthly partitions whose entire range is older than cutoff
+            cursor.execute(
+                """
+                SELECT c.relname AS partition_name,
+                       pg_get_expr(c.relpartbound, c.oid) AS bound
+                FROM pg_class p
+                JOIN pg_inherits i ON i.inhparent = p.oid
+                JOIN pg_class c    ON c.oid = i.inhrelid
+                WHERE p.relname = 'pixel_events'
+                  AND c.relkind = 'r'
+                  AND c.relname != 'pixel_events_default'
+                ORDER BY c.relname
+                """
+            )
+            partitions = cursor.fetchall()
+
+            dropped = 0
+            for row in partitions:
+                name  = row["partition_name"]
+                bound = row["bound"] or ""
+                # Partition name format: pixel_events_YYYY_MM
+                # Safe to drop only if the upper bound of the partition is <= cutoff
+                # Parse the TO date from the bound expression: "FOR VALUES FROM (...) TO ('2025-02-01 ...')"
+                import re
+                to_match = re.search(r"TO \('([^']+)'", bound)
+                if not to_match:
+                    continue
+                try:
+                    raw = to_match.group(1).strip()
+                    # Normalize PG formats to ISO 8601 so fromisoformat handles them:
+                    #   "2025-02-01 00:00:00+00"    → "2025-02-01T00:00:00+00:00"
+                    #   "2025-02-01 00:00:00+00:00" → "2025-02-01T00:00:00+00:00"
+                    raw = raw.replace(" ", "T", 1)          # space → T separator
+                    if raw.endswith("+00"):                  # +00 → +00:00
+                        raw = raw[:-3] + "+00:00"
+                    upper = datetime.fromisoformat(raw)
+                    if upper.tzinfo is None:
+                        upper = upper.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    continue
+
+                if upper <= cutoff:
+                    cursor.execute(f'DROP TABLE IF EXISTS "{name}"')
+                    dropped += 1
+
+            if dropped > 0:
+                conn.commit()
+                return dropped
+
+            # Fallback: table is not partitioned or all data is within retention window
             cursor.execute(
                 "DELETE FROM pixel_events WHERE created_at < %s",
                 (cutoff,)

@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../services/api';
-import { getAdminPixelOverview, getAdminPixelEvents } from '../services/api';
 import {
   Plus, Trash2, Copy, CheckCircle, BarChart3, Globe, Users, Clock,
   Monitor, X, Loader, Activity, Zap, TrendingUp,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import { usePixelAnalyticsData } from '../hooks/usePixelAnalyticsData';
 
 // ── Utilities ──────────────────────────────────────────────────────────────
 
@@ -608,105 +608,36 @@ function FunnelPanel({ siteId, days }) {
 
 export default function PixelAnalytics() {
   const { user } = useAuth();
-  const [sites, setSites]               = useState([]);
-  const [loading, setLoading]           = useState(true);
-  const [selectedSite, setSelectedSite] = useState(null);
-  const [days, setDays]                 = useState(30);
 
-  const [stats, setStats]           = useState(null);
-  const [timeseries, setTimeseries] = useState(null);
-  const [devices, setDevices]       = useState(null);
-  const [countries, setCountries]   = useState(null);
-  const [pages, setPages]           = useState(null);
-  const [chartsLoading, setChartsLoading] = useState(false);
+  // All fetch logic lives in the hook — this component is pure composition
+  const {
+    sites, sitesLoading: loading, selectedSite, setSelectedSite,
+    days, setDays,
+    stats, timeseries, devices, countries, pages, chartsLoading,
+    adminStats, adminOverview, adminEvents,
+    createSite, deleteSite, copySnippet, copiedSiteId: copiedScript,
+  } = usePixelAnalyticsData(user?.role);
 
-  const [adminStats, setAdminStats]       = useState(null);
-  const [adminOverview, setAdminOverview] = useState(null);
-  const [adminEvents, setAdminEvents]     = useState([]);
-
-  const [showCreate, setShowCreate]     = useState(false);
-  const [newName, setNewName]           = useState('');
-  const [newDomain, setNewDomain]       = useState('');
-  const [creating, setCreating]         = useState(false);
-  const [copiedScript, setCopiedScript] = useState(null);
-
-  const fetchSites = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get('/pixel/sites');
-      setSites(data);
-      if (data.length > 0 && !selectedSite) setSelectedSite(data[0]);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
-  };
-
-  const fetchAdminStats = async () => {
-    if (user?.role !== 'admin') return;
-    try {
-      const { data } = await api.get('/pixel/admin/stats');
-      setAdminStats(data);
-      const [overview, events] = await Promise.all([
-        getAdminPixelOverview(),
-        getAdminPixelEvents(50, 0),
-      ]);
-      setAdminOverview(overview);
-      setAdminEvents(events);
-    } catch (err) { console.error(err); }
-  };
-
-  const fetchAllCharts = useCallback(async (siteId, d) => {
-    setChartsLoading(true);
-    try {
-      const [statsRes, tsRes, devRes, cntRes, pgRes] = await Promise.all([
-        api.get(`/pixel/sites/${siteId}/stats?days=${d}`),
-        api.get(`/pixel/sites/${siteId}/timeseries?days=${d}`),
-        api.get(`/pixel/sites/${siteId}/devices?days=${d}`),
-        api.get(`/pixel/sites/${siteId}/countries?days=${d}`),
-        api.get(`/pixel/sites/${siteId}/pages?days=${d}`),
-      ]);
-      setStats(statsRes.data);
-      setTimeseries(tsRes.data);
-      setDevices(devRes.data);
-      setCountries(cntRes.data);
-      setPages(pgRes.data);
-    } catch (err) { console.error('[PixelAnalytics] fetch error:', err); }
-    finally { setChartsLoading(false); }
-  }, []);
-
-  useEffect(() => { fetchSites(); fetchAdminStats(); }, []);
-
-  useEffect(() => {
-    if (!selectedSite) return;
-    setStats(null); setTimeseries(null); setDevices(null); setCountries(null); setPages(null);
-    fetchAllCharts(selectedSite.site_id, days);
-    const iv = setInterval(() => fetchAllCharts(selectedSite.site_id, days), 30000);
-    return () => clearInterval(iv);
-  }, [selectedSite, days, fetchAllCharts]);
+  // UI-only state — not data, so it stays in the component
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName,    setNewName]    = useState('');
+  const [newDomain,  setNewDomain]  = useState('');
+  const [creating,   setCreating]   = useState(false);
 
   const handleCreate = async (e) => {
     e.preventDefault();
     setCreating(true);
     try {
-      await api.post('/pixel/sites', { name: newName, domain: newDomain });
+      await createSite(newName, newDomain);
       setShowCreate(false); setNewName(''); setNewDomain('');
-      fetchSites();
     } catch (err) { console.error(err); }
     finally { setCreating(false); }
   };
 
   const handleDelete = async (siteId) => {
     if (!confirm('¿Eliminar este sitio y TODOS sus datos analíticos?')) return;
-    try {
-      await api.delete(`/pixel/sites/${siteId}`);
-      if (selectedSite?.site_id === siteId) { setSelectedSite(null); setStats(null); }
-      fetchSites();
-    } catch (err) { console.error(err); }
-  };
-
-  const copySnippet = (siteId) => {
-    navigator.clipboard.writeText(`<script src="https://api.hostingguard.lat/pixel.js?id=${siteId}"></script>`);
-    setCopiedScript(siteId);
-    setTimeout(() => setCopiedScript(null), 2000);
+    try { await deleteSite(siteId); }
+    catch (err) { console.error(err); }
   };
 
   const hasEnoughData = stats && stats.total_events >= 50;

@@ -217,7 +217,16 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_tickets_user ON support_tickets(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_pixel_events_site_created ON pixel_events (site_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_pixel_events_site_type_created ON pixel_events (site_id, event_type, created_at)",
+    # Covers bounce rate subquery: WHERE site_id=? AND session_id IS NOT NULL AND created_at>=? GROUP BY session_id
     "CREATE INDEX IF NOT EXISTS idx_pixel_events_site_session_created ON pixel_events (site_id, session_id, created_at)",
+    # Covers COUNT(DISTINCT COALESCE(visitor_id, session_id)) in realtime + active_users_5min queries
+    "CREATE INDEX IF NOT EXISTS idx_pixel_events_site_visitor_created ON pixel_events (site_id, visitor_id, created_at)",
+    # Covers top-pages query: WHERE site_id=? AND event_type='page_view' AND created_at>=? GROUP BY url
+    "CREATE INDEX IF NOT EXISTS idx_pixel_events_pages ON pixel_events (site_id, event_type, created_at, url)",
+    # Covers device breakdown: WHERE site_id=? AND device IS NOT NULL AND created_at>=? GROUP BY device
+    "CREATE INDEX IF NOT EXISTS idx_pixel_events_device ON pixel_events (site_id, device, created_at)",
+    # Covers country breakdown: WHERE site_id=? AND country IS NOT NULL AND created_at>=? GROUP BY country
+    "CREATE INDEX IF NOT EXISTS idx_pixel_events_country ON pixel_events (site_id, country, created_at)",
 ]
 
 def ensure_monthly_partitions(cursor):

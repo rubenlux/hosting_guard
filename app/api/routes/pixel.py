@@ -503,6 +503,67 @@ async def get_pages(site_id: str, days: int = 30, user: dict = Depends(verify_to
     return pixel_repo.get_pages(site_id, days=days)
 
 
+@router.get("/pixel/sites/{site_id}/dashboard-summary")
+async def get_dashboard_summary(site_id: str, days: int = 7, user: dict = Depends(verify_token)):
+    """
+    Aggregated endpoint for the Dashboard analytics overview.
+    Single DB connection: 7 sequential queries vs the previous 4 pool acquisitions.
+    Returns: stats, sparkline (number[]), top_pages (max 3), chips (max 4).
+    """
+    import re
+    site = pixel_repo.get_site(site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if site["user_id"] != user["user_id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    d = pixel_repo.get_dashboard_summary_data(site_id, days=days)
+
+    def _path(url):
+        return re.sub(r'^https?://[^/]+', '', url or '') or '/'
+
+    # Normalize top pages
+    top_pages = [
+        {"path": _path(p.get("url", "/")), "views": p.get("views", 0), "url": p.get("url")}
+        for p in d["pages_raw"]
+    ]
+
+    # Compute chips from pre-fetched raw data (no extra queries)
+    chips = []
+    sparkline = d["sparkline"]
+    if len(sparkline) >= 6:
+        half = len(sparkline) // 2
+        a = sum(sparkline[:half])
+        b = sum(sparkline[half:])
+        if a > 0:
+            pct = round(((b - a) / a) * 100)
+            if pct > 5:   chips.append(f"+{pct}%")
+            elif pct < -5: chips.append(f"{pct}%")
+
+    devices = d["devices_raw"]
+    if devices:
+        total = sum(int(x["count"]) for x in devices)
+        if total > 0:
+            chips.append(f"{round(int(devices[0]['count']) / total * 100)}% {devices[0]['device']}")
+
+    countries = d["countries_raw"]
+    if countries:
+        total = sum(int(x["count"]) for x in countries)
+        if total > 0:
+            chips.append(f"{round(int(countries[0]['count']) / total * 100)}% {countries[0]['country']}")
+
+    if d["pages_raw"]:
+        path = _path(d["pages_raw"][0].get("url", "/"))
+        chips.append(path[:14] if len(path) <= 14 else path[:12] + "…")
+
+    return {
+        "stats":     d["stats"],
+        "sparkline": sparkline,
+        "top_pages": top_pages,
+        "chips":     chips[:4],
+    }
+
+
 @router.delete("/pixel/sites/{site_id}")
 async def delete_site(site_id: str, user: dict = Depends(verify_token)):
     site = pixel_repo.get_site(site_id)

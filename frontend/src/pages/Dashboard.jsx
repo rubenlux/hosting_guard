@@ -47,7 +47,7 @@ import SupportBanner from '../components/SupportBanner';
 import SupportChat from '../components/SupportChat';
 import SupportTicketList from '../components/SupportTicketList';
 import SiteManagement from '../components/SiteManagement';
-import PixelOverview from '../components/PixelOverview';
+import BusinessOverview from '../components/dashboard/BusinessOverview';
 
 const Dashboard = () => {
   const { user, logoutAction, setUser, isSupportSession, supportSession, deactivateSupportSession } = useAuth();
@@ -538,8 +538,8 @@ const Dashboard = () => {
                 </div>
               ))}
 
-              {/* BUSINESS OVERVIEW — pixel analytics summary */}
-              <PixelOverview />
+              {/* BUSINESS OVERVIEW */}
+              <BusinessOverview />
 
               {/* AI ADVISORY */}
               <div className="advisory-box-dash border-scanner-warn flex flex-col md:flex-row gap-4 items-start md:items-center bg-[#050505] mb-6">

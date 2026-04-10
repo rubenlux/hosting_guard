@@ -269,6 +269,11 @@ export const getPixelPages = async (siteId, days = 30) => {
     return response.data;
 };
 
+export const getPixelDashboardSummary = async (siteId, days = 7) => {
+    const response = await api.get(`/pixel/sites/${siteId}/dashboard-summary?days=${days}`);
+    return response.data;
+};
+
 export const startSupportSession = async (userId) => {
     const response = await api.post(`/admin/impersonate/${userId}`);
     return response.data;
