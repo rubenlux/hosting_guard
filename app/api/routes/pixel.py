@@ -13,6 +13,8 @@ _SITE_ID_RE = re.compile(r'^[a-f0-9\-]{8,36}$')
 _EVENT_TYPE_RE = re.compile(r'^[a-z][a-z0-9_]{0,49}$')
 
 from pydantic import BaseModel, field_validator
+from cachetools import TTLCache
+import geoip2.database
 import os
 from app.api.rate_limit import limiter
 from app.api.security import verify_token, require_role
@@ -23,9 +25,17 @@ pixel_repo = PixelRepository()
 
 # ── GeoIP helpers ─────────────────────────────────────────────────────────────
 
+# Local MaxMind GeoLite2 reader — file must exist at data/GeoLite2-City.mmdb.
+# Falls back to None gracefully; geo fields will be left as NULL if unavailable.
+_geoip_reader = None
+try:
+    _geoip_reader = geoip2.database.Reader("data/GeoLite2-City.mmdb")
+except Exception:
+    pass
+
 # In-memory cache: ip → {"country": str, "region": str, "city": str}
-# One entry per unique IP; stays alive for the lifetime of the process.
-_ip_cache: dict = {}
+# Bounded to 50k entries, TTL 24h — prevents unbounded growth.
+_ip_cache: TTLCache = TTLCache(maxsize=50_000, ttl=86400)
 
 _PRIVATE_PREFIXES = ("127.", "10.", "172.16.", "172.17.", "172.18.", "172.19.",
                      "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
@@ -43,11 +53,29 @@ def _get_real_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
 
 
+def _resolve_geo(ip: str):
+    """
+    Resolve country/region/city from local MaxMind GeoLite2 database.
+    Returns (country, region, city) — all may be None if unavailable.
+    No HTTP requests, no external dependencies.
+    """
+    if not _geoip_reader:
+        return None, None, None
+    try:
+        response = _geoip_reader.city(ip)
+        return (
+            response.country.name or None,
+            response.subdivisions.most_specific.name or None,
+            response.city.name or None,
+        )
+    except Exception:
+        return None, None, None
+
+
 async def _enrich_geo(event_id: str, ip: Optional[str]) -> None:
     """
-    Background task: resolve country/region/city for `ip` via ip-api.com
-    (free tier, 45 req/min, no key required), then update the DB record.
-    Results are cached in-process so each unique IP is only looked up once.
+    Background task: resolve country/region/city for `ip` via local GeoLite2,
+    then update the DB record. Results are cached so each unique IP is resolved once.
     """
     if not ip:
         return
@@ -55,25 +83,8 @@ async def _enrich_geo(event_id: str, ip: Optional[str]) -> None:
         return
 
     if ip not in _ip_cache:
-        try:
-            import requests as _req
-            r = await asyncio.to_thread(
-                lambda: _req.get(
-                    f"http://ip-api.com/json/{ip}?fields=countryCode,regionName,city",
-                    timeout=2,
-                )
-            )
-            if r.status_code == 200:
-                d = r.json()
-                _ip_cache[ip] = {
-                    "country": d.get("countryCode") or None,
-                    "region":  d.get("regionName")  or None,
-                    "city":    d.get("city")         or None,
-                }
-            else:
-                _ip_cache[ip] = {}
-        except Exception:
-            _ip_cache[ip] = {}
+        country, region, city = _resolve_geo(ip)
+        _ip_cache[ip] = {"country": country, "region": region, "city": city}
 
     geo = _ip_cache.get(ip, {})
     if geo.get("country"):
