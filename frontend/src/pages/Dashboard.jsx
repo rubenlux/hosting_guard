@@ -819,7 +819,7 @@ const Dashboard = () => {
                     </div>
                     <div className="mt-3">
                       <div className="text-3xl font-black text-[#00ff88] [text-shadow:0_0_15px_rgba(0,255,136,0.5)]">
-                        {hostings.length ? Math.round(hostings.reduce((acc, h) => acc + (healthData[h.hosting_id]?.score || 100), 0) / hostings.length) : "100"}
+                        {hostings.length ? Math.round(hostings.reduce((acc, h) => acc + (healthData[h.hosting_id]?.score ?? 0), 0) / hostings.length) : "—"}
                         <span className="text-lg">/100</span>
                       </div>
                       <div className="text-[11px] text-gray-400 mt-2 flex items-center justify-between">
