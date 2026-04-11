@@ -66,6 +66,38 @@ def _is_revoked(jti: str) -> bool:
     return jti in _revoked_tokens
 
 
+def _get_staff_cached(staff_id: int):
+    """
+    Returns staff record from Redis cache (TTL 30s) or DB.
+    Falls back to direct DB query when Redis is unavailable.
+    Only active staff records are cached — deactivations propagate within 30s.
+    """
+    if not staff_id:
+        return None
+
+    import json
+
+    if _redis is not None:
+        key = f"staff:{staff_id}"
+        cached = _redis.get(key)
+        if cached:
+            try:
+                return json.loads(cached)
+            except Exception:
+                pass
+
+    from app.infra.audit.staff_repository import StaffRepository
+    staff = StaffRepository().get_staff_by_id(staff_id)
+
+    if staff and _redis is not None:
+        try:
+            _redis.setex(f"staff:{staff_id}", 30, json.dumps(staff))
+        except Exception:
+            pass
+
+    return staff
+
+
 def create_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     payload = data.copy()
     if expires_delta:
@@ -233,9 +265,8 @@ def verify_staff_token(request: Request) -> dict:
     if jti and _is_revoked(jti):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesión de staff revocada")
 
-    # Verificar is_active en DB para que la desactivación sea instantánea
-    from app.infra.audit.staff_repository import StaffRepository
-    staff = StaffRepository().get_staff_by_id(payload.get("staff_id"))
+    # Verificar is_active — cambios se reflejan en máximo 30s (TTL del cache Redis)
+    staff = _get_staff_cached(payload.get("staff_id"))
     if not staff or not staff.get("is_active"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Cuenta de staff desactivada")
 

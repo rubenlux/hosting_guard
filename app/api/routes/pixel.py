@@ -53,40 +53,43 @@ def _get_real_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
 
 
-def _resolve_geo(ip: str):
+def _resolve_geo(ip: str) -> dict:
     """
     Resolve country/region/city from local MaxMind GeoLite2 database.
-    Returns (country, region, city) — all may be None if unavailable.
-    No HTTP requests, no external dependencies.
+    Results are cached in _ip_cache (TTL 24h, max 50k entries) so each
+    unique IP is only looked up once. No HTTP requests, no external dependencies.
     """
+    if ip in _ip_cache:
+        return _ip_cache[ip]
+
     if not _geoip_reader:
-        return None, None, None
+        return {"country": None, "region": None, "city": None}
+
     try:
         response = _geoip_reader.city(ip)
-        return (
-            response.country.name or None,
-            response.subdivisions.most_specific.name or None,
-            response.city.name or None,
-        )
+        result = {
+            "country": response.country.name or None,
+            "region":  response.subdivisions.most_specific.name or None,
+            "city":    response.city.name or None,
+        }
     except Exception:
-        return None, None, None
+        result = {"country": None, "region": None, "city": None}
+
+    if result.get("country"):
+        _ip_cache[ip] = result
+    return result
 
 
 async def _enrich_geo(event_id: str, ip: Optional[str]) -> None:
     """
-    Background task: resolve country/region/city for `ip` via local GeoLite2,
-    then update the DB record. Results are cached so each unique IP is resolved once.
+    Background task: resolve geo for `ip` and update the DB record.
     """
     if not ip:
         return
     if any(ip.startswith(p) for p in _PRIVATE_PREFIXES):
         return
 
-    if ip not in _ip_cache:
-        country, region, city = _resolve_geo(ip)
-        _ip_cache[ip] = {"country": country, "region": region, "city": city}
-
-    geo = _ip_cache.get(ip, {})
+    geo = _resolve_geo(ip)
     if geo.get("country"):
         pixel_repo.update_event_geo(
             event_id,
