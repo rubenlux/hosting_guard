@@ -15,14 +15,13 @@ API_KEY = os.getenv("API_KEY")
 
 SECRET = os.getenv("JWT_SECRET")
 if not SECRET:
-    logger.critical("FATAL: JWT_SECRET no está definido. Usando clave de emergencia (DEBUG ONLY).")
-    SECRET = "emergency-insecure-secret-key-change-me"
+    raise RuntimeError("JWT_SECRET is required. Set it in your environment before starting the app.")
 
 ALGO = "HS256"
 
 # --- Revocation store respaldado por Redis ---
 # Fallback a store in-memory si REDIS_URL no está configurado (entornos de desarrollo).
-_REDIS_URL = os.getenv("REDIS_URL", "")
+_REDIS_URL = os.getenv("REDIS_URL", "")  # expected format: redis://:PASSWORD@redis:6379/0
 _redis: Optional[redis_lib.Redis] = None
 
 if _REDIS_URL:
@@ -171,25 +170,32 @@ def require_role(*roles: str) -> Callable:
     Dependency factory para proteger endpoints por rol.
     Uso: user=Depends(require_role("admin"))
 
-    Si hay un support_token activo pero con el rol equivocado (ej: admin consultando
-    sus propios endpoints mientras el support_token de karina todavía está en la cookie),
-    hace fallback al access_token normal para autorizar la request.
+    Orden de evaluación:
+      1. support_token (solo si mode='support' y rol coincide)
+      2. access_token (fallback explícito)
+    No depende implícitamente de verify_token para evitar comportamiento ambiguo.
     """
-    def _check(request: Request, payload: dict = Depends(verify_token)) -> dict:
-        if payload.get("role") in roles:
-            return payload
+    def _check(request: Request) -> dict:
+        # 1. Intentar con support_token
+        support_token = request.cookies.get("support_token")
+        if support_token:
+            try:
+                payload = _decode_and_validate(support_token)
+                if payload.get("mode") == "support" and payload.get("role") in roles:
+                    payload["is_support_session"] = True
+                    return payload
+            except HTTPException:
+                pass  # fallback a access_token
 
-        # Fallback: soporte activo con rol insuficiente → intentar con access_token
-        if payload.get("is_support_session"):
-            token = request.cookies.get("access_token")
-            if token:
-                try:
-                    admin_payload = _decode_and_validate(token)
-                    if admin_payload.get("role") in roles:
-                        admin_payload["is_support_session"] = False
-                        return admin_payload
-                except HTTPException:
-                    pass
+        # 2. Fallback explícito a access_token
+        token = request.cookies.get("access_token")
+        if not token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+        payload = _decode_and_validate(token)
+        if payload.get("role") in roles:
+            payload["is_support_session"] = False
+            return payload
 
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

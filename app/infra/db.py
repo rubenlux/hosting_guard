@@ -50,30 +50,49 @@ SQL_DAYS_REMAINING_14 = "GREATEST(0, 14 - EXTRACT(DAY FROM AGE(NOW() AT TIME ZON
 
 class _AdaptedCursor:
     """Wrapper para mantener compatibilidad con la lógica de ejecución previa."""
-    __slots__ = ("_cur",)
+    __slots__ = ("_cur", "_lastrowid")
+
     def __init__(self, cursor):
         self._cur = cursor
+        self._lastrowid = None
 
     def execute(self, sql: str, params=None):
         if params is not None:
             self._cur.execute(sql, params)
         else:
             self._cur.execute(sql)
+
+        # Capturar RETURNING automáticamente — consume el resultado una sola vez
+        # para que los repos que llaman fetchone() explícitamente no pierdan el row.
+        # NOTA: los repos que usan RETURNING + fetchone() siguen funcionando igual
+        # porque _lastrowid se llena aquí y ellos obtienen None en su fetchone().
+        # Para compatibilidad total, consumimos el row solo si el repo NO va a llamar
+        # fetchone() — esto no es posible detectarlo aquí, por lo tanto NO consumimos
+        # el cursor: dejamos _lastrowid como referencia al primer campo del próximo fetchone().
+        self._lastrowid = None
         return self
 
-    def fetchone(self): return self._cur.fetchone()
+    def fetchone(self):
+        row = self._cur.fetchone()
+        if row and self._lastrowid is None:
+            # Capturar el primer valor como lastrowid (backfill para código legado)
+            self._lastrowid = list(row.values())[0] if row else None
+        return row
+
     def fetchall(self): return self._cur.fetchall()
-    
+
     @property
     def rowcount(self) -> int: return self._cur.rowcount
-    
+
     @property
-    def lastrowid(self) -> Optional[int]: return None # Deprecated
+    def lastrowid(self): return self._lastrowid
+
 
 class _ConnectionWrapper:
     """Wrapper para que los repositorios no necesiten cambiar su lógica de .commit() .rollback()"""
     def __init__(self, conn):
         self._conn = conn
+        self._released = False
 
     def cursor(self) -> _AdaptedCursor:
         return _AdaptedCursor(self._conn.cursor())
@@ -81,12 +100,11 @@ class _ConnectionWrapper:
     def commit(self): self._conn.commit()
     def rollback(self): self._conn.rollback()
     def execute(self, sql: str, params=None): return self.cursor().execute(sql, params)
-    
-    # IMPORTANTE: No implementamos .close() aquí para evitar que los repositorios maten la conexión física del pool
-    def close(self): 
-        # Si un repo llama a .close(), lo redirigimos a devolver al pool si es posible,
-        # pero es preferible usar release_connection() explícito.
-        release_connection(self)
+
+    def close(self):
+        if not self._released:
+            release_connection(self)
+            self._released = True
 
 # ---------------------------------------------------------------------------
 # Gestión de Pool
@@ -109,11 +127,14 @@ def get_connection() -> _ConnectionWrapper:
         raise
 
 def release_connection(wrapper: _ConnectionWrapper):
-    """Devuelve la conexión al pool."""
+    """Devuelve la conexión al pool. Idempotente — double-release es no-op."""
     global _pool
     if _pool and wrapper and hasattr(wrapper, "_conn"):
+        if getattr(wrapper, "_released", False):
+            return
         try:
             _pool.putconn(wrapper._conn)
+            wrapper._released = True
         except Exception:
             logger.error("Error al devolver conexión al pool")
 

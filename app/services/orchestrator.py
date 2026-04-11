@@ -6,6 +6,11 @@ import sys
 import threading
 import logging
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 logger = logging.getLogger("hosting_guard_orchestrator")
 logging.basicConfig(level=logging.INFO)
 
@@ -20,7 +25,7 @@ user_repo = UserRepository()
 
 # 🔧 CONFIG GLOBAL
 CHECK_INTERVAL = 10  # segundos
-DRY_RUN = True      # 🔥 MODO SIMULACIÓN (No aplica cambios, solo loggea)
+DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"  # DRY_RUN=false para ejecución real
 
 # 🛡️ CONTENEDORES DEL SISTEMA — JAMÁS SE TOCAN
 # Lista de contenedores core que el orquestador NUNCA debe modificar ni reiniciar.
@@ -385,6 +390,7 @@ def run_orchestrator():
     logger.info("-----------------------------------------")
     logger.info(f"🚀 HostingGuard Intelligent Orchestrator")
     logger.info(f"[{datetime.now()}] Iniciando monitoreo...")
+    logger.info(f"Orchestrator mode: {'DRY_RUN' if DRY_RUN else 'EXECUTION'}")
     logger.info("-----------------------------------------")
     
     consecutive_errors = 0
@@ -404,4 +410,30 @@ def run_orchestrator():
         time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
-    run_orchestrator()
+    LOCK_FILE = "/tmp/orchestrator.lock"
+
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if psutil and psutil.pid_exists(pid):
+                logger.critical("Orchestrator already running (pid=%d). Exiting.", pid)
+                sys.exit(1)
+            else:
+                logger.warning("Stale lock file detected (pid=%d no longer exists). Removing.", pid)
+                os.remove(LOCK_FILE)
+        except Exception:
+            # Lock corrupto o ilegible — remover y continuar
+            os.remove(LOCK_FILE)
+
+    try:
+        with open(LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+            f.flush()
+            os.fsync(f.fileno())  # garantiza persistencia ante crash inmediato
+        run_orchestrator()
+    finally:
+        try:
+            os.remove(LOCK_FILE)
+        except OSError:
+            pass

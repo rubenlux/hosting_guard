@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import time
 import asyncio
 from contextlib import asynccontextmanager
@@ -88,17 +89,25 @@ async def health_scheduler():
 _background_tasks: set = set()
 
 
+# RUN_ORCHESTRATOR=false → background schedulers are disabled.
+# Set this when the dedicated orchestrator container is running to avoid double execution.
+_RUN_ORCHESTRATOR = os.getenv("RUN_ORCHESTRATOR", "true").lower() != "false"
+
+
 @asynccontextmanager
 async def lifespan(app):
     # Initialize Database Schema (Idempotent)
     from app.infra.migrations import init_db
     init_db()
 
-    for coro in (expiration_scheduler(), traffic_scheduler(), health_scheduler()):
-        task = asyncio.create_task(coro)
-        _background_tasks.add(task)          # prevent garbage collection
-        task.add_done_callback(_background_tasks.discard)
-    logger.info("lifespan: %d background tasks created", len(_background_tasks))
+    if _RUN_ORCHESTRATOR:
+        for coro in (expiration_scheduler(), traffic_scheduler(), health_scheduler()):
+            task = asyncio.create_task(coro)
+            _background_tasks.add(task)          # prevent garbage collection
+            task.add_done_callback(_background_tasks.discard)
+        logger.info("lifespan: %d background tasks created", len(_background_tasks))
+    else:
+        logger.info("lifespan: RUN_ORCHESTRATOR=false — background tasks disabled (orchestrator container active)")
     yield
 
 

@@ -32,7 +32,13 @@ class UserRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+            # password_hash included — required for login credential verification only
+            cursor.execute(
+                "SELECT user_id, email, password_hash, role, plan, balance, "
+                "has_payment_method, autoscale_enabled, created_at "
+                "FROM users WHERE email = %s",
+                (email,)
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
         finally:
@@ -42,7 +48,13 @@ class UserRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+            # password_hash intentionally excluded — not needed for identity resolution
+            cursor.execute(
+                "SELECT user_id, email, role, plan, balance, "
+                "has_payment_method, autoscale_enabled, created_at "
+                "FROM users WHERE user_id = %s",
+                (user_id,)
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
         finally:

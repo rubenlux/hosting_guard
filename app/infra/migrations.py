@@ -209,6 +209,8 @@ _MIGRATIONS_PG = [
     )""",
     "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (1, 'Sitio caído', 'El sitio web no responde o da error 502/503', '...', 'high', 1) ON CONFLICT (category_id) DO NOTHING",
     "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (2, 'Sitio lento', 'El sitio carga muy despacio', '...', 'medium', 1) ON CONFLICT (category_id) DO NOTHING",
+    # Phase 2: store db container name explicitly — avoids fragile dynamic name reconstruction
+    "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS db_container_name TEXT",
 ]
 
 _INDEXES = [

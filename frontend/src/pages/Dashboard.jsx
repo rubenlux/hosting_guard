@@ -541,23 +541,6 @@ const Dashboard = () => {
               {/* BUSINESS OVERVIEW */}
               <BusinessOverview />
 
-              {/* AI ADVISORY */}
-              <div className="advisory-box-dash border-scanner-warn flex flex-col md:flex-row gap-4 items-start md:items-center bg-[#050505] mb-6">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="ai-badge-dash">🤖 IA ADVISORY</span>
-                    <span className="text-[11px] text-muted font-mono uppercase tracking-widest">Hace 3 min</span>
-                  </div>
-                  <div className="text-sm text-gray-400 leading-relaxed">
-                    Detectamos un <strong className="text-white">aumento del 40% en el uso de CPU</strong>.
-                    El patrón coincide con un plugin mal configurado tras la última actualización. Riesgo: <strong className="text-warn">MEDIO</strong>.
-                  </div>
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  <button className="btn-dash btn-primary-dash text-xs !bg-[#00ff88] !text-black !border-none hover:shadow-[0_0_15px_#00ff88]">Diagnosticar</button>
-                  <button className="btn-dash btn-ghost-dash text-xs border border-white/10 hover:bg-white/5">Cerrar</button>
-                </div>
-              </div>
 
               {/* GRID */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
