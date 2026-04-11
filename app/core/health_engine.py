@@ -21,13 +21,13 @@ def calculate_health_score(data: dict) -> dict:
     error_count = 0
     warning_count = 0
 
-    container_status = data.get("container_status", "unknown")
+    container_status = str(data.get("container_status", "unknown")).strip().lower()
     cpu = data.get("cpu", 0)
     ram = data.get("ram", 0)
     errors = data.get("errors", [])
 
     # 🔴 CRÍTICO: Contenedor no está corriendo
-    if container_status != "running":
+    if not container_status or container_status not in ("running", "up"):
         score = 0
         error_count = 1  # contenedor caído = error crítico
         status = "down"
