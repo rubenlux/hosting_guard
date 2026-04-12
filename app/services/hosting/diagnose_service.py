@@ -311,17 +311,26 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
             score_breakdown=health_result.get("score_breakdown"),
         )
 
-        # ── Sanity clamp: if no real errors exist, force info/healthy verdict ──
-        # Prevents Claude from returning "infra" or "warning" diagnoses for
-        # systems where only dev_noise (source maps) or external probes were logged.
-        if structured and not debug_context["logs"].get("actionable_errors"):
-            structured.setdefault("severity",     "info")
-            structured.setdefault("failure_type", "unknown")
-            if structured.get("severity") != "info":
-                structured["severity"]     = "info"
-                structured["failure_type"] = "unknown"
-                structured["summary"]      = "No se detectaron errores reales en la aplicación."
-                structured["confidence"]   = 0.95
+        # ── Sanity clamp: output governance layer ───────────────────────────────
+        # The LLM is never the final source of truth.
+        # When there are no actionable errors, we own the output entirely —
+        # partial field fixes (severity only) leave root_cause / impact / fix_action
+        # intact from the LLM, creating semantic contradictions like:
+        #   "severity: info" + "root_cause: nginx can't find .map files" + "fix: deploy assets"
+        # That breaks user trust immediately, so we replace the full structured object.
+        if not debug_context["logs"].get("actionable_errors"):
+            structured = {
+                "severity":     "info",
+                "failure_type": "unknown",
+                "summary":      "No se detectaron errores reales en la aplicación.",
+                "root_cause":   None,
+                "impact":       "No hay impacto. El sistema está funcionando correctamente.",
+                "fix_action":   None,
+                "fix_steps":    [],
+                "evidence":     [],
+                "confidence":   0.95,
+                "location":     {"file": None, "line": None, "service": "system"},
+            }
 
         return {
             "status": status,
