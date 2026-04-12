@@ -34,9 +34,10 @@ function mapKpis(stats) {
 function mapRealtime(stats) {
   if (!stats) return null;
   return {
-    active_users_5min: stats.active_users_5min ?? 0,
-    bounce_rate:       stats.bounce_rate       ?? 0,
-    unique_sessions:   stats.unique_sessions   ?? 0,
+    active:    stats.active_users_5min ?? 0,
+    isLive:    (stats.active_users_5min ?? 0) > 0,
+    lastPath:  null,
+    lastTime:  null,
   };
 }
 

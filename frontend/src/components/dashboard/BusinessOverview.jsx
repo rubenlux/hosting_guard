@@ -6,7 +6,6 @@ import EmptyState        from './EmptyState';
 import ErrorState        from './ErrorState';
 import SiteSelector      from './SiteSelector';
 import HeroSection       from './HeroSection';
-import InsightCard       from './InsightCard';
 import KPISection        from './KPISection';
 import SparklineChart    from './SparklineChart';
 import TopPagesMini      from './TopPagesMini';
@@ -63,14 +62,9 @@ export default function BusinessOverview() {
             <TopPagesMini pages={topPages} />
           </div>
 
-          {/* Right column — realtime + insight */}
+          {/* Right column — realtime */}
           <div className="col-span-4 space-y-6">
             <RealtimeMini {...realtime} />
-            <InsightCard
-              insight={{
-                message: 'Detectamos aumento del 40% en CPU. Posible plugin mal configurado.',
-              }}
-            />
           </div>
 
         </div>
