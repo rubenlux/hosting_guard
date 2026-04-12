@@ -27,7 +27,7 @@ function mapKpis(stats) {
     visits:     stats.today_events      ?? 0,
     sessions:   stats.unique_sessions   ?? 0,
     bounceRate: stats.bounce_rate       ?? 0,
-    activeNow:  stats.active_users_5min ?? 0,
+    active:     stats.active_users_5min ?? 0,
   };
 }
 

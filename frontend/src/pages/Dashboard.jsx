@@ -199,7 +199,15 @@ const Dashboard = () => {
             <div className="nav-item-dash">
               <div className="nav-icon-dash icon-ia"><Bot size={18} /></div>
               {!isSidebarCollapsed && <span>IA Advisory</span>}
-              {!isSidebarCollapsed && <span className="ml-auto bg-danger/20 text-danger text-[9px] px-1.5 py-0.5 rounded-full">2</span>}
+              {!isSidebarCollapsed && advisories.filter(a => a.requiresAttention).length > 0 && (
+                <span className={`ml-auto text-[9px] px-1.5 py-0.5 rounded-full ${
+                  advisories.some(a => a.severity === 'critical')
+                    ? 'bg-danger/20 text-danger'
+                    : 'bg-warn/20 text-warn'
+                }`}>
+                  {advisories.filter(a => a.requiresAttention).length}
+                </span>
+              )}
             </div>
             {user?.role === 'admin' && (
               <div className={`nav-item-dash ${activeView === 'admin' ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/admin'); }}>
@@ -331,7 +339,7 @@ const Dashboard = () => {
                       loading={loading}
                       healthData={healthData}
                       isSupportSession={isSupportSession}
-                      userActionLoading={activeHostingActionId}
+                      actionLoading={activeHostingActionId}
                       onRefresh={refresh}
                       onStart={(id)   => start.mutate(id)}
                       onStop={(id)    => stop.mutate(id)}
