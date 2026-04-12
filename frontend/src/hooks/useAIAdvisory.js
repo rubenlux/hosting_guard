@@ -95,10 +95,10 @@ export function evaluateHosting(hosting, healthData, alerts) {
       hostingId:         hosting.hosting_id,
       hostingName:       hosting.name,
       severity:          'critical',
-      summary:           'El sistema detectó una alerta crítica activa.',
-      recommendation:    'Revisar el panel de alertas para resolver el incidente.',
+      summary:           'Tu sitio puede estar caído o inestable en este momento.',
+      recommendation:    'Revisar logs del servidor y ejecutar diagnóstico para identificar la causa.',
       requiresAttention: true,
-      signals:           ['Alerta crítica del sistema'],
+      signals:           ['Alerta crítica activa sin resolver'],
     };
   }
 

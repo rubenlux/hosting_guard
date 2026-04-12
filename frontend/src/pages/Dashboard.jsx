@@ -29,6 +29,7 @@ import SupportBanner        from '../components/SupportBanner';
 import SupportChat          from '../components/SupportChat';
 import SupportTicketList    from '../components/SupportTicketList';
 import SiteManagement       from '../components/SiteManagement';
+import AIAdvisoryPage       from './AIAdvisory';
 const BusinessOverview = lazy(() => import('../components/dashboard/BusinessOverview'));
 
 const Dashboard = () => {
@@ -37,9 +38,10 @@ const Dashboard = () => {
   const navigate = useNavigate();
 
   // ── Active view (derived from URL) ──────────────────────────────────────────
-  const activeView = location.pathname === '/pixel' ? 'pixel'
-                   : location.pathname === '/admin'  ? 'admin'
-                   : location.pathname === '/sites'  ? 'sites'
+  const activeView = location.pathname === '/pixel'    ? 'pixel'
+                   : location.pathname === '/admin'    ? 'admin'
+                   : location.pathname === '/sites'    ? 'sites'
+                   : location.pathname === '/advisory' ? 'advisory'
                    : 'dashboard';
 
   // ── Data hooks ───────────────────────────────────────────────────────────────
@@ -196,7 +198,7 @@ const Dashboard = () => {
               <div className="nav-icon-dash icon-multi"><BarChart3 size={18} /></div>
               {!isSidebarCollapsed && <span>Pixel Analytics</span>}
             </div>
-            <div className="nav-item-dash">
+            <div className={`nav-item-dash ${activeView === 'advisory' ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/advisory'); }}>
               <div className="nav-icon-dash icon-ia"><Bot size={18} /></div>
               {!isSidebarCollapsed && <span>IA Advisory</span>}
               {!isSidebarCollapsed && advisories.filter(a => a.requiresAttention).length > 0 && (
@@ -257,9 +259,10 @@ const Dashboard = () => {
           <div className="topbar-dash">
             <div className="text-[15px] font-medium flex-1">
               {showCreate ? 'Nuevo Proyecto'
-                : activeView === 'pixel' ? 'Pixel Analytics'
-                : activeView === 'admin' ? 'Panel de Administración'
-                : activeView === 'sites' ? 'Mis Sitios (Operaciones)'
+                : activeView === 'pixel'    ? 'Pixel Analytics'
+                : activeView === 'admin'    ? 'Panel de Administración'
+                : activeView === 'sites'    ? 'Mis Sitios (Operaciones)'
+                : activeView === 'advisory' ? 'AI Advisory Center'
                 : 'Dashboard Overview'}
             </div>
             <div className="hidden md:flex items-center gap-2 bg-accent/5 text-accent px-3 py-1.5 rounded-full border border-accent/10 text-xs font-medium">
@@ -286,6 +289,8 @@ const Dashboard = () => {
               </div>
             ) : activeView === 'pixel' ? (
               <PixelAnalytics />
+            ) : activeView === 'advisory' ? (
+              <AIAdvisoryPage onDiagnose={handleDiagnose} />
             ) : activeView === 'admin' ? (
               <AdminDashboard />
             ) : activeView === 'sites' ? (
@@ -330,6 +335,11 @@ const Dashboard = () => {
                 <Suspense fallback={<div className="p-4 text-xs text-muted">Cargando módulo...</div>}>
                   <BusinessOverview />
                 </Suspense>
+
+                <AIAdvisoryPanel
+                  advisories={advisories}
+                  onDiagnose={handleDiagnose}
+                />
 
                 {/* GRID */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -391,10 +401,6 @@ const Dashboard = () => {
                       </div>
                     </div>
 
-                    <AIAdvisoryPanel
-                      advisories={advisories}
-                      onDiagnose={handleDiagnose}
-                    />
                   </div>
                 </div>
 

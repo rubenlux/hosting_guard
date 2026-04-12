@@ -67,6 +67,7 @@ function App() {
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/sites"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/pixel"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+          <Route path="/advisory"  element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/admin"                         element={<AdminRoute><Dashboard /></AdminRoute>} />
           <Route path="/admin/users/:id"              element={<AdminRoute><AdminUserDetail /></AdminRoute>} />
           <Route path="/admin/pixel-users"            element={<AdminRoute><AdminPixelUsers /></AdminRoute>} />

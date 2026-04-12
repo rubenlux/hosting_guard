@@ -17,8 +17,10 @@ const SEVERITY_CONFIG = {
     badge:      'bg-danger/20 text-danger border border-danger/30',
     label:      'CRÍTICO',
     dot:        'bg-danger',
-    cardBorder: 'border-danger/30',
-    cardBg:     'bg-danger/5',
+    // Stronger border + glow for critical items
+    cardBorder: 'border-danger/50',
+    cardBg:     'bg-danger/8',
+    cardGlow:   '0 0 0 1px rgba(255,68,68,0.15), 0 4px 20px rgba(255,68,68,0.12)',
   },
   warning: {
     icon:       <AlertTriangle className="w-3.5 h-3.5" />,
@@ -27,6 +29,7 @@ const SEVERITY_CONFIG = {
     dot:        'bg-warn',
     cardBorder: 'border-warn/20',
     cardBg:     'bg-warn/5',
+    cardGlow:   'none',
   },
   ok: {
     icon:       <CheckCircle className="w-3.5 h-3.5" />,
@@ -35,31 +38,38 @@ const SEVERITY_CONFIG = {
     dot:        'bg-green-500',
     cardBorder: 'border-white/5',
     cardBg:     'bg-white/2',
+    cardGlow:   'none',
   },
 };
 
 function AdvisoryItem({ advisory, onDiagnose }) {
   const [expanded, setExpanded] = useState(false);
   const cfg = SEVERITY_CONFIG[advisory.severity];
+  const isCritical = advisory.severity === 'critical';
 
   return (
-    <div className={`rounded-xl border p-3 ${cfg.cardBorder} ${cfg.cardBg} transition-all`}>
+    <div
+      className={`rounded-xl border p-3 ${cfg.cardBorder} ${cfg.cardBg} transition-all ${isCritical ? 'animate-pulse-border' : ''}`}
+      style={isCritical ? { boxShadow: cfg.cardGlow } : undefined}
+    >
       <div
         className="flex items-start gap-2 cursor-pointer select-none"
         onClick={() => setExpanded(v => !v)}
       >
-        <div className={`mt-0.5 shrink-0 ${advisory.severity === 'ok' ? 'text-green-400' : advisory.severity === 'critical' ? 'text-danger' : 'text-warn'}`}>
+        <div className={`mt-0.5 shrink-0 ${isCritical ? 'text-danger animate-pulse' : advisory.severity === 'ok' ? 'text-green-400' : 'text-warn'}`}>
           {cfg.icon}
         </div>
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[11px] font-bold text-white truncate">{advisory.hostingName}</span>
-            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider ${cfg.badge}`}>
+            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider ${cfg.badge} ${isCritical ? 'animate-pulse' : ''}`}>
               {cfg.label}
             </span>
           </div>
-          <p className="text-[10px] text-gray-400 mt-0.5 leading-snug">{advisory.summary}</p>
+          <p className={`text-[10px] mt-0.5 leading-snug ${isCritical ? 'text-gray-300' : 'text-gray-400'}`}>
+            {advisory.summary}
+          </p>
         </div>
 
         <div className="shrink-0 text-muted mt-0.5">
@@ -69,7 +79,7 @@ function AdvisoryItem({ advisory, onDiagnose }) {
 
       {expanded && (
         <div className="mt-3 pl-5 space-y-2">
-          {advisory.signals.length > 1 && (
+          {advisory.signals.length > 0 && (
             <ul className="space-y-1">
               {advisory.signals.map((s, i) => (
                 <li key={i} className="flex items-start gap-1.5 text-[10px] text-gray-400">
@@ -90,7 +100,7 @@ function AdvisoryItem({ advisory, onDiagnose }) {
               onClick={(e) => { e.stopPropagation(); onDiagnose(advisory.hostingId); }}
               className="mt-1 text-[9px] font-black uppercase tracking-wider px-3 py-1.5 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-all border border-accent/20"
             >
-              Ejecutar diagnóstico IA →
+              Diagnosticar problema →
             </button>
           )}
         </div>
@@ -105,11 +115,13 @@ export default function AIAdvisoryPanel({ advisories, onDiagnose }) {
   const warningCount  = advisories.filter(a => a.severity === 'warning').length;
 
   return (
-    <div className="card-dash p-4 space-y-3">
+    <div className={`card-dash p-4 space-y-3 ${criticalCount > 0 ? 'border-danger/30' : ''}`}
+      style={criticalCount > 0 ? { boxShadow: '0 0 0 1px rgba(255,68,68,0.1), 0 8px 32px rgba(255,68,68,0.08)' } : undefined}
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Bot className="w-4 h-4 text-accent" />
+          <Bot className={`w-4 h-4 ${criticalCount > 0 ? 'text-danger' : 'text-accent'}`} />
           <span className="text-xs font-bold">AI Advisory</span>
         </div>
         <div className="flex items-center gap-1.5">
