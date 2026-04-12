@@ -53,3 +53,42 @@ class AuditRepository:
             raise
         finally:
             release_connection(conn)
+
+    def get_decision_events(self, tenant_id: str, limit: int = 20) -> list:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT event_id, timestamp, overall_status, confidence_level, requires_human_attention "
+                "FROM decision_events WHERE tenant_id = %s ORDER BY timestamp DESC LIMIT %s",
+                (tenant_id, limit),
+            )
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            release_connection(conn)
+
+    def get_execution_events(self, tenant_id: str, limit: int = 20) -> list:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT execution_id, timestamp, action_type, status "
+                "FROM execution_events WHERE tenant_id = %s ORDER BY timestamp DESC LIMIT %s",
+                (tenant_id, limit),
+            )
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            release_connection(conn)
+
+    def get_human_action_events(self, tenant_id: str, limit: int = 20) -> list:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT action_event_id, timestamp, action_type, actor, reason "
+                "FROM human_action_events WHERE tenant_id = %s ORDER BY timestamp DESC LIMIT %s",
+                (tenant_id, limit),
+            )
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            release_connection(conn)

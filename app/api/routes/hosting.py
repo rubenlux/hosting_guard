@@ -21,6 +21,7 @@ from app.core.ai_orchestrator import AIOrchestrator
 from app.core.debug_context_builder import build_debug_context
 from app.core.health_engine import calculate_health_score
 from app.core.alert_engine import check_alerts
+from app.infra.docker_client import run_docker_command_async
 
 _user_repo = UserRepository()
 hosting_repo = HostingRepository()
@@ -43,15 +44,6 @@ def _find_serve_dir(site_dir: str) -> str:
             return candidate
     return site_dir
 
-
-async def _run_docker(*args, timeout: int = 30) -> subprocess.CompletedProcess:
-    """Ejecuta un comando Docker de forma no bloqueante (sin bloquear el event loop)."""
-    loop = asyncio.get_running_loop()
-    cmd  = list(args)
-    return await loop.run_in_executor(
-        None,
-        lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    )
 
 
 def _validate_project_name(name: str) -> None:
@@ -170,7 +162,7 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
         image = "nginx:alpine"
 
         command = [
-            "docker", "run", "-d",
+            "run", "-d",
             "--name",     container_name,
             "--network",  "deploy_hosting_network",
             # FIX #7: aplicar límites de recursos del plan (antes faltaban en este endpoint)
@@ -184,11 +176,10 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
             image
         ]
 
-        # FIX #1: usar _run_docker async para no bloquear el event loop
-        result = await _run_docker(*command, timeout=30)
+        code, _, stderr = await run_docker_command_async(command, timeout=30)
 
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Docker error: {result.stderr}")
+        if code != 0:
+            raise HTTPException(status_code=500, detail=f"Docker error: {stderr}")
 
         hosting_id = hosting_repo.create_hosting(
             user_id=user_id,
@@ -229,14 +220,13 @@ async def delete_hosting(hosting_id: int, user: dict = Depends(require_support_w
 
     container_name = hosting["container_name"]
 
-    # FIX #1: async docker
-    await _run_docker("docker", "rm", "-f", container_name, timeout=15)
+    await run_docker_command_async(["rm", "-f", container_name], timeout=15)
 
     # FIX #2: si es WordPress, eliminar también el contenedor de DB huérfano.
     # Convención de nombres: user_{id}_wp_{name}_{uid}  →  user_{id}_db_{name}_{uid}
     if "_wp_" in container_name:
         db_container = container_name.replace("_wp_", "_db_", 1)
-        await _run_docker("docker", "rm", "-f", db_container, timeout=15)
+        await run_docker_command_async(["rm", "-f", db_container], timeout=15)
 
     hosting_repo.delete_hosting(hosting_id, user_id)
     return {"status": "deleted", "hosting_id": hosting_id}
@@ -247,8 +237,7 @@ async def restart_hosting(hosting_id: int, user: dict = Depends(verify_token)):
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
-    # FIX #1: async docker
-    await _run_docker("docker", "restart", hosting["container_name"], timeout=20)
+    await run_docker_command_async(["restart", hosting["container_name"]], timeout=20)
     return {"status": "restarting"}
 
 
@@ -258,8 +247,7 @@ async def stop_hosting(hosting_id: int, user: dict = Depends(verify_token)):
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
-    # FIX #1: async docker
-    await _run_docker("docker", "stop", hosting["container_name"], timeout=20)
+    await run_docker_command_async(["stop", hosting["container_name"]], timeout=20)
     return {"status": "stopped"}
 
 
@@ -269,8 +257,7 @@ async def start_hosting(hosting_id: int, user: dict = Depends(verify_token)):
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
-    # FIX #1: async docker
-    await _run_docker("docker", "start", hosting["container_name"], timeout=20)
+    await run_docker_command_async(["start", hosting["container_name"]], timeout=20)
     return {"status": "starting"}
 
 from app.services.hosting.logs_service import get_hosting_logs
@@ -336,7 +323,7 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
 
         # 1. Lanzar MariaDB
         db_cmd = [
-            "docker", "run", "-d",
+            "run", "-d",
             "--name",    db_container,
             "--network", network,
             "-e", f"MYSQL_ROOT_PASSWORD={db_password}",
@@ -347,14 +334,13 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             "--memory", plan["memory"],
             "mariadb:10.11"
         ]
-        # FIX #1: async docker
-        db_result = await _run_docker(*db_cmd, timeout=30)
-        if db_result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"MySQL error: {db_result.stderr}")
+        db_code, _, db_err = await run_docker_command_async(db_cmd, timeout=30)
+        if db_code != 0:
+            raise HTTPException(status_code=500, detail=f"MySQL error: {db_err}")
 
         # 2. Lanzar WordPress
         wp_cmd = [
-            "docker", "run", "-d",
+            "run", "-d",
             "--name",    wp_container,
             "--network", network,
             "-e", f"WORDPRESS_DB_HOST={db_container}",
@@ -370,11 +356,11 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             "-l", f"traefik.http.services.{wp_container}.loadbalancer.server.port=80",
             "wordpress:latest"
         ]
-        wp_result = await _run_docker(*wp_cmd, timeout=30)
-        if wp_result.returncode != 0:
+        wp_code, _, wp_err = await run_docker_command_async(wp_cmd, timeout=30)
+        if wp_code != 0:
             # Rollback: limpiar db container si WordPress falla
-            await _run_docker("docker", "rm", "-f", db_container, timeout=15)
-            raise HTTPException(status_code=500, detail=f"WordPress error: {wp_result.stderr}")
+            await run_docker_command_async(["rm", "-f", db_container], timeout=15)
+            raise HTTPException(status_code=500, detail=f"WordPress error: {wp_err}")
 
         # 3. Persistir en DB
         # NOTA: solo se guarda wp_container. El db_container se recupera por convención
@@ -496,7 +482,7 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 "else npx serve . -l 80; fi"
             )
             command = [
-                "docker", "run", "-d",
+                "run", "-d",
                 "--name",    container_name,
                 "--network", "deploy_hosting_network",
                 "--cpus",    plan["cpu"],
@@ -512,7 +498,7 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
             ]
         else:
             command = [
-                "docker", "run", "-d",
+                "run", "-d",
                 "--name",    container_name,
                 "--network", "deploy_hosting_network",
                 "--cpus",    plan["cpu"],
@@ -526,11 +512,10 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 "nginx:alpine"
             ]
 
-        # FIX #1: async docker
-        result = await _run_docker(*command, timeout=60)
-        if result.returncode != 0:
+        code, _, stderr = await run_docker_command_async(command, timeout=60)
+        if code != 0:
             await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
-            raise HTTPException(status_code=500, detail=f"Docker error: {result.stderr}")
+            raise HTTPException(status_code=500, detail=f"Docker error: {stderr}")
 
         hosting_id = hosting_repo.create_hosting(
             user_id=user_id,
@@ -587,7 +572,7 @@ async def redeploy_from_github(hosting_id: int, user: dict = Depends(verify_toke
             capture_output=True, text=True, timeout=30
         )
     )
-    await _run_docker("docker", "restart", container_name, timeout=20)
+    await run_docker_command_async(["restart", container_name], timeout=20)
 
     return {
         "status":     "redeployed",
@@ -699,22 +684,21 @@ async def upload_zip(
             deployed_via_host = True
 
                 # 5b. Intentar docker cp también (funciona para contenedores sin volume mount)
-        # FIX #1: async docker
-        cp_result = await _run_docker(
-            "docker", "cp", f"{serve_dir}/.", f"{container_name}:/usr/share/nginx/html/",
-            timeout=30
+        cp_code, _, cp_err = await run_docker_command_async(
+            ["cp", f"{serve_dir}/.", f"{container_name}:/usr/share/nginx/html/"],
+            timeout=30,
         )
 
-        if not deployed_via_host and cp_result.returncode != 0:
+        if not deployed_via_host and cp_code != 0:
             raise HTTPException(
                 status_code=500,
-                detail=f"Error desplegando archivos: {cp_result.stderr}"
+                detail=f"Error desplegando archivos: {cp_err}"
             )
 
-        # 6. Recargar Nginx (FIX #1: async docker)
-        await _run_docker(
-            "docker", "exec", container_name, "nginx", "-s", "reload",
-            timeout=10
+        # 6. Recargar Nginx
+        await run_docker_command_async(
+            ["exec", container_name, "nginx", "-s", "reload"],
+            timeout=10,
         )
 
         return {

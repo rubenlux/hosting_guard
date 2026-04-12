@@ -12,12 +12,13 @@ from app.infra.audit.user_repository import UserRepository
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.pixel_repository import PixelRepository
 from app.infra.audit.metrics_repository import MetricsRepository
-from app.infra.db import get_connection
+from app.infra.audit.repository import AuditRepository
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 _user_repo    = UserRepository()
 _hosting_repo = HostingRepository()
+_audit_repo   = AuditRepository()
 _pixel_repo   = PixelRepository()
 _metrics_repo = MetricsRepository()
 
@@ -118,29 +119,10 @@ def get_user_full(user_id: int, _: dict = Depends(require_role("admin"))):
     activity = _hosting_repo.get_orchestrator_events(user_id, limit=30, skip=0)
 
     # AI advisory events keyed by tenant_id (= user email in this system)
-    tenant_id = profile["email"]
-    conn = get_connection()
-    cur = conn.cursor()
-    decision_events = [
-        dict(r) for r in cur.execute(
-            "SELECT event_id, timestamp, overall_status, confidence_level, requires_human_attention "
-            "FROM decision_events WHERE tenant_id = %s ORDER BY timestamp DESC LIMIT 20",
-            (tenant_id,)
-        ).fetchall()
-    ]
-    cur.execute(
-        "SELECT execution_id, timestamp, action_type, status "
-        "FROM execution_events WHERE tenant_id = %s ORDER BY timestamp DESC LIMIT 20",
-        (tenant_id,)
-    )
-    execution_events = [dict(r) for r in cur.fetchall()]
-
-    cur.execute(
-        "SELECT action_event_id, timestamp, action_type, actor, reason "
-        "FROM human_action_events WHERE tenant_id = %s ORDER BY timestamp DESC LIMIT 20",
-        (tenant_id,)
-    )
-    human_events = [dict(r) for r in cur.fetchall()]
+    tenant_id        = profile["email"]
+    decision_events  = _audit_repo.get_decision_events(tenant_id, limit=20)
+    execution_events = _audit_repo.get_execution_events(tenant_id, limit=20)
+    human_events     = _audit_repo.get_human_action_events(tenant_id, limit=20)
 
     # Per-hosting: stored traffic + uptime (no live docker call to keep response fast)
     hosting_details = []
@@ -178,16 +160,7 @@ def pixel_events(limit: int = 100, offset: int = 0, _: dict = Depends(require_ro
 @router.get("/orchestrator/events")
 def get_orchestrator_events(limit: int = 200, _: dict = Depends(require_role("admin"))):
     """Eventos globales del orquestador (throttle, autoscale, restart) de todos los usuarios."""
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT oe.event_id, oe.container_name, oe.user_id, oe.event_type, oe.message, oe.created_at, "
-        "u.email FROM orchestrator_events oe "
-        "LEFT JOIN users u ON oe.user_id = u.user_id "
-        "ORDER BY oe.created_at DESC LIMIT %s",
-        (limit,)
-    )
-    rows = cur.fetchall()
-    return [dict(r) for r in rows]
+    return _hosting_repo.get_all_orchestrator_events(limit=limit)
 
 
 # ---------------------------------------------------------------------------

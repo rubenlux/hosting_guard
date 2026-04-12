@@ -2,10 +2,7 @@ import json
 import logging
 import os
 import time
-import asyncio
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-
 
 from typing import Optional
 from fastapi import Depends, FastAPI, Request, HTTPException, Response
@@ -23,6 +20,7 @@ from app.api.security_headers import SecurityHeadersMiddleware
 from app.api.tenancy import Tenant
 from app.api.tenant_resolver import resolve_tenant
 from app.infra.audit.user_repository import UserRepository
+from app.lifespan import lifespan
 import bcrypt
 from pydantic import BaseModel, EmailStr
 from app.core.ai_advisory_engine import generate_advisory
@@ -41,74 +39,9 @@ from app.observability.metrics import (
     DECISIONS_TOTAL,
     HUMAN_ACTIONS_TOTAL,
 )
-from app.services.expiration_job import check_and_expire_free_hostings
-from app.services.traffic_collector import collect_traffic
-from app.services.health_checker import check_all_hostings
 
-# Configuración de logging para auditoría
 logger = logging.getLogger("hosting_guard_audit")
 logging.basicConfig(level=logging.INFO)
-
-async def expiration_scheduler():
-    """Corre el job de expiración cada 12 horas."""
-    while True:
-        try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, check_and_expire_free_hostings)
-        except Exception as e:
-            logger.error(f"Error en expiration_scheduler: {e}")
-        await asyncio.sleep(43200)  # 12 horas
-
-
-async def traffic_scheduler():
-    """Recoge métricas de tráfico nginx cada 5 minutos."""
-    logger.info("traffic_scheduler: iniciado — primera ejecución inmediata")
-    while True:
-        try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, collect_traffic)
-            logger.info("traffic_scheduler: ciclo completado")
-        except Exception as e:
-            logger.error(f"Error en traffic_scheduler: {e}", exc_info=True)
-        await asyncio.sleep(300)
-
-
-async def health_scheduler():
-    """Health check de contenedores cada 5 minutos."""
-    logger.info("health_scheduler: iniciado — primera ejecución inmediata")
-    while True:
-        try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, check_all_hostings)
-            logger.info("health_scheduler: ciclo completado")
-        except Exception as e:
-            logger.error(f"Error en health_scheduler: {e}", exc_info=True)
-        await asyncio.sleep(300)
-
-
-_background_tasks: set = set()
-
-
-# RUN_ORCHESTRATOR=false → background schedulers are disabled.
-# Set this when the dedicated orchestrator container is running to avoid double execution.
-_RUN_ORCHESTRATOR = os.getenv("RUN_ORCHESTRATOR", "true").lower() != "false"
-
-
-@asynccontextmanager
-async def lifespan(app):
-    # Initialize Database Schema (Idempotent)
-    from app.infra.migrations import init_db
-    init_db()
-
-    if _RUN_ORCHESTRATOR:
-        for coro in (expiration_scheduler(), traffic_scheduler(), health_scheduler()):
-            task = asyncio.create_task(coro)
-            _background_tasks.add(task)          # prevent garbage collection
-            task.add_done_callback(_background_tasks.discard)
-        logger.info("lifespan: %d background tasks created", len(_background_tasks))
-    else:
-        logger.info("lifespan: RUN_ORCHESTRATOR=false — background tasks disabled (orchestrator container active)")
-    yield
 
 
 from app.infra.db import init_db_pool

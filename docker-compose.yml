@@ -71,7 +71,7 @@ services:
   # ---------------------------------------------------------------------------
   app:
     build:
-      context: /opt/hosting_guard
+      context: .
     container_name: hosting_guard
     restart: always
     env_file: .env.production
@@ -106,7 +106,7 @@ services:
   # ---------------------------------------------------------------------------
   frontend:
     build:
-      context: /opt/hosting_guard/frontend
+      context: ./frontend
     container_name: frontend
     restart: always
     networks:
@@ -140,7 +140,7 @@ services:
   # redis — revocación de tokens persistente y caché de AI
   # ---------------------------------------------------------------------------
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: redis
     restart: always
     env_file: .env.production
@@ -175,7 +175,7 @@ services:
   # ---------------------------------------------------------------------------
   orchestrator:
     build:
-      context: /opt/hosting_guard
+      context: .
     container_name: orchestrator
     restart: always
     env_file: .env.production

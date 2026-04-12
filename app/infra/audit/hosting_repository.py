@@ -139,6 +139,22 @@ class HostingRepository:
         finally:
             release_connection(conn)
 
+    def get_all_orchestrator_events(self, limit: int = 200) -> List[Dict]:
+        """Admin-only: all orchestrator events across all users, joined with user email."""
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT oe.event_id, oe.container_name, oe.user_id, oe.event_type, oe.message, oe.created_at, "
+                "u.email FROM orchestrator_events oe "
+                "LEFT JOIN users u ON oe.user_id = u.user_id "
+                "ORDER BY oe.created_at DESC LIMIT %s",
+                (limit,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            release_connection(conn)
+
     def has_free_plan_from_ip(self, ip_address: str) -> bool:
         if not ip_address:
             return False

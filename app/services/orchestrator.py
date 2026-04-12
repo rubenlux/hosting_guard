@@ -1,10 +1,11 @@
-import subprocess
 import time
 import os
 from datetime import datetime
 import sys
 import threading
 import logging
+
+from app.infra.docker_client import run_docker_command
 
 try:
     import psutil
@@ -124,18 +125,13 @@ def get_container_stats():
     contenedores del sistema (traefik, postgres, etc.).
     DOBLE CHECK: filtra por prefijo AND por lista de protegidos.
     """
-    result = subprocess.run(
-        [
-            "docker", "stats", "--no-stream",
-            "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemPerc}}"
-        ],
-        capture_output=True,
-        text=True,
+    _, stdout, _ = run_docker_command(
+        ["stats", "--no-stream", "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemPerc}}"],
         timeout=30,
     )
 
     containers = []
-    lines = result.stdout.strip().split("\n")
+    lines = stdout.strip().split("\n")
     for line in lines:
         if not line or "|" not in line:
             continue
@@ -175,14 +171,10 @@ def throttle_container(name, user_id, cpu_limit, reason_type, cpu_pct=None, mem_
         return
 
     logger.info(f"[{datetime.now()}] ⚡ LIMITANDO {name} → {cpu_limit} CPU")
-    result = subprocess.run([
-        "docker", "update",
-        f"--cpus={cpu_limit}",
-        name
-    ], capture_output=True, text=True, timeout=15)
+    code, _, stderr = run_docker_command(["update", f"--cpus={cpu_limit}", name], timeout=15)
 
-    if result.returncode != 0:
-        logger.error(f"throttle_container falló para {name}: {result.stderr.strip()}")
+    if code != 0:
+        logger.error(f"throttle_container falló para {name}: {stderr.strip()}")
         return
 
     msg = f"Uso elevado de recursos. Se aplicó limitación temporal a {cpu_limit} vCPU."
@@ -212,13 +204,10 @@ def restart_container(name, user_id, cpu_pct=None, mem_pct=None):
         return
 
     logger.info(f"[{datetime.now()}] 🔄 REINICIANDO {name} (Exceso crítico de RAM)")
-    result = subprocess.run([
-        "docker", "restart",
-        name
-    ], capture_output=True, text=True, timeout=30)
+    code, _, stderr = run_docker_command(["restart", name], timeout=30)
 
-    if result.returncode != 0:
-        logger.error(f"restart_container falló para {name}: {result.stderr.strip()}")
+    if code != 0:
+        logger.error(f"restart_container falló para {name}: {stderr.strip()}")
         return
 
     hosting_repo.log_orchestrator_event(
@@ -235,15 +224,13 @@ def revert_scaling(name, user_id, original_cpu, original_mem):
 
     logger.info(f"[{datetime.now()}] 🔙 REVIRTIENDO {name} a límites de plan ({original_cpu} CPU)")
     try:
-        result = subprocess.run([
-            "docker", "update",
-            f"--cpus={original_cpu}",
-            f"--memory={original_mem}m",
-            name
-        ], capture_output=True, text=True, timeout=15)
+        code, _, stderr = run_docker_command(
+            ["update", f"--cpus={original_cpu}", f"--memory={original_mem}m", name],
+            timeout=15,
+        )
 
-        if result.returncode != 0:
-            logger.error(f"revert_scaling falló para {name}: {result.stderr.strip()}")
+        if code != 0:
+            logger.error(f"revert_scaling falló para {name}: {stderr.strip()}")
         else:
             hosting_repo.log_orchestrator_event(name, user_id, "autoscale_revert", "Pico de tráfico superado. Recursos restaurados a los límites de tu plan.")
     except Exception as e:
@@ -282,16 +269,14 @@ def apply_autoscale(name, user_id, rules, cpu_pct=None, mem_pct=None):
     
     # 2. Aplicar recursos
     try:
-        result = subprocess.run([
-            "docker", "update",
-            f"--cpus={AUTOSCALE_CPU}",
-            f"--memory={AUTOSCALE_RAM}",
-            name
-        ], capture_output=True, text=True, timeout=15)
-        
-        if result.returncode != 0:
-            logger.error(f"Autoscale falló para {name}: {result.stderr.strip()}")
-            user_repo.update_balance(user_id, cost_abs) # Rollback
+        code, _, stderr = run_docker_command(
+            ["update", f"--cpus={AUTOSCALE_CPU}", f"--memory={AUTOSCALE_RAM}", name],
+            timeout=15,
+        )
+
+        if code != 0:
+            logger.error(f"Autoscale falló para {name}: {stderr.strip()}")
+            user_repo.update_balance(user_id, cost_abs)  # Rollback
             return
             
         hosting_repo.log_orchestrator_event(
