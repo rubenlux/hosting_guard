@@ -93,11 +93,13 @@ async def _run_structured_diagnosis(
         from app.services.ai_client import call_llm
         from app.infra.audit.ai_diagnosis_repository import AIDiagnosisRepository
 
-        parsed_errors = debug_context["logs"].get("parsed_errors", [])
+        # Use only actionable errors throughout the AI pipeline.
+        # dev_noise (source maps) and external_probe (bots) must never reach Claude.
+        actionable_errors = debug_context["logs"].get("actionable_errors", [])
         repo = AIDiagnosisRepository()
 
         # ── Phase 1.5: Cache check ──────────────────────────────────────────
-        fingerprint = _build_fingerprint(score, cpu, ram, parsed_errors)
+        fingerprint = _build_fingerprint(score, cpu, ram, actionable_errors)
         cached = await loop.run_in_executor(
             None,
             lambda: repo.get_by_fingerprint(hosting_id, fingerprint),
@@ -118,7 +120,7 @@ async def _run_structured_diagnosis(
             cpu=cpu,
             ram=ram,
             score=score,
-            parsed_errors=parsed_errors,
+            parsed_errors=actionable_errors,
             logs=debug_context["logs"].get("recent_raw_snippet", ""),
             history=history,
             alerts=alerts or [],
@@ -243,13 +245,16 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
             logging.warning(f"Error parsing metrics: {e}")
             cpu_val, ram_val = 0.0, 0.0
 
-        # Agrupar errores para el engine
+        # Agrupar solo errores reales para el engine (dev_noise y external_probe
+        # ya tienen source asignado en el parser; health_engine los ignora internamente,
+        # pero pasamos la fuente para que el engine pueda aplicar su propio filtro).
         grouped_errors = {}
         for err in debug_context["logs"]["parsed_errors"]:
             etype = err.get("type", "unknown")
-            grouped_errors[etype] = grouped_errors.get(etype, 0) + 1
+            entry = grouped_errors.setdefault(etype, {"type": etype, "count": 0, "source": err.get("source", "application")})
+            entry["count"] += 1
 
-        engine_errors = [{"type": k, "count": v} for k, v in grouped_errors.items()]
+        engine_errors = list(grouped_errors.values())
 
         health_result = calculate_health_score(
             {
@@ -273,7 +278,7 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
                     status=health_result["status"],
                     cpu=cpu_val,
                     ram=ram_val,
-                    error_count=len(debug_context["logs"]["parsed_errors"]),
+                    error_count=len(debug_context["logs"]["actionable_errors"]),
                     warning_count=health_result["warning_count"],
                     alert_type=alert["type"] if alert else None,
                     alert_message=alert["message"] if alert else None,
@@ -305,6 +310,18 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
             alerts=[alert] if alert else [],
             score_breakdown=health_result.get("score_breakdown"),
         )
+
+        # ── Sanity clamp: if no real errors exist, force info/healthy verdict ──
+        # Prevents Claude from returning "infra" or "warning" diagnoses for
+        # systems where only dev_noise (source maps) or external probes were logged.
+        if structured and not debug_context["logs"].get("actionable_errors"):
+            structured.setdefault("severity",     "info")
+            structured.setdefault("failure_type", "unknown")
+            if structured.get("severity") != "info":
+                structured["severity"]     = "info"
+                structured["failure_type"] = "unknown"
+                structured["summary"]      = "No se detectaron errores reales en la aplicación."
+                structured["confidence"]   = 0.95
 
         return {
             "status": status,

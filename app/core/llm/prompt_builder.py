@@ -100,9 +100,14 @@ Recurrence status: {recurring_line}
    - infra issues (CPU, RAM, container crash, OOM)
 6. If recurrence is detected, correlate with the pattern from Previous Diagnoses and explain
    why the prior fix failed to prevent recurrence
-7. NEVER give generic advice
-8. NEVER say "check logs"
-9. Be precise, technical, and direct
+7. If the errors list is empty and metrics are within normal range:
+   - You MUST return severity: "info"
+   - You MUST set failure_type: "unknown"
+   - You MUST NOT invent issues that are not present in the data
+   - summary should state that no actionable issues were detected
+8. NEVER give generic advice
+9. NEVER say "check logs"
+10. Be precise, technical, and direct
 
 ━━━━━━━━━━━━━━━━━━━
 🧾 OUTPUT FORMAT (STRICT JSON)

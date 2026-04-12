@@ -164,9 +164,9 @@ class TestRealErrorDetection:
         assert "CPU pressure" in ctx["system_hint"]
 
     def test_system_hint_stable(self):
-        """Clean system → stable hint."""
+        """Clean system (no errors, normal metrics) → hard guard fires with healthy message."""
         ctx = build_context("site", 30.0, 40.0, 95, [], "")
-        assert "stable" in ctx["system_hint"].lower()
+        assert "healthy" in ctx["system_hint"].lower() or "no application errors" in ctx["system_hint"].lower()
 
     # ── Health engine score breakdown ─────────────────────────────────────────
 

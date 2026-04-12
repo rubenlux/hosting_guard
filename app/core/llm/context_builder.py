@@ -22,6 +22,39 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+# ── Log snippet noise filter ─────────────────────────────────────────────────
+
+# HTTP status codes that are completely benign — success, redirect, cache hit.
+# These clog the LLM context with irrelevant nginx access log traffic.
+_BENIGN_STATUS = re.compile(r'" (200|201|204|206|301|302|304|307|308) ')
+# Source map files requested by browser dev-tools — no production impact.
+_MAP_404       = re.compile(r'\.map(?:\?[^"]*)?"\s+404')
+
+
+def _filter_log_snippet(log_str: str) -> str:
+    """
+    Strip lines the LLM should never diagnose:
+      - Benign HTTP responses (200, 304, 301, …) — successful nginx access log entries
+      - Source map 404s (.map files) — dev-tool browser requests, no production impact
+
+    Keeps: 5xx errors, application 4xx, Python tracebacks, PHP errors, anything
+    that isn't a routine HTTP access log line.
+
+    Without this filter, Claude sees hundreds of '304 0' image/CSS requests and
+    draws wrong conclusions about missing assets or deployment failures.
+    """
+    filtered = []
+    for line in log_str.splitlines():
+        if _BENIGN_STATUS.search(line):
+            continue
+        if _MAP_404.search(line):
+            continue
+        filtered.append(line)
+
+    result = "\n".join(filtered)
+    return result if result.strip() else "(No relevant log entries in this window)"
+
+
 # ── Timestamp helpers ─────────────────────────────────────────────────────────
 
 def _rel_time(ts_str: str | None) -> str | None:
@@ -251,12 +284,12 @@ def build_context(
         alerts:          Real system alerts (from alert_engine or DB), if any.
         score_breakdown: Penalty breakdown from calculate_health_score(), if available.
     """
-    # Normalize logs to string, then truncate to 2000 most-recent chars
+    # Normalize logs, strip benign noise lines, then truncate to 2000 most-recent chars
     if isinstance(logs, list):
         log_str = "\n".join(str(line) for line in logs[-20:])
     else:
         log_str = str(logs or "")
-    log_str = log_str[-2000:]
+    log_str = _filter_log_snippet(log_str)[-2000:]
 
     # Normalize history — only expose fields useful to the LLM
     clean_history: list[dict] = []
@@ -286,6 +319,31 @@ def build_context(
         e for e in parsed_errors
         if e.get("source") == "application"
     ]
+
+    # ── Hard guard: no actionable errors AND metrics are clean ──────────────
+    # Only fires when there is truly nothing to diagnose: no application errors
+    # AND CPU/RAM are within normal range.  If CPU > 80% or RAM > 80% we still
+    # want the system_hint to reach the LLM — high resource usage is a real signal.
+    # Without this guard, Claude reads benign nginx traffic + empty errors and
+    # invents deployment problems — the "hallucination trap" seen in production.
+    if not actionable_errors and cpu <= 80 and ram <= 80:
+        return {
+            "hosting_name":    hosting_name,
+            "environment":     environment,
+            "cpu":             round(cpu, 1),
+            "ram":             round(ram, 1),
+            "score":           score,
+            "errors":          "No se detectaron errores de aplicación.",
+            "parsed_errors":   [],
+            "logs":            "(No relevant log entries — only benign traffic detected)",
+            "alerts":          _format_alerts(alerts or []),
+            "history":         clean_history,
+            "system_hint":     "No application errors detected. System appears healthy.",
+            "stack_info":      None,
+            "rag_context":     build_rag_context(clean_history),
+            "is_recurring":    False,
+            "score_breakdown": _format_score_breakdown(score_breakdown),
+        }
 
     return {
         "hosting_name":    hosting_name,
