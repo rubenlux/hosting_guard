@@ -1,157 +1,158 @@
 /**
  * useAIAdvisory — deterministic advisory engine (frontend layer)
  *
- * Mirrors the thresholds from app/core/health_engine.py so the frontend
- * advisory is always consistent with backend health scores.
- * No backend calls, no LLM — pure computation over existing data.
+ * Architecture: decision tree, NOT rule filter.
+ *
+ * Priority tiers mirror app/core/health_engine.py semantics:
+ *
+ *   TIER 1 — INFRA:        container down (site is 100% unreachable)
+ *   TIER 2 — FATAL:        error_count > 0 (php_fatal / db_error) — trumps everything else
+ *   TIER 3 — PERFORMANCE:  score-based / cpu / ram (resource exhaustion)
+ *   TIER 4 — NOISE:        warning_count (404s) — low priority, informational
+ *
+ * Why tiers matter:
+ *   CPU can spike *because* of a php_fatal (PHP looping on crash).
+ *   Listing "CPU alta + score bajo" alongside the real cause pollutes the advisory
+ *   and trains users to ignore it. Root cause wins; secondary signals are footnotes.
+ *
+ * Score thresholds match health_engine.py exactly:
+ *   db_error   → -70 pts  (score ≤ 30 when only cause)
+ *   php_fatal  → -50 pts  (score ≤ 50 when only cause)
+ *   cpu > 85   → -20 pts
+ *   ram > 80   → -15 pts
  *
  * @param {Array}  hostings   — from useDashboardData
- * @param {Object} healthData — { [hostingId]: { score, cpu, ram, error_count, ... } }
+ * @param {Object} healthData — { [hostingId]: { score, status, cpu, ram, error_count, warning_count } }
  * @param {Array}  alerts     — from useDashboardData (site_alerts rows)
  *
  * @returns {Array<Advisory>} sorted critical → warning → ok
  */
 import { useMemo } from 'react';
 
-// Severity ranking — higher = worse
 const SEVERITY_RANK = { critical: 2, warning: 1, ok: 0 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Rule definitions
-// Each rule: { id, severity, test(hosting, hd, alerts), signal, recommendation }
-// signal can be a string or fn(hosting, hd) → string
-// Rules are evaluated top-to-bottom; ALL that match contribute signals.
-// The highest severity among triggered rules becomes the advisory severity.
-// ─────────────────────────────────────────────────────────────────────────────
-const RULES = [
-  // ── CRITICAL ────────────────────────────────────────────────────────────────
-  {
-    id: 'container_down',
-    severity: 'critical',
-    test: (h) => h.status !== 'active',
-    signal: 'Contenedor inactivo o caído',
-    recommendation: 'Iniciar o reiniciar el hosting desde el panel de proyectos.',
-  },
-  {
-    id: 'score_critical',
-    severity: 'critical',
-    test: (_h, hd) => hd && hd.score < 40,
-    signal: (_h, hd) => `Score de salud crítico: ${hd.score}/100`,
-    recommendation: 'Ejecutar diagnóstico IA y revisar logs del servidor.',
-  },
-  {
-    id: 'cpu_critical',
-    severity: 'critical',
-    // Mirrors health_engine.py: cpu > 85 → -20pts
-    test: (_h, hd) => hd && hd.cpu > 85,
-    signal: (_h, hd) => `CPU al ${hd.cpu.toFixed(0)}% — límite crítico superado`,
-    recommendation: 'Activar auto-scaling o revisar procesos en ejecución.',
-  },
-  {
-    id: 'error_count',
-    severity: 'critical',
-    test: (_h, hd) => hd && hd.error_count > 0,
-    signal: (_h, hd) =>
-      `${hd.error_count} error${hd.error_count !== 1 ? 'es' : ''} crítico${hd.error_count !== 1 ? 's' : ''} detectado${hd.error_count !== 1 ? 's' : ''}`,
-    recommendation: 'Revisar logs del servidor. Posibles errores PHP o de base de datos.',
-  },
-  {
-    id: 'alert_critical',
-    severity: 'critical',
-    test: (h, _hd, alerts) =>
-      alerts.some(a => a.site_id === h.hosting_id && a.level === 'critical' && !a.resolved_at),
-    signal: 'Alerta crítica activa generada por el sistema de monitoreo',
-    recommendation: 'Resolver la alerta desde el panel de notificaciones.',
-  },
-
-  // ── WARNING ─────────────────────────────────────────────────────────────────
-  {
-    id: 'score_warning',
-    severity: 'warning',
-    // Mirrors health_engine.py: score 40–69 = "warning" status
-    test: (_h, hd) => hd && hd.score >= 40 && hd.score < 70,
-    signal: (_h, hd) => `Score de salud degradado: ${hd.score}/100`,
-    recommendation: 'Monitorear tendencia. Considerar diagnóstico preventivo.',
-  },
-  {
-    id: 'cpu_warning',
-    severity: 'warning',
-    // Mirrors health_engine.py: cpu 70–85 = approaching threshold
-    test: (_h, hd) => hd && hd.cpu > 70 && hd.cpu <= 85,
-    signal: (_h, hd) => `CPU al ${hd.cpu.toFixed(0)}% — cerca del límite`,
-    recommendation: 'Considerar activar auto-scaling preventivo.',
-  },
-  {
-    id: 'ram_warning',
-    severity: 'warning',
-    // Mirrors health_engine.py: ram > 80 → -15pts
-    test: (_h, hd) => hd && hd.ram > 80,
-    signal: (_h, hd) => `RAM al ${hd.ram.toFixed(0)}% — uso elevado`,
-    recommendation: 'Revisar posibles fugas de memoria o considerar upgrade de plan.',
-  },
-  {
-    id: 'warning_count',
-    severity: 'warning',
-    test: (_h, hd) => hd && hd.warning_count > 10,
-    signal: (_h, hd) => `${hd.warning_count} errores 404 detectados en la última hora`,
-    recommendation: 'Verificar rutas de archivos y enlaces rotos en el sitio.',
-  },
-  {
-    id: 'alert_warning',
-    severity: 'warning',
-    test: (h, _hd, alerts) =>
-      alerts.some(a => a.site_id === h.hosting_id && a.level === 'warning' && !a.resolved_at),
-    signal: 'Alerta de advertencia activa',
-    recommendation: 'Atender la advertencia para evitar degradación del servicio.',
-  },
-];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Pure evaluation function — exported for unit testing
+// Decision tree — one cause, one narrative, no noise.
+// Priority order mirrors backend impact weights:
+//   1. container down  (site 100% unreachable)
+//   2. error_count     (php_fatal / db_error — root cause)
+//   3. alerts          (monitoring system signal)
+//   4. cpu / ram       (resource exhaustion)
+//   5. score           (degraded health, no clear single cause)
+//   6. warning_count   (404 noise)
 // ─────────────────────────────────────────────────────────────────────────────
 export function evaluateHosting(hosting, healthData, alerts) {
   const hd = healthData[hosting.hosting_id];
 
-  // Only evaluate health rules when health data exists and container is active
-  const triggered = RULES.filter(r => {
-    try { return r.test(hosting, hd, alerts); }
-    catch { return false; }
-  });
-
-  if (triggered.length === 0) {
+  // No metrics yet — wait silently
+  if (!hd) {
     return {
-      hostingId:        hosting.hosting_id,
-      hostingName:      hosting.name,
-      severity:         'ok',
-      summary:          'Operando con normalidad.',
-      recommendation:   'Continuar con monitoreo regular.',
+      hostingId:         hosting.hosting_id,
+      hostingName:       hosting.name,
+      severity:          'ok',
+      summary:           'Sin datos suficientes.',
+      recommendation:    'Esperando métricas iniciales.',
       requiresAttention: false,
-      signals:          [],
+      signals:           [],
     };
   }
 
-  // Highest severity among all triggered rules
-  const topSeverity = triggered.reduce(
-    (best, r) => SEVERITY_RANK[r.severity] > SEVERITY_RANK[best] ? r.severity : best,
-    'ok',
+  // 1. INFRA — container down
+  if (hosting.status !== 'active') {
+    return {
+      hostingId:         hosting.hosting_id,
+      hostingName:       hosting.name,
+      severity:          'critical',
+      summary:           'El contenedor está detenido o inaccesible.',
+      recommendation:    'Reiniciar el hosting inmediatamente desde el panel.',
+      requiresAttention: true,
+      signals:           ['Contenedor no está en ejecución'],
+    };
+  }
+
+  // 2. FATAL — application errors (root cause; CPU spike may be a side-effect)
+  if (hd.error_count > 0) {
+    return {
+      hostingId:         hosting.hosting_id,
+      hostingName:       hosting.name,
+      severity:          'critical',
+      summary:           `Errores críticos detectados en la aplicación (${hd.error_count}).`,
+      recommendation:    'Revisar logs del servidor. Posible fallo en código o base de datos.',
+      requiresAttention: true,
+      signals: [
+        `${hd.error_count} error${hd.error_count !== 1 ? 'es' : ''} crítico${hd.error_count !== 1 ? 's' : ''}`,
+        hd.cpu > 85 ? `CPU elevada (${hd.cpu.toFixed(0)}%) — posible efecto secundario` : null,
+      ].filter(Boolean),
+    };
+  }
+
+  // 3. ALERTS — active critical from monitoring system
+  const hasCriticalAlert = alerts.some(
+    a => a.site_id === hosting.hosting_id && a.level === 'critical' && !a.resolved_at,
   );
+  if (hasCriticalAlert) {
+    return {
+      hostingId:         hosting.hosting_id,
+      hostingName:       hosting.name,
+      severity:          'critical',
+      summary:           'El sistema detectó una alerta crítica activa.',
+      recommendation:    'Revisar el panel de alertas para resolver el incidente.',
+      requiresAttention: true,
+      signals:           ['Alerta crítica del sistema'],
+    };
+  }
 
-  const signals = triggered.map(r =>
-    typeof r.signal === 'function' ? r.signal(hosting, hd) : r.signal,
-  );
+  // 4. PERFORMANCE — resource exhaustion
+  if (hd.cpu > 85 || hd.ram > 80) {
+    return {
+      hostingId:         hosting.hosting_id,
+      hostingName:       hosting.name,
+      severity:          'warning',
+      summary:           'El sitio está bajo alta carga de recursos.',
+      recommendation:    'Activar auto-scaling o optimizar procesos activos.',
+      requiresAttention: true,
+      signals: [
+        hd.cpu > 85 ? `CPU crítica (${hd.cpu.toFixed(0)}%)` : null,
+        hd.ram > 80 ? `RAM elevada (${hd.ram.toFixed(0)}%)` : null,
+      ].filter(Boolean),
+    };
+  }
 
-  // Recommendation from the first (most severe) triggered rule
-  const topRule = triggered.find(r => r.severity === topSeverity);
-  const recommendation = topRule?.recommendation ?? '';
+  // 5. SCORE — degraded health, no clear single cause
+  if (hd.score < 70) {
+    return {
+      hostingId:         hosting.hosting_id,
+      hostingName:       hosting.name,
+      severity:          'warning',
+      summary:           `La salud del sistema está degradándose (${hd.score}/100).`,
+      recommendation:    'Monitorear comportamiento y considerar diagnóstico preventivo.',
+      requiresAttention: true,
+      signals:           [`Score actual: ${hd.score}/100`],
+    };
+  }
 
+  // 6. NOISE — 404 warnings
+  if (hd.warning_count > 10) {
+    return {
+      hostingId:         hosting.hosting_id,
+      hostingName:       hosting.name,
+      severity:          'warning',
+      summary:           'Se detectaron múltiples errores 404.',
+      recommendation:    'Verificar enlaces rotos o recursos faltantes.',
+      requiresAttention: true,
+      signals:           [`${hd.warning_count} errores 404 recientes`],
+    };
+  }
+
+  // ALL CLEAR
   return {
     hostingId:         hosting.hosting_id,
     hostingName:       hosting.name,
-    severity:          topSeverity,
-    summary:           signals[0],
-    recommendation,
-    requiresAttention: true,
-    signals,
+    severity:          'ok',
+    summary:           'El sistema opera con normalidad.',
+    recommendation:    'No se requiere acción.',
+    requiresAttention: false,
+    signals:           [],
   };
 }
 
@@ -161,7 +162,6 @@ export function evaluateHosting(hosting, healthData, alerts) {
 export function useAIAdvisory(hostings, healthData, alerts) {
   return useMemo(() => {
     const advisories = hostings.map(h => evaluateHosting(h, healthData, alerts));
-    // Sort: critical → warning → ok
     return advisories.sort(
       (a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity],
     );

@@ -8,7 +8,7 @@
  *   advisories  — Array<Advisory> sorted by severity (from useAIAdvisory)
  *   onDiagnose  — (hostingId) => void  — triggers full AI diagnosis
  */
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Bot, AlertTriangle, CheckCircle, ChevronDown, ChevronUp, Zap } from 'lucide-react';
 
 const SEVERITY_CONFIG = {
