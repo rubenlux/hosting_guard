@@ -472,11 +472,11 @@ class TestDiagnosisCache:
             "evidence": [], "fix_steps": [], "cached": True,
         }
 
+        _app_err = {"type": "ModuleNotFoundError", "source": "application", "file": "app/main.py", "line": 15}
         debug_ctx = {
             "logs": {
-                "parsed_errors": [
-                    {"type": "ModuleNotFoundError", "file": "app/main.py", "line": 15}
-                ],
+                "parsed_errors":     [_app_err],
+                "actionable_errors": [_app_err],
                 "recent_raw_snippet": IMPORT_ERROR_LOGS,
             }
         }
@@ -542,11 +542,11 @@ class TestDiagnosisCache:
             "confidence": 0.95,
         })
 
+        _app_err2 = {"type": "ModuleNotFoundError", "source": "application", "file": "app/main.py", "line": 15}
         debug_ctx = {
             "logs": {
-                "parsed_errors": [
-                    {"type": "ModuleNotFoundError", "file": "app/main.py", "line": 15}
-                ],
+                "parsed_errors":     [_app_err2],
+                "actionable_errors": [_app_err2],
                 "recent_raw_snippet": IMPORT_ERROR_LOGS,
             }
         }

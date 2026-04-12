@@ -108,6 +108,39 @@ async def _run_structured_diagnosis(
             logger.info("Diagnosis cache HIT for hosting_id=%s fp=%s", hosting_id, fingerprint)
             return cached
 
+        # ── Output governance: no actionable errors → canonical clean result ─
+        # Short-circuit BEFORE calling the LLM and BEFORE saving to DB.
+        # This guarantees the history always reflects the true system state.
+        # Previously the clamp ran after repo.save() — the LLM response was
+        # saved to DB regardless, so the history showed wrong diagnoses even
+        # though the API response was correct.
+        if not actionable_errors:
+            clean = {
+                "severity":     "info",
+                "failure_type": "unknown",
+                "summary":      "No se detectaron errores reales en la aplicación.",
+                "root_cause":   None,
+                "impact":       "No hay impacto. El sistema está funcionando correctamente.",
+                "fix":          {"action": None, "steps": []},
+                "evidence":     [],
+                "confidence":   0.95,
+                "location":     {"file": None, "line": None, "service": "system"},
+            }
+            saved = await loop.run_in_executor(
+                None,
+                lambda: repo.save(
+                    hosting_id=hosting_id,
+                    user_id=user_id,
+                    parsed=clean,
+                    raw_response="[no-llm: no actionable errors]",
+                    fingerprint=fingerprint,
+                ),
+            )
+            logger.info(
+                "Diagnosis short-circuit (no actionable errors) for hosting_id=%s", hosting_id
+            )
+            return saved or clean
+
         # ── Phase 2: RAG — fetch diagnosis history for context ──────────────
         history = await loop.run_in_executor(
             None,
