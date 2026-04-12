@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { useDashboardData } from '../../hooks/useDashboardData';
+import { useBusinessOverview } from '../../hooks/useBusinessOverview';
 import OverviewCard      from './OverviewCard';
 import DashboardSkeleton from './DashboardSkeleton';
 import EmptyState        from './EmptyState';
@@ -25,7 +25,7 @@ export default function BusinessOverview() {
     sites, site, selectSite, retry,
     kpis, sparkline, topPages, realtime,
     loading, error,
-  } = useDashboardData();
+  } = useBusinessOverview();
 
   if (loading) return <DashboardSkeleton />;
   if (error)   return <ErrorState message={error?.message} onRetry={retry} />;

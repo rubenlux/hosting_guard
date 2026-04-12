@@ -52,3 +52,4 @@ app_backup_refactor/
 auditoria/
 hosting_guard_complete.pdf
 generate_pdf.py
+frontend/dist/
