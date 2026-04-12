@@ -34,8 +34,9 @@ def process_alerts(health_result: Dict, last_alert: Optional[Dict] = None) -> Op
     if not alert:
         return None
         
-    # Evitar spam: si la alerta es idéntica a la última guardada, no la repetimos
-    if last_alert and last_alert.get("message") == alert["message"]:
+    # Evitar spam: si la alerta es idéntica a la última guardada, no la repetimos.
+    # last_alert viene de site_health_history → el campo es "alert_message", no "message".
+    if last_alert and last_alert.get("alert_message") == alert["message"]:
         return None
         
     return alert

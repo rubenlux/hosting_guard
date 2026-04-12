@@ -162,7 +162,7 @@ export function evaluateHosting(hosting, healthData, alerts) {
 export function useAIAdvisory(hostings, healthData, alerts) {
   return useMemo(() => {
     const advisories = hostings.map(h => evaluateHosting(h, healthData, alerts));
-    return advisories.sort(
+    return [...advisories].sort(
       (a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity],
     );
   }, [hostings, healthData, alerts]);

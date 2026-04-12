@@ -9,7 +9,7 @@
  * Props:
  *   onDiagnose — (hostingId) => void  — opens AI diagnosis modal in Dashboard
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Bot, AlertTriangle, CheckCircle, Zap, Activity } from 'lucide-react';
 import { useDashboardData } from '../hooks/useDashboardData';
 import { useAIAdvisory } from '../hooks/useAIAdvisory';
@@ -180,8 +180,16 @@ export default function AIAdvisoryPage({ onDiagnose }) {
 
   const [selectedId, setSelectedId] = useState(null);
 
+  // Auto-select the first (highest-severity) hosting when data loads or changes.
+  // Only fires when nothing is selected — preserves explicit user selection.
+  useEffect(() => {
+    if (!selectedId && advisories.length > 0) {
+      setSelectedId(advisories[0].hostingId);
+    }
+  }, [advisories, selectedId]);
+
   const selectedAdvisory = useMemo(
-    () => advisories.find(a => a.hostingId === selectedId) ?? advisories[0] ?? null,
+    () => advisories.find(a => a.hostingId === selectedId) ?? null,
     [advisories, selectedId],
   );
 

@@ -91,7 +91,7 @@ def check_all_hostings() -> None:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             status = res_inspect.stdout.strip() if res_inspect.returncode == 0 else "exited"
             is_up = (status == "running")
-            
+
             _metrics_repo.save_uptime_check(hosting_id=hosting_id, is_up=is_up, response_ms=elapsed_ms)
 
             # 2. Collect Extended Metrics
@@ -107,16 +107,41 @@ def check_all_hostings() -> None:
             }
             health_result = calculate_health_score(health_input)
 
-            # 4. Alert Engine
+            # 4a. Snapshot of previous state — needed for recovery detection below.
+            # Must be fetched BEFORE saving the new entry this cycle.
+            previous_health = _health_repo.get_latest_health(hosting_id)
+
+            # 4b. Alert Engine — dedup handled inside process_alerts
             last_alert = _health_repo.get_last_alert(hosting_id)
             alert = process_alerts(health_result, last_alert)
-            
+
             if alert:
                 _health_repo.create_alert(
                     user_id=user_id,
                     site_id=hosting_id,
                     level="warning" if health_result["status"] == "warning" else "critical",
                     message=alert["message"]
+                )
+
+            # 4c. Recovery detection — fires exactly once on the bad → good transition.
+            # previous_health.alert_type is set on cycles that triggered an alert.
+            # Once this cycle saves a clean entry (alert_type=None), the next cycle
+            # will see alert_type=None and skip the recovery event.
+            is_now_healthy = (
+                health_result.get("status") in ("excellent", "good")
+                and health_result.get("error_count", 0) == 0
+                and not alert
+            )
+            previous_was_bad = (
+                previous_health is not None
+                and previous_health.get("alert_type") in ("critical", "warning")
+            )
+            if is_now_healthy and previous_was_bad:
+                _health_repo.create_alert(
+                    user_id=user_id,
+                    site_id=hosting_id,
+                    level="recovery",
+                    message="El sitio se ha estabilizado. Los errores han sido resueltos.",
                 )
 
             # 5. Persistencia Histórica
