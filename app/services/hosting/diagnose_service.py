@@ -17,6 +17,59 @@ hosting_repo = HostingRepository()
 health_repo = HealthRepository()
 
 
+async def _run_structured_diagnosis(
+    hosting_name: str,
+    hosting_id: int,
+    user_id: int | None,
+    cpu: float,
+    ram: float,
+    score: int,
+    debug_context: dict,
+    loop,
+) -> dict | None:
+    """
+    Parallel structured-diagnosis path — independent of the AIOrchestrator.
+
+    Only runs when ENABLE_REAL_LLM=true and CLAUDE_API_KEY is set.
+    On any failure, logs a warning and returns None (caller degrades gracefully).
+    """
+    import os
+    if os.getenv("ENABLE_REAL_LLM", "false").lower() != "true":
+        return None
+
+    try:
+        from app.core.llm.prompt_builder import build_diagnosis_prompt
+        from app.core.llm.safe_parser import safe_parse_llm
+        from app.services.ai_client import call_llm
+        from app.infra.audit.ai_diagnosis_repository import AIDiagnosisRepository
+
+        context = {
+            "hosting_name": hosting_name,
+            "environment": "production",
+            "cpu": round(cpu, 1),
+            "ram": round(ram, 1),
+            "score": score,
+            "errors": debug_context["logs"].get("parsed_errors", []),
+            "parsed_errors": debug_context["logs"].get("parsed_errors", []),
+            "logs": debug_context["logs"].get("recent_raw_snippet", ""),
+            "alerts": [],
+        }
+
+        prompt = build_diagnosis_prompt(context)
+        raw = await loop.run_in_executor(None, lambda: call_llm(prompt))
+        parsed = safe_parse_llm(raw)
+
+        repo = AIDiagnosisRepository()
+        saved = await loop.run_in_executor(
+            None,
+            lambda: repo.save(hosting_id=hosting_id, user_id=user_id, parsed=parsed, raw_response=raw),
+        )
+        return saved or parsed
+    except Exception as exc:
+        logger.warning("Structured diagnosis skipped: %s", exc)
+        return None
+
+
 async def _run_docker(*args, timeout: int = 30) -> subprocess.CompletedProcess:
     """Ejecuta un comando Docker de forma no bloqueante (sin bloquear el event loop)."""
     loop = asyncio.get_running_loop()
@@ -161,11 +214,24 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
         except Exception as e:
             logging.error(f"Persistence failed in diagnosis: {e}")
 
+        # Structured diagnosis — parallel path, non-blocking failure
+        structured = await _run_structured_diagnosis(
+            hosting_name=hosting.get("name", container_name),
+            hosting_id=h_id_db,
+            user_id=user_id,
+            cpu=cpu_val,
+            ram=ram_val,
+            score=health_result["score"],
+            debug_context=debug_context,
+            loop=loop,
+        )
+
         return {
             "status": status,
             "metrics": metrics,
             "health_score": health_result["score"],
             "diagnosis": diagnosis,
+            "structured_diagnosis": structured,
             "has_hard_errors": debug_context["logs"]["has_errors"],
             "debug_info": {
                 "parsed_errors": debug_context["logs"]["parsed_errors"],

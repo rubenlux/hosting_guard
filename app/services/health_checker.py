@@ -133,8 +133,8 @@ def check_all_hostings() -> None:
                 and not alert
             )
             previous_was_bad = (
-                previous_health is not None
-                and previous_health.get("alert_type") in ("critical", "warning")
+                previous_health
+                and previous_health.get("alert_type") in ["critical", "warning"]
             )
             if is_now_healthy and previous_was_bad:
                 _health_repo.create_alert(

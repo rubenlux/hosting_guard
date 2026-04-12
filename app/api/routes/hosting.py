@@ -732,6 +732,27 @@ from app.services.hosting.diagnose_service import diagnose_hosting
 router.post("/hosting/{hosting_id}/diagnose")(diagnose_hosting)
 
 
+@router.get("/hosting/{hosting_id}/ai-history")
+async def get_ai_diagnosis_history(
+    hosting_id: int,
+    limit: int = 10,
+    user: dict = Depends(verify_token),
+):
+    """
+    Returns the most recent structured AI diagnoses for a hosting.
+    Verifies the hosting belongs to the requesting user.
+    """
+    from app.infra.audit.ai_diagnosis_repository import AIDiagnosisRepository
+    from app.infra.audit.hosting_repository import HostingRepository
+
+    user_id = int(user["user_id"])
+    hosting = HostingRepository().get_hosting(hosting_id, user_id)
+    if not hosting or str(hosting["user_id"]) != str(user_id):
+        raise HTTPException(status_code=404, detail="Hosting no encontrado o sin permisos")
+
+    return AIDiagnosisRepository().get_by_hosting(hosting_id, limit=min(limit, 20))
+
+
 @router.get("/{hosting_id}/health/history")
 async def get_health_history_legacy(hosting_id: int, user: dict = Depends(verify_token)):
     """Endpoint solicitado por la guía de implementación."""

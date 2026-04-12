@@ -211,6 +211,26 @@ _MIGRATIONS_PG = [
     "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (2, 'Sitio lento', 'El sitio carga muy despacio', '...', 'medium', 1) ON CONFLICT (category_id) DO NOTHING",
     # Phase 2: store db container name explicitly — avoids fragile dynamic name reconstruction
     "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS db_container_name TEXT",
+    # AI Diagnosis history — structured LLM output, append-only
+    """CREATE TABLE IF NOT EXISTS ai_diagnosis (
+        id           SERIAL PRIMARY KEY,
+        hosting_id   INTEGER NOT NULL,
+        user_id      INTEGER NOT NULL,
+        severity     TEXT,
+        summary      TEXT,
+        root_cause   TEXT,
+        file_path    TEXT,
+        line_number  TEXT,
+        service      TEXT,
+        evidence     TEXT,
+        impact       TEXT,
+        fix_action   TEXT,
+        fix_steps    TEXT,
+        confidence   REAL,
+        raw_response TEXT,
+        created_at   TEXT NOT NULL,
+        FOREIGN KEY (hosting_id) REFERENCES hostings (hosting_id)
+    )""",
 ]
 
 _INDEXES = [
@@ -229,6 +249,8 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_pixel_events_device ON pixel_events (site_id, device, created_at)",
     # Covers country breakdown: WHERE site_id=? AND country IS NOT NULL AND created_at>=? GROUP BY country
     "CREATE INDEX IF NOT EXISTS idx_pixel_events_country ON pixel_events (site_id, country, created_at)",
+    # AI diagnosis lookups by hosting
+    "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_hosting ON ai_diagnosis (hosting_id, created_at DESC)",
 ]
 
 def ensure_monthly_partitions(cursor):

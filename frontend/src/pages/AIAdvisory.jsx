@@ -10,9 +10,10 @@
  *   onDiagnose — (hostingId) => void  — opens AI diagnosis modal in Dashboard
  */
 import { useState, useMemo, useEffect } from 'react';
-import { Bot, AlertTriangle, CheckCircle, Zap, Activity } from 'lucide-react';
+import { Bot, AlertTriangle, CheckCircle, Zap, Activity, Clock, FileCode } from 'lucide-react';
 import { useDashboardData } from '../hooks/useDashboardData';
 import { useAIAdvisory } from '../hooks/useAIAdvisory';
+import api from '../services/api';
 
 // ── Severity helpers ──────────────────────────────────────────────────────────
 const SEV = {
@@ -173,6 +174,104 @@ function DetailPanel({ advisory, onDiagnose }) {
   );
 }
 
+// ── Diagnosis history timeline ────────────────────────────────────────────────
+const SEV_COLOR = {
+  critical: 'text-danger border-danger/30 bg-danger/5',
+  warning:  'text-warn  border-warn/20  bg-warn/5',
+  info:     'text-accent border-accent/20 bg-accent/5',
+};
+
+function relTime(iso) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60_000);
+  if (m < 1)   return 'Ahora mismo';
+  if (m < 60)  return `Hace ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24)  return `Hace ${h}h`;
+  return `Hace ${Math.floor(h / 24)}d`;
+}
+
+function DiagnosisHistory({ hostingId }) {
+  const [items, setItems]     = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!hostingId) return;
+    setLoading(true);
+    api.get(`/hosting/${hostingId}/ai-history?limit=10`)
+      .then(r => setItems(r.data ?? []))
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false));
+  }, [hostingId]);
+
+  if (loading) {
+    return <div className="text-[10px] text-muted italic py-2">Cargando historial...</div>;
+  }
+  if (items.length === 0) {
+    return (
+      <div className="text-[10px] text-muted italic py-2">
+        Sin diagnósticos previos. Presioná "Diagnosticar problema" para generar el primero.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {items.map(item => {
+        const color = SEV_COLOR[item.severity] ?? SEV_COLOR.info;
+        return (
+          <div key={item.id} className={`rounded-xl border p-3 ${color} space-y-2`}>
+            {/* Header row */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-black uppercase tracking-wider">
+                {item.severity}
+              </span>
+              <span
+                className="text-[9px] font-mono text-muted"
+                title={new Date(item.created_at).toLocaleString()}
+              >
+                <Clock className="w-2.5 h-2.5 inline mr-0.5" />
+                {relTime(item.created_at)}
+              </span>
+            </div>
+
+            {/* Summary */}
+            <p className="text-[11px] font-semibold text-white leading-snug">{item.summary}</p>
+
+            {/* Root cause */}
+            {item.root_cause && (
+              <p className="text-[10px] text-gray-400 leading-relaxed">{item.root_cause}</p>
+            )}
+
+            {/* Location */}
+            {item.file_path && (
+              <div className="flex items-center gap-1 text-[9px] font-mono text-accent">
+                <FileCode className="w-3 h-3 shrink-0" />
+                {item.file_path}{item.line_number ? `:${item.line_number}` : ''}
+              </div>
+            )}
+
+            {/* Fix */}
+            {item.fix_action && (
+              <div className="flex items-start gap-1.5 text-[10px]">
+                <Zap className="w-3 h-3 mt-0.5 shrink-0 text-accent" />
+                <span className="text-gray-300">{item.fix_action}</span>
+              </div>
+            )}
+
+            {/* Confidence */}
+            {item.confidence != null && (
+              <div className="text-[9px] font-mono text-muted">
+                Confianza: {Math.round(item.confidence * 100)}%
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function AIAdvisoryPage({ onDiagnose }) {
   const { hostings, healthData, alerts } = useDashboardData();
@@ -240,8 +339,8 @@ export default function AIAdvisoryPage({ onDiagnose }) {
             ))}
           </div>
 
-          {/* Right — detail */}
-          <div className="lg:col-span-2">
+          {/* Right — detail + history */}
+          <div className="lg:col-span-2 space-y-4">
             {selectedAdvisory
               ? <DetailPanel advisory={selectedAdvisory} onDiagnose={onDiagnose} />
               : (
@@ -250,6 +349,18 @@ export default function AIAdvisoryPage({ onDiagnose }) {
                 </div>
               )
             }
+
+            {selectedAdvisory && (
+              <div className="card-dash p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-3.5 h-3.5 text-muted" />
+                  <span className="text-[10px] font-mono text-muted uppercase tracking-widest">
+                    Historial IA
+                  </span>
+                </div>
+                <DiagnosisHistory hostingId={selectedAdvisory.hostingId} />
+              </div>
+            )}
           </div>
 
         </div>
