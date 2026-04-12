@@ -68,6 +68,21 @@ class LogParser:
                 path_match = re.search(r'(?:GET|POST|HEAD)\s+(.+?)\s+HTTP', line)
                 path = path_match.group(1) if path_match else "unknown"
 
+                # Source maps (.map) are browser dev-tool requests — no production impact.
+                # Treat as dev_noise so they never pollute the health score or LLM context.
+                if path.endswith(".map"):
+                    parsed_errors.append({
+                        "type":        "http_404",
+                        "severity":    "info",
+                        "source":      "dev_noise",
+                        "message":     f"Source map faltante (sin impacto en producción): {path}",
+                        "file":        path,
+                        "line":        0,
+                        "ts":          ts,
+                        "raw_context": line,
+                    })
+                    continue
+
                 if _is_probe(path):
                     parsed_errors.append({
                         "type":        "http_404",
@@ -106,11 +121,20 @@ class LogParser:
 
         # Python Regex over the whole blob (no per-line TS for multi-line tracebacks)
         for py_match in PYTHON_ERROR_REGEX.finditer(raw_logs):
+            error_msg = py_match.group(2).strip()
+            # Extract specific exception class (e.g. "ModuleNotFoundError: ..." → "ModuleNotFoundError")
+            # This feeds _detect_system_hint with the exact type for targeted pre-classification.
+            raw_class  = error_msg.split(":")[0].strip()
+            error_type = (
+                raw_class
+                if re.match(r'^[A-Z][A-Za-z]+(?:Error|Exception|Warning)$', raw_class)
+                else "python_exception"
+            )
             parsed_errors.append({
-                "type":        "python_exception",
+                "type":        error_type,
                 "severity":    "critical",
                 "source":      "application",
-                "message":     py_match.group(2).strip(),
+                "message":     error_msg,
                 "file":        "unknown.py",
                 "line":        0,
                 "ts":          None,  # multi-line blob — no reliable single timestamp

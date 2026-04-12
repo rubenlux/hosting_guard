@@ -307,7 +307,8 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
             "status": status,
             "metrics": metrics,
             "health_score": health_result["score"],
-            "diagnosis": diagnosis,
+            # structured (Claude) takes precedence; old AI Orchestrator is the fallback
+            "diagnosis": structured or diagnosis,
             "structured_diagnosis": structured,
             "has_hard_errors": debug_context["logs"]["has_errors"],
             "debug_info": {

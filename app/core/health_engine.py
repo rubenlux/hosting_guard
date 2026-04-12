@@ -62,8 +62,8 @@ def calculate_health_score(data: dict) -> dict:
 
     # 🟡 404 y Errores Graves
     for err in errors:
-        # Probes externos (bots/scanners) no afectan el health score
-        if err.get("source") == "external_probe":
+        # Probes externos y source maps no afectan el health score
+        if err.get("source") in ("external_probe", "dev_noise"):
             continue
 
         err_type = err.get("type", "").lower()
