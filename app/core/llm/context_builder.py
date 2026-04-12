@@ -277,28 +277,37 @@ def build_context(
         if stack_info else None
     )
 
+    # Only pass real application errors to the LLM.
+    # dev_noise (source maps, browser requests) and external_probe (bots/scanners)
+    # are already excluded from the health score — they must also be excluded here,
+    # otherwise Claude diagnoses noise as real issues (the root cause of the bug
+    # where Claude reported "missing source map files" as an infra failure).
+    actionable_errors = [
+        e for e in parsed_errors
+        if e.get("source") == "application"
+    ]
+
     return {
         "hosting_name":    hosting_name,
         "environment":     environment,
         "cpu":             round(cpu, 1),
         "ram":             round(ram, 1),
         "score":           score,
-        # Sentence-form summary: source + ts + message per error
-        "errors":          _summarize_errors(parsed_errors),
-        # Small raw slice for cases where the LLM needs exact field values
-        "parsed_errors":   parsed_errors[:3],
+        # Only actionable errors reach the LLM — no noise, no external probes
+        "errors":          _summarize_errors(actionable_errors),
+        "parsed_errors":   actionable_errors[:3],
         "logs":            log_str,
         # Real system alerts, formatted as bullet list
         "alerts":          _format_alerts(alerts or []),
         "history":         clean_history,
-        # Pre-classification hint — guides LLM toward the dominant signal
-        "system_hint":     _detect_system_hint(parsed_errors, cpu, ram),
+        # Pre-classification hint uses only actionable errors (no noise)
+        "system_hint":     _detect_system_hint(actionable_errors, cpu, ram),
         # Stack trace: deepest Python frame if detected
         "stack_info":      stack_str,
         # Formatted RAG context from previous diagnoses
         "rag_context":     build_rag_context(clean_history),
-        # Recurrence flag: True if current error type appeared before
-        "is_recurring":    detect_recurring_issue(parsed_errors, clean_history),
+        # Recurrence flag uses only actionable errors (no noise)
+        "is_recurring":    detect_recurring_issue(actionable_errors, clean_history),
         # Score penalty breakdown from health_engine
         "score_breakdown": _format_score_breakdown(score_breakdown),
     }

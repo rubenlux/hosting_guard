@@ -24,7 +24,6 @@ def _build_fingerprint(
     score: int,
     cpu: float,
     ram: float,
-    error_count: int,
     parsed_errors: list,
 ) -> str:
     """
@@ -34,18 +33,24 @@ def _build_fingerprint(
     CPU/RAM are rounded to 1 decimal to absorb micro-jitter between cycles
     without causing false cache misses on trivially different readings.
 
-    Error signature encodes the *identity* of each error (type + file + line),
-    not just the count.  Two states with the same error_count but different
-    errors produce different fingerprints → no stale cache hits.
+    Error signature encodes the *identity* of ACTIONABLE errors only
+    (source == "application").  dev_noise and external_probe are excluded
+    so that a run with only source-map 404s gets the same fingerprint as a
+    clean run — both map to "no real errors", not a distinct broken state.
     """
+    actionable = [
+        e for e in parsed_errors
+        if e.get("source") == "application"
+    ]
     error_signature = "-".join(
         sorted(
             f"{e.get('type', '')}:{e.get('file', '')}:{e.get('line', 0)}"
-            for e in parsed_errors[:5]
+            for e in actionable[:5]
         )
     ) or "none"
 
-    raw = f"{score}-{round(cpu, 1)}-{round(ram, 1)}-{error_count}-{error_signature}"
+    actionable_count = len(actionable)
+    raw = f"{score}-{round(cpu, 1)}-{round(ram, 1)}-{actionable_count}-{error_signature}"
     return hashlib.md5(raw.encode()).hexdigest()[:16]
 
 
@@ -56,7 +61,6 @@ async def _run_structured_diagnosis(
     cpu: float,
     ram: float,
     score: int,
-    error_count: int,
     debug_context: dict,
     loop,
     alerts: list | None = None,
@@ -93,7 +97,7 @@ async def _run_structured_diagnosis(
         repo = AIDiagnosisRepository()
 
         # ── Phase 1.5: Cache check ──────────────────────────────────────────
-        fingerprint = _build_fingerprint(score, cpu, ram, error_count, parsed_errors)
+        fingerprint = _build_fingerprint(score, cpu, ram, parsed_errors)
         cached = await loop.run_in_executor(
             None,
             lambda: repo.get_by_fingerprint(hosting_id, fingerprint),
@@ -296,7 +300,6 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
             cpu=cpu_val,
             ram=ram_val,
             score=health_result["score"],
-            error_count=health_result.get("error_count", 0),
             debug_context=debug_context,
             loop=loop,
             alerts=[alert] if alert else [],

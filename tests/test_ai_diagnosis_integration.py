@@ -412,45 +412,45 @@ class TestDiagnosisCache:
     def test_same_state_same_fingerprint(self):
         """Identical snapshot → identical fingerprint (deterministic)."""
         errors = [{"type": "python_exception", "file": "app/main.py", "line": 15}]
-        fp1 = _build_fingerprint(30, 92.0, 85.0, 1, errors)
-        fp2 = _build_fingerprint(30, 92.0, 85.0, 1, errors)
+        fp1 = _build_fingerprint(30, 92.0, 85.0, errors)
+        fp2 = _build_fingerprint(30, 92.0, 85.0, errors)
         assert fp1 == fp2
 
     def test_different_error_file_different_fingerprint(self):
         """Same error type, different file → different fingerprint (no stale hit)."""
-        err_a = [{"type": "python_exception", "file": "app/main.py",  "line": 15}]
-        err_b = [{"type": "python_exception", "file": "app/views.py", "line": 99}]
-        assert _build_fingerprint(30, 92.0, 85.0, 1, err_a) != _build_fingerprint(30, 92.0, 85.0, 1, err_b)
+        err_a = [{"type": "python_exception", "source": "application", "file": "app/main.py",  "line": 15}]
+        err_b = [{"type": "python_exception", "source": "application", "file": "app/views.py", "line": 99}]
+        assert _build_fingerprint(30, 92.0, 85.0, err_a) != _build_fingerprint(30, 92.0, 85.0, err_b)
 
     def test_different_error_line_different_fingerprint(self):
         """Same file, different line → different fingerprint."""
-        err_a = [{"type": "php_error", "file": "index.php", "line": 42}]
-        err_b = [{"type": "php_error", "file": "index.php", "line": 99}]
-        assert _build_fingerprint(80, 10.0, 10.0, 1, err_a) != _build_fingerprint(80, 10.0, 10.0, 1, err_b)
+        err_a = [{"type": "php_error", "source": "application", "file": "index.php", "line": 42}]
+        err_b = [{"type": "php_error", "source": "application", "file": "index.php", "line": 99}]
+        assert _build_fingerprint(80, 10.0, 10.0, err_a) != _build_fingerprint(80, 10.0, 10.0, err_b)
 
     def test_cpu_jitter_within_one_decimal_same_fingerprint(self):
         """CPU readings that round to the same 1-decimal value produce the same fingerprint."""
-        errors = [{"type": "php_error", "file": "index.php", "line": 42}]
-        fp1 = _build_fingerprint(80, 85.00, 60.0, 1, errors)
-        fp2 = _build_fingerprint(80, 85.04, 60.0, 1, errors)  # rounds to 85.0
+        errors = [{"type": "php_error", "source": "application", "file": "index.php", "line": 42}]
+        fp1 = _build_fingerprint(80, 85.00, 60.0, errors)
+        fp2 = _build_fingerprint(80, 85.04, 60.0, errors)  # rounds to 85.0
         assert fp1 == fp2
 
     def test_cpu_jitter_across_decimal_boundary_different_fingerprint(self):
         """CPU change that crosses a 0.1% boundary changes the fingerprint."""
-        errors = [{"type": "php_error", "file": "index.php", "line": 42}]
-        fp1 = _build_fingerprint(80, 85.04, 60.0, 1, errors)  # rounds to 85.0
-        fp2 = _build_fingerprint(80, 85.15, 60.0, 1, errors)  # rounds to 85.2
+        errors = [{"type": "php_error", "source": "application", "file": "index.php", "line": 42}]
+        fp1 = _build_fingerprint(80, 85.04, 60.0, errors)  # rounds to 85.0
+        fp2 = _build_fingerprint(80, 85.15, 60.0, errors)  # rounds to 85.2
         assert fp1 != fp2
 
     def test_fingerprint_is_16_chars(self):
         """Fingerprint is an MD5 hex digest truncated to 16 characters."""
-        fp = _build_fingerprint(80, 10.0, 20.0, 0, [])
+        fp = _build_fingerprint(80, 10.0, 20.0, [])
         assert len(fp) == 16
         assert re.match(r'^[0-9a-f]{16}$', fp)
 
     def test_empty_errors_use_none_signature(self):
         """No errors → fingerprint uses 'none' as error signature (no crash)."""
-        fp = _build_fingerprint(100, 10.0, 20.0, 0, [])
+        fp = _build_fingerprint(100, 10.0, 20.0, [])
         assert isinstance(fp, str) and len(fp) == 16
 
     # ── Cache hit: LLM not called ─────────────────────────────────────────────
@@ -502,7 +502,6 @@ class TestDiagnosisCache:
                         cpu=10.0,
                         ram=20.0,
                         score=80,
-                        error_count=1,
                         debug_context=debug_ctx,
                         loop=loop,
                     )
@@ -578,7 +577,6 @@ class TestDiagnosisCache:
                         cpu=10.0,
                         ram=20.0,
                         score=80,
-                        error_count=1,
                         debug_context=debug_ctx,
                         loop=loop,
                     )

@@ -24,6 +24,12 @@ def build_diagnosis_prompt(context: dict) -> str:
 
     return f"""You are a senior DevOps engineer, backend developer, and incident response expert.
 
+IMPORTANT:
+- You MUST respond in Spanish.
+- Use technical terms in English ONLY when necessary (error names, logs, file paths, stack traces, code elements).
+- Do NOT translate error class names, file paths, commands, or log lines.
+- Your explanation must be understandable by both a developer AND a non-technical user.
+
 Your job is to perform a ROOT CAUSE ANALYSIS of a failing web hosting environment.
 
 You are NOT a chatbot.
