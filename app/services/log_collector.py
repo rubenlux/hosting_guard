@@ -11,7 +11,7 @@ async def get_container_logs(container_name: str, tail: int = 100) -> str:
         res = await loop.run_in_executor(
             None,
             lambda: subprocess.run(
-                ["docker", "logs", "--tail", str(tail), container_name],
+                ["docker", "logs", "--timestamps", "--tail", str(tail), container_name],
                 capture_output=True,
                 text=True,
                 timeout=5

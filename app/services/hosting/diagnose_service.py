@@ -17,6 +17,38 @@ hosting_repo = HostingRepository()
 health_repo = HealthRepository()
 
 
+import hashlib
+
+
+def _build_fingerprint(
+    score: int,
+    cpu: float,
+    ram: float,
+    error_count: int,
+    parsed_errors: list,
+) -> str:
+    """
+    Stable fingerprint for a health snapshot.
+    Same fingerprint → same system state → reuse cached diagnosis.
+
+    CPU/RAM are rounded to 1 decimal to absorb micro-jitter between cycles
+    without causing false cache misses on trivially different readings.
+
+    Error signature encodes the *identity* of each error (type + file + line),
+    not just the count.  Two states with the same error_count but different
+    errors produce different fingerprints → no stale cache hits.
+    """
+    error_signature = "-".join(
+        sorted(
+            f"{e.get('type', '')}:{e.get('file', '')}:{e.get('line', 0)}"
+            for e in parsed_errors[:5]
+        )
+    ) or "none"
+
+    raw = f"{score}-{round(cpu, 1)}-{round(ram, 1)}-{error_count}-{error_signature}"
+    return hashlib.md5(raw.encode()).hexdigest()[:16]
+
+
 async def _run_structured_diagnosis(
     hosting_name: str,
     hosting_id: int,
@@ -24,14 +56,27 @@ async def _run_structured_diagnosis(
     cpu: float,
     ram: float,
     score: int,
+    error_count: int,
     debug_context: dict,
     loop,
+    alerts: list | None = None,
+    score_breakdown: dict | None = None,
 ) -> dict | None:
     """
-    Parallel structured-diagnosis path — independent of the AIOrchestrator.
+    Structured-diagnosis path (Phase 1.5 + Phase 2):
+
+    1. Build fingerprint from health snapshot.
+    2. Cache lookup (get_by_fingerprint) — 24 h TTL.
+       HIT  → return cached result immediately (zero LLM cost).
+       MISS → continue.
+    3. Fetch last 3 diagnoses for RAG history.
+    4. Build rich context (context_builder) and prompt (prompt_builder).
+    5. Call LLM (claude-sonnet-4-6).
+    6. Safe-parse JSON response.
+    7. Persist with fingerprint for next lookup.
 
     Only runs when ENABLE_REAL_LLM=true and CLAUDE_API_KEY is set.
-    On any failure, logs a warning and returns None (caller degrades gracefully).
+    Any failure is logged as a warning — caller degrades gracefully (returns None).
     """
     import os
     if os.getenv("ENABLE_REAL_LLM", "false").lower() != "true":
@@ -39,32 +84,61 @@ async def _run_structured_diagnosis(
 
     try:
         from app.core.llm.prompt_builder import build_diagnosis_prompt
+        from app.core.llm.context_builder import build_context
         from app.core.llm.safe_parser import safe_parse_llm
         from app.services.ai_client import call_llm
         from app.infra.audit.ai_diagnosis_repository import AIDiagnosisRepository
 
-        context = {
-            "hosting_name": hosting_name,
-            "environment": "production",
-            "cpu": round(cpu, 1),
-            "ram": round(ram, 1),
-            "score": score,
-            "errors": debug_context["logs"].get("parsed_errors", []),
-            "parsed_errors": debug_context["logs"].get("parsed_errors", []),
-            "logs": debug_context["logs"].get("recent_raw_snippet", ""),
-            "alerts": [],
-        }
+        parsed_errors = debug_context["logs"].get("parsed_errors", [])
+        repo = AIDiagnosisRepository()
 
+        # ── Phase 1.5: Cache check ──────────────────────────────────────────
+        fingerprint = _build_fingerprint(score, cpu, ram, error_count, parsed_errors)
+        cached = await loop.run_in_executor(
+            None,
+            lambda: repo.get_by_fingerprint(hosting_id, fingerprint),
+        )
+        if cached:
+            logger.info("Diagnosis cache HIT for hosting_id=%s fp=%s", hosting_id, fingerprint)
+            return cached
+
+        # ── Phase 2: RAG — fetch diagnosis history for context ──────────────
+        history = await loop.run_in_executor(
+            None,
+            lambda: repo.get_by_hosting(hosting_id, limit=3),
+        )
+
+        # ── Build rich context + prompt ─────────────────────────────────────
+        context = build_context(
+            hosting_name=hosting_name,
+            cpu=cpu,
+            ram=ram,
+            score=score,
+            parsed_errors=parsed_errors,
+            logs=debug_context["logs"].get("recent_raw_snippet", ""),
+            history=history,
+            alerts=alerts or [],
+            score_breakdown=score_breakdown,
+        )
         prompt = build_diagnosis_prompt(context)
-        raw = await loop.run_in_executor(None, lambda: call_llm(prompt))
+
+        # ── LLM call ────────────────────────────────────────────────────────
+        raw    = await loop.run_in_executor(None, lambda: call_llm(prompt))
         parsed = safe_parse_llm(raw)
 
-        repo = AIDiagnosisRepository()
+        # ── Persist with fingerprint ─────────────────────────────────────────
         saved = await loop.run_in_executor(
             None,
-            lambda: repo.save(hosting_id=hosting_id, user_id=user_id, parsed=parsed, raw_response=raw),
+            lambda: repo.save(
+                hosting_id=hosting_id,
+                user_id=user_id,
+                parsed=parsed,
+                raw_response=raw,
+                fingerprint=fingerprint,
+            ),
         )
         return saved or parsed
+
     except Exception as exc:
         logger.warning("Structured diagnosis skipped: %s", exc)
         return None
@@ -222,8 +296,11 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
             cpu=cpu_val,
             ram=ram_val,
             score=health_result["score"],
+            error_count=health_result.get("error_count", 0),
             debug_context=debug_context,
             loop=loop,
+            alerts=[alert] if alert else [],
+            score_breakdown=health_result.get("score_breakdown"),
         )
 
         return {

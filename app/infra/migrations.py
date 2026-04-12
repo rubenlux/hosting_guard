@@ -211,6 +211,10 @@ _MIGRATIONS_PG = [
     "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (2, 'Sitio lento', 'El sitio carga muy despacio', '...', 'medium', 1) ON CONFLICT (category_id) DO NOTHING",
     # Phase 2: store db container name explicitly — avoids fragile dynamic name reconstruction
     "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS db_container_name TEXT",
+    # fingerprint column for cache lookups (added after initial table creation)
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS fingerprint TEXT",
+    # failure_type classification (syntax | import | runtime | infra | unknown)
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS failure_type TEXT",
     # AI Diagnosis history — structured LLM output, append-only
     """CREATE TABLE IF NOT EXISTS ai_diagnosis (
         id           SERIAL PRIMARY KEY,
@@ -249,8 +253,10 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_pixel_events_device ON pixel_events (site_id, device, created_at)",
     # Covers country breakdown: WHERE site_id=? AND country IS NOT NULL AND created_at>=? GROUP BY country
     "CREATE INDEX IF NOT EXISTS idx_pixel_events_country ON pixel_events (site_id, country, created_at)",
-    # AI diagnosis lookups by hosting
+    # AI diagnosis lookups by hosting (recency)
     "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_hosting ON ai_diagnosis (hosting_id, created_at DESC)",
+    # AI diagnosis cache lookup by fingerprint
+    "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_fp ON ai_diagnosis (hosting_id, fingerprint)",
 ]
 
 def ensure_monthly_partitions(cursor):

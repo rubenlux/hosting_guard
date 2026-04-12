@@ -181,6 +181,14 @@ const SEV_COLOR = {
   info:     'text-accent border-accent/20 bg-accent/5',
 };
 
+const FAILURE_TYPE_STYLE = {
+  syntax:  'bg-yellow-500/15 text-yellow-400 border border-yellow-500/25',
+  import:  'bg-purple-500/15 text-purple-400 border border-purple-500/25',
+  runtime: 'bg-orange-500/15 text-orange-400 border border-orange-500/25',
+  infra:   'bg-red-500/15    text-red-400    border border-red-500/25',
+  unknown: 'bg-white/5       text-gray-500   border border-white/10',
+};
+
 function relTime(iso) {
   const diff = Date.now() - new Date(iso).getTime();
   const m = Math.floor(diff / 60_000);
@@ -223,9 +231,16 @@ function DiagnosisHistory({ hostingId }) {
           <div key={item.id} className={`rounded-xl border p-3 ${color} space-y-2`}>
             {/* Header row */}
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-black uppercase tracking-wider">
-                {item.severity}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-black uppercase tracking-wider">
+                  {item.severity}
+                </span>
+                {item.failure_type && (
+                  <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${FAILURE_TYPE_STYLE[item.failure_type] ?? FAILURE_TYPE_STYLE.unknown}`}>
+                    {item.failure_type}
+                  </span>
+                )}
+              </div>
               <span
                 className="text-[9px] font-mono text-muted"
                 title={new Date(item.created_at).toLocaleString()}
@@ -251,12 +266,39 @@ function DiagnosisHistory({ hostingId }) {
               </div>
             )}
 
-            {/* Fix */}
+            {/* Impact */}
+            {item.impact && (
+              <div className="text-[10px] text-red-400 leading-snug">
+                <span className="font-black">Impacto: </span>{item.impact}
+              </div>
+            )}
+
+            {/* Evidence */}
+            {item.evidence?.length > 0 && (
+              <div className="text-[10px] text-gray-500 leading-snug">
+                <span className="font-black text-gray-400">Evidencia: </span>
+                {item.evidence.join(' • ')}
+              </div>
+            )}
+
+            {/* Fix action */}
             {item.fix_action && (
               <div className="flex items-start gap-1.5 text-[10px]">
                 <Zap className="w-3 h-3 mt-0.5 shrink-0 text-accent" />
                 <span className="text-gray-300">{item.fix_action}</span>
               </div>
+            )}
+
+            {/* Fix steps */}
+            {item.fix_steps?.length > 0 && (
+              <ul className="space-y-0.5 pl-1">
+                {item.fix_steps.map((step, i) => (
+                  <li key={i} className="text-[10px] text-gray-400 flex items-start gap-1">
+                    <span className="text-accent font-black shrink-0">{i + 1}.</span>
+                    {step}
+                  </li>
+                ))}
+              </ul>
             )}
 
             {/* Confidence */}

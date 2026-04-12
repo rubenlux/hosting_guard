@@ -2,9 +2,12 @@ import re
 from typing import List, Dict, Any
 
 # Expresiones regulares comunes para errores de backend
-PHP_ERROR_REGEX = re.compile(r"(Fatal error|Parse error|Warning|Notice):(.+?) in (.+?)(?: on line |:)(\d+)", re.IGNORECASE)
+PHP_ERROR_REGEX    = re.compile(r"(Fatal error|Parse error|Warning|Notice):(.+?) in (.+?)(?: on line |:)(\d+)", re.IGNORECASE)
 PYTHON_ERROR_REGEX = re.compile(r"Traceback \(most recent call last\):([\s\S]+?)([A-Za-z]+Error: .+)")
-NODE_ERROR_REGEX = re.compile(r"(TypeError|ReferenceError|SyntaxError):(.+?)\n\s+at (.+?):(\d+)(:\d+)?")
+NODE_ERROR_REGEX   = re.compile(r"(TypeError|ReferenceError|SyntaxError):(.+?)\n\s+at (.+?):(\d+)(:\d+)?")
+
+# Docker log timestamp prefix: 2024-01-15T10:30:45.123456789Z (added by --timestamps flag)
+DOCKER_TS_REGEX = re.compile(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\s+')
 
 # Prefijos de rutas generadas por bots/scanners — no son errores de la aplicación
 _PROBE_PREFIXES = (
@@ -19,6 +22,11 @@ def _is_probe(path: str) -> bool:
     p = path.lower()
     return any(p.startswith(prefix) for prefix in _PROBE_PREFIXES)
 
+def _extract_ts(line: str) -> str | None:
+    """Extract ISO timestamp from a docker --timestamps log line, or None."""
+    m = DOCKER_TS_REGEX.match(line)
+    return m.group(1) if m else None
+
 
 class LogParser:
     @staticmethod
@@ -28,22 +36,30 @@ class LogParser:
         Diferencia entre CRITICAL (errores de código) y WARNING (señales HTTP como 404).
         Los 404 de bots/scanners se clasifican como source="external_probe" y se excluyen
         del conteo de errores para evitar falsos positivos en el health score.
+
+        Cada error incluye:
+          ts     — ISO timestamp extraído de la línea (docker --timestamps), si está presente
+          source — "application" | "external_probe" (diferencia errores propios de ruido externo)
         """
         parsed_errors = []
         lines = raw_logs.splitlines()
 
         for i, line in enumerate(lines):
-            # 1. PHP PHP Errors
+            ts = _extract_ts(line)
+
+            # 1. PHP Errors
             php_match = PHP_ERROR_REGEX.search(line)
             if php_match:
                 severity = "critical" if "error" in php_match.group(1).lower() else "warning"
                 parsed_errors.append({
-                    "type": "php_error",
-                    "severity": severity,
-                    "message": php_match.group(2).strip(),
-                    "file": php_match.group(3).strip(),
-                    "line": int(php_match.group(4)),
-                    "raw_context": line
+                    "type":        "php_error",
+                    "severity":    severity,
+                    "source":      "application",
+                    "message":     php_match.group(2).strip(),
+                    "file":        php_match.group(3).strip(),
+                    "line":        int(php_match.group(4)),
+                    "ts":          ts,
+                    "raw_context": line,
                 })
                 continue
 
@@ -53,48 +69,53 @@ class LogParser:
                 path = path_match.group(1) if path_match else "unknown"
 
                 if _is_probe(path):
-                    # Clasificar como probe externo — no afecta health score
                     parsed_errors.append({
-                        "type": "http_404",
-                        "severity": "info",
-                        "source": "external_probe",
-                        "message": f"Probe externo ignorado (404): {path}",
-                        "file": path,
-                        "line": 0,
+                        "type":        "http_404",
+                        "severity":    "info",
+                        "source":      "external_probe",
+                        "message":     f"Probe externo ignorado (404): {path}",
+                        "file":        path,
+                        "line":        0,
+                        "ts":          ts,
                         "raw_context": line,
                     })
                     continue
 
                 parsed_errors.append({
-                    "type": "http_404",
-                    "severity": "warning",
-                    "source": "application",
-                    "message": f"Archivo faltante (404): {path}",
-                    "file": path,
-                    "line": 0,
-                    "raw_context": line
-                })
-            
-            elif '" 500 ' in line or '" 503 ' in line:
-                parsed_errors.append({
-                    "type": "http_5xx",
-                    "severity": "critical",
-                    "message": "Error interno del servidor (500/503) detectado",
-                    "file": "servidor",
-                    "line": 0,
-                    "raw_context": line
+                    "type":        "http_404",
+                    "severity":    "warning",
+                    "source":      "application",
+                    "message":     f"Archivo faltante (404): {path}",
+                    "file":        path,
+                    "line":        0,
+                    "ts":          ts,
+                    "raw_context": line,
                 })
 
-        # Python Regex over the whole blob
+            elif '" 500 ' in line or '" 503 ' in line:
+                parsed_errors.append({
+                    "type":        "http_5xx",
+                    "severity":    "critical",
+                    "source":      "application",
+                    "message":     "Error interno del servidor (500/503) detectado",
+                    "file":        "servidor",
+                    "line":        0,
+                    "ts":          ts,
+                    "raw_context": line,
+                })
+
+        # Python Regex over the whole blob (no per-line TS for multi-line tracebacks)
         for py_match in PYTHON_ERROR_REGEX.finditer(raw_logs):
-             parsed_errors.append({
-                 "type": "python_exception",
-                 "severity": "critical",
-                 "message": py_match.group(2).strip(),
-                 "file": "unknown.py",
-                 "line": 0,
-                 "raw_context": py_match.group(0).strip()
-             })
+            parsed_errors.append({
+                "type":        "python_exception",
+                "severity":    "critical",
+                "source":      "application",
+                "message":     py_match.group(2).strip(),
+                "file":        "unknown.py",
+                "line":        0,
+                "ts":          None,  # multi-line blob — no reliable single timestamp
+                "raw_context": py_match.group(0).strip(),
+            })
 
         # Deduplicar
         unique_errors = []
