@@ -5,11 +5,14 @@ import DashboardSkeleton from './DashboardSkeleton';
 import EmptyState        from './EmptyState';
 import ErrorState        from './ErrorState';
 import SiteSelector      from './SiteSelector';
-import HeroSection       from './HeroSection';
-import KPISection        from './KPISection';
-import SparklineChart    from './SparklineChart';
 import TopPagesMini      from './TopPagesMini';
 import RealtimeMini      from './RealtimeMini';
+
+// New Chart Components
+import TrafficAreaChart  from './charts/TrafficAreaChart';
+import BounceRadialChart from './charts/BounceRadialChart';
+import ActiveUsersPulse  from './charts/ActiveUsersPulse';
+import SessionsBarChart  from './charts/SessionsBarChart';
 
 /**
  * Dashboard analytics overview — pure composition, zero business logic.
@@ -50,23 +53,37 @@ export default function BusinessOverview() {
           />
         }
       >
-        <HeroSection realtime={realtime} />
-
-        <KPISection kpis={kpis} />
-
-        <div className="grid grid-cols-12 gap-6">
-
-          {/* Left column — traffic */}
-          <div className="col-span-8 space-y-6">
-            <SparklineChart data={sparkline} />
-            <TopPagesMini pages={topPages} />
+        {/* Visual Analytics Grid */}
+        <div className="mt-8 space-y-6">
+          
+          {/* TOP ROW: Main Traffic + Quick Metrics */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7 xl:col-span-8">
+              <TrafficAreaChart data={sparkline} />
+            </div>
+            
+            <div className="lg:col-span-5 xl:col-span-4 flex flex-col gap-6">
+              <div className="grid grid-cols-2 gap-6 flex-1">
+                <BounceRadialChart bounceRate={kpis.bounceRate} />
+                <ActiveUsersPulse active={realtime?.active} />
+              </div>
+              <SessionsBarChart data={sparkline} />
+            </div>
           </div>
 
-          {/* Right column — realtime */}
-          <div className="col-span-4 space-y-6">
-            <RealtimeMini {...realtime} />
+          {/* BOTTOM ROW: Details */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7 xl:col-span-8">
+              <div className="bg-[#121214] border border-white/10 rounded-xl p-5 shadow-sm">
+                <h3 className="text-[12px] font-mono text-gray-400 uppercase tracking-widest font-bold mb-4">Páginas Más Visitadas</h3>
+                <TopPagesMini pages={topPages} />
+              </div>
+            </div>
+            <div className="lg:col-span-5 xl:col-span-4">
+              <RealtimeMini {...realtime} />
+            </div>
           </div>
-
+          
         </div>
       </OverviewCard>
     </motion.div>
