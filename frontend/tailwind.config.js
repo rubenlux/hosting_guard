@@ -14,6 +14,10 @@ export default {
         secondary: "#0070F3", // Electric Blue
         accent: "#79FFE1",
         "on-surface": "#E5E2E1",
+        warn: "#f59e0b",
+        danger: "#ef4444",
+        success: "#10b981",
+        ia: "#8b5cf6",
       },
       fontFamily: {
         sans: ["Inter", "sans-serif"],

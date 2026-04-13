@@ -363,8 +363,8 @@ const Dashboard = () => {
                   </div>
 
                   {/* RIGHT COLUMN */}
-                  <div className="space-y-6 lg:sticky lg:top-6 self-start">
-                    <div className="card-dash p-6 bg-[#121214] border border-white/10 shadow-sm rounded-2xl relative overflow-hidden font-sans">
+                  <div className="h-full">
+                    <div className="card-dash p-6 h-full bg-[#121214] border border-white/10 shadow-sm rounded-2xl relative overflow-hidden font-sans flex flex-col">
                       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500"></div>
                       <div className="flex justify-between items-start mb-6">
                         <div>
@@ -375,28 +375,30 @@ const Dashboard = () => {
                           {user?.has_payment_method ? '💳 Vinculada' : '⚠️ Sin Tarjeta'}
                         </div>
                       </div>
-                      <div className="space-y-4">
-                        <div onClick={handleToggleAutoscale} className={`p-4 rounded-2xl relative overflow-hidden group transition-all cursor-pointer shadow-sm hover:shadow-md ${user?.autoscale_enabled ? 'border border-emerald-500/30 bg-emerald-500/10' : 'border border-white/10 bg-[#0a0a0c] hover:bg-white/5'}`}>
-                          {userActionLoading === 'user' && <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px] flex items-center justify-center z-10"><RefreshCw className="w-4 h-4 animate-spin text-indigo-400" /></div>}
-                          <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity"><Zap className="w-16 h-16 text-indigo-500" /></div>
-                          <div className="relative">
-                            <div className="flex justify-between items-center mb-1">
-                              <span className="text-xs font-bold text-white flex items-center gap-2">
-                                <Zap className={`w-3 h-3 ${user?.autoscale_enabled ? 'text-emerald-500 fill-emerald-500' : 'text-gray-400'}`} /> Auto-Scaling
-                              </span>
-                              <span className={`text-[10px] font-black uppercase ${user?.autoscale_enabled ? 'text-emerald-500' : 'text-gray-500'}`}>
-                                {user?.autoscale_enabled ? 'Activado' : 'Desactivado'}
-                              </span>
+                      <div className="space-y-4 flex-1 flex flex-col">
+                        <div className="flex-1 space-y-4">
+                          <div onClick={handleToggleAutoscale} className={`p-4 rounded-2xl relative overflow-hidden group transition-all cursor-pointer shadow-sm hover:shadow-md ${user?.autoscale_enabled ? 'border border-emerald-500/30 bg-emerald-500/10' : 'border border-white/10 bg-[#0a0a0c] hover:bg-white/5'}`}>
+                            {userActionLoading === 'user' && <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px] flex items-center justify-center z-10"><RefreshCw className="w-4 h-4 animate-spin text-indigo-400" /></div>}
+                            <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity"><Zap className="w-16 h-16 text-indigo-500" /></div>
+                            <div className="relative">
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-xs font-bold text-white flex items-center gap-2">
+                                  <Zap className={`w-3 h-3 ${user?.autoscale_enabled ? 'text-emerald-500 fill-emerald-500' : 'text-gray-400'}`} /> Auto-Scaling
+                                </span>
+                                <span className={`text-[10px] font-black uppercase ${user?.autoscale_enabled ? 'text-emerald-500' : 'text-gray-500'}`}>
+                                  {user?.autoscale_enabled ? 'Activado' : 'Desactivado'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-gray-400 font-medium leading-relaxed pr-8">Optimiza recursos dinámicamente según picos de demanda real.</p>
                             </div>
-                            <p className="text-[10px] text-gray-400 font-medium leading-relaxed pr-8">Optimiza recursos dinámicamente según picos de demanda real.</p>
                           </div>
+                          {!user?.has_payment_method && user?.balance <= 0 && (
+                            <div className="text-[10px] bg-red-400/10 text-red-400 p-3 rounded-xl border border-red-400/20 flex items-center gap-3 font-medium animate-pulse">
+                              <AlertTriangle className="w-4 h-4 shrink-0" /> Recarga saldo para evitar suspensiones por consumo excesivo.
+                            </div>
+                          )}
                         </div>
-                        {!user?.has_payment_method && user?.balance <= 0 && (
-                          <div className="text-[10px] bg-red-400/10 text-red-400 p-3 rounded-xl border border-red-400/20 flex items-center gap-3 font-medium animate-pulse">
-                            <AlertTriangle className="w-4 h-4 shrink-0" /> Recarga saldo para evitar suspensiones por consumo excesivo.
-                          </div>
-                        )}
-                        <button onClick={handleTopup} disabled={userActionLoading === 'user'} className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-black text-xs hover:bg-indigo-700 transition-all shadow-md hover:shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:scale-100">
+                        <button onClick={handleTopup} disabled={userActionLoading === 'user'} className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-black text-xs hover:bg-indigo-700 transition-all shadow-md hover:shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:scale-100 mt-4">
                           {userActionLoading === 'user' ? 'PROCESANDO...' : 'RECARGAR SALDO +$10'}
                         </button>
                       </div>
