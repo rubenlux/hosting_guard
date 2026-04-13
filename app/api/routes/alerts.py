@@ -1,8 +1,11 @@
 import asyncio
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from app.api.security import verify_token
 from app.infra.audit.health_repository import HealthRepository
 from app.infra.audit.hosting_repository import HostingRepository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _health_repo = HealthRepository()
@@ -99,6 +102,21 @@ async def get_dashboard_summary(user: dict = Depends(verify_token)):
     async def _get_health(hosting_id: int):
         health = await loop.run_in_executor(None, lambda: _health_repo.get_latest_health(hosting_id))
         history = await loop.run_in_executor(None, lambda: _health_repo.get_health_history(hosting_id, limit=24))
+
+        # Repair on read — strong consistency guarantee.
+        # If the live score is healthy (>= 90) but the DB still has open critical/warning
+        # alerts (e.g. health_checker cycle hasn't fired since recovery), resolve them now.
+        # This is a no-op UPDATE when there are no open alerts (rowcount=0), so the cost
+        # on every poll is negligible. Pattern: "eventual consistency → consistent on read."
+        score = (health or {}).get("score", 100)
+        if score >= 90:
+            resolved = await loop.run_in_executor(None, lambda: _health_repo.resolve_open_alerts(hosting_id))
+            if resolved:
+                logger.info(
+                    "dashboard repair-on-read: resolved %d stale alert(s) for hosting_id=%s (score=%d)",
+                    resolved, hosting_id, score,
+                )
+
         return hosting_id, health, history
 
     health_results = await asyncio.gather(*[_get_health(hid) for hid in active_ids])

@@ -11,7 +11,7 @@ import { motion } from 'framer-motion';
  */
 export default function RealtimeMini({ active, lastPath, lastTime, isLive }) {
   return (
-    <div className="text-[10px] font-mono text-gray-500 border-t border-white/5 pt-2">
+    <div className="text-[10px] font-mono text-gray-400 border-t border-gray-100 pt-2">
 
       <div className="flex items-center gap-2">
         {isLive ? (
@@ -24,7 +24,7 @@ export default function RealtimeMini({ active, lastPath, lastTime, isLive }) {
           <div className="w-2 h-2 rounded-full bg-white/10 shrink-0" />
         )}
 
-        <span className="text-white">
+        <span className="text-gray-900">
           {active === 0
             ? 'Sin usuarios activos'
             : `${active} ${active === 1 ? 'usuario activo' : 'usuarios activos'} ahora`}

@@ -36,7 +36,7 @@ const SEVERITY_CONFIG = {
     badge:      'bg-green-500/20 text-green-400 border border-green-500/30',
     label:      'OK',
     dot:        'bg-green-500',
-    cardBorder: 'border-white/5',
+    cardBorder: 'border-gray-200',
     cardBg:     'bg-white/2',
     cardGlow:   'none',
   },
@@ -62,7 +62,7 @@ function AdvisoryItem({ advisory, onDiagnose }) {
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] font-bold text-white truncate">{advisory.hostingName}</span>
+            <span className="text-[11px] font-bold text-gray-900 truncate">{advisory.hostingName}</span>
             <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider ${cfg.badge} ${isCritical ? 'animate-pulse' : ''}`}>
               {cfg.label}
             </span>

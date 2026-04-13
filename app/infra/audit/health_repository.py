@@ -126,6 +126,7 @@ class HealthRepository:
                    SET resolved = 1, resolved_at = %s
                    WHERE site_id = %s
                      AND resolved = 0
+                     AND resolved_at IS NULL
                      AND level IN ('critical', 'warning')
                 """,
                 (now, site_id),

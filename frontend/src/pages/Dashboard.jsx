@@ -172,7 +172,7 @@ const Dashboard = () => {
         {/* ── SIDEBAR ── */}
         <aside className="sidebar">
           <div className="logo-dash">
-            <div className="logo-icon-dash text-background"><ShieldCheck className="w-5 h-5" /></div>
+            <div className="logo-icon-dash text-white"><ShieldCheck className="w-5 h-5" /></div>
             {!isSidebarCollapsed && (
               <div className="flex-1 opacity-fadeIn">
                 <div className="logo-text-dash">HostingGuard</div>
@@ -233,15 +233,15 @@ const Dashboard = () => {
             <div className="nav-item-dash"><div className="nav-icon-dash"><Settings size={18} /></div>{!isSidebarCollapsed && <span>Configuración</span>}</div>
           </nav>
 
-          <div className="p-4 border-t border-white/5 mt-auto">
-            <div className={`flex items-center gap-3 p-3 bg-surface2 rounded-xl ${isSidebarCollapsed ? 'justify-center p-2' : ''}`}>
-              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-xs uppercase shrink-0">
+          <div className="p-4 border-t border-[var(--border)] mt-auto">
+            <div className={`flex items-center gap-3 p-3 bg-[var(--surface2)] border border-[var(--border)] rounded-xl shadow-sm ${isSidebarCollapsed ? 'justify-center p-2' : ''}`}>
+              <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs uppercase shrink-0">
                 {user?.email?.[0] || 'U'}
               </div>
               {!isSidebarCollapsed && (
                 <div className="flex-1 min-w-0 opacity-fadeIn">
-                  <div className="text-[11px] font-bold text-white truncate">{user?.email}</div>
-                  <div className="text-[9px] text-accent font-mono uppercase">Plan {user?.plan || 'Free'}</div>
+                  <div className="text-[11px] font-bold text-gray-900 truncate">{user?.email}</div>
+                  <div className="text-[9px] text-[var(--accent)] font-mono uppercase font-bold tracking-wide">Plan {user?.plan || 'Free'}</div>
                 </div>
               )}
               {!isSidebarCollapsed && (
@@ -364,30 +364,31 @@ const Dashboard = () => {
 
                   {/* RIGHT COLUMN */}
                   <div className="space-y-6">
-                    <div className="card-dash p-6 bg-gradient-to-br from-accent/5 to-transparent border-accent/20 font-sans">
+                    <div className="card-dash p-6 bg-white border-[var(--border)] shadow-sm rounded-2xl relative overflow-hidden font-sans">
+                      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500"></div>
                       <div className="flex justify-between items-start mb-6">
                         <div>
-                          <div className="text-[10px] text-accent font-mono uppercase tracking-[0.2em] mb-2">Tu Saldo</div>
-                          <div className="text-3xl font-black text-white">${user?.balance?.toFixed(2) || '0.00'}</div>
+                          <div className="text-[10px] text-indigo-600 font-mono font-bold uppercase tracking-[0.2em] mb-2">Tu Saldo</div>
+                          <div className="text-3xl font-black text-gray-900 tracking-tight">${user?.balance?.toFixed(2) || '0.00'}</div>
                         </div>
                         <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${user?.has_payment_method ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
                           {user?.has_payment_method ? '💳 Vinculada' : '⚠️ Sin Tarjeta'}
                         </div>
                       </div>
                       <div className="space-y-4">
-                        <div onClick={handleToggleAutoscale} className={`p-4 bg-white/5 rounded-2xl border relative overflow-hidden group transition-all cursor-pointer ${user?.autoscale_enabled ? 'border-scanner bg-[#00ff88]/5' : 'border-white/5 hover:border-white/20'}`}>
-                          {userActionLoading === 'user' && <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-10"><RefreshCw className="w-4 h-4 animate-spin text-accent" /></div>}
-                          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity"><Zap className="w-12 h-12 text-accent" /></div>
+                        <div onClick={handleToggleAutoscale} className={`p-4 rounded-2xl border relative overflow-hidden group transition-all cursor-pointer shadow-sm hover:shadow-md ${user?.autoscale_enabled ? 'border-emerald-500/30 bg-emerald-50/50' : 'border-gray-200 bg-gray-50/50 hover:border-gray-300'}`}>
+                          {userActionLoading === 'user' && <div className="absolute inset-0 bg-white/50 backdrop-blur-[1px] flex items-center justify-center z-10"><RefreshCw className="w-4 h-4 animate-spin text-indigo-600" /></div>}
+                          <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity"><Zap className="w-16 h-16 text-indigo-900" /></div>
                           <div className="relative">
                             <div className="flex justify-between items-center mb-1">
-                              <span className="text-xs font-bold text-white flex items-center gap-2 italic">
-                                <Zap className={`w-3 h-3 ${user?.autoscale_enabled ? 'text-accent fill-accent' : 'text-muted'}`} /> Auto-Scaling
+                              <span className="text-xs font-bold text-gray-900 flex items-center gap-2">
+                                <Zap className={`w-3 h-3 ${user?.autoscale_enabled ? 'text-emerald-500 fill-emerald-500' : 'text-gray-400'}`} /> Auto-Scaling
                               </span>
-                              <span className={`text-[10px] font-black uppercase ${user?.autoscale_enabled ? 'text-accent' : 'text-muted'}`}>
+                              <span className={`text-[10px] font-black uppercase ${user?.autoscale_enabled ? 'text-emerald-600' : 'text-gray-500'}`}>
                                 {user?.autoscale_enabled ? 'Activado' : 'Desactivado'}
                               </span>
                             </div>
-                            <p className="text-[10px] text-gray-500 leading-relaxed pr-8">Optimiza recursos dinámicamente según picos de demanda real.</p>
+                            <p className="text-[10px] text-gray-500 font-medium leading-relaxed pr-8">Optimiza recursos dinámicamente según picos de demanda real.</p>
                           </div>
                         </div>
                         {!user?.has_payment_method && user?.balance <= 0 && (
@@ -395,7 +396,7 @@ const Dashboard = () => {
                             <AlertTriangle className="w-4 h-4 shrink-0" /> Recarga saldo para evitar suspensiones por consumo excesivo.
                           </div>
                         )}
-                        <button onClick={handleTopup} disabled={userActionLoading === 'user'} className="w-full py-4 bg-accent text-background rounded-2xl font-black text-xs hover:scale-[1.02] transition-all shadow-lg shadow-accent/20 active:scale-95 disabled:opacity-50 disabled:scale-100">
+                        <button onClick={handleTopup} disabled={userActionLoading === 'user'} className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-black text-xs hover:bg-indigo-700 transition-all shadow-md hover:shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:scale-100">
                           {userActionLoading === 'user' ? 'PROCESANDO...' : 'RECARGAR SALDO +$10'}
                         </button>
                       </div>
@@ -406,28 +407,28 @@ const Dashboard = () => {
 
                 {/* INFRA METRICS */}
                 <div className="mt-6">
-                  <div className="text-[10px] font-mono text-muted uppercase tracking-widest mb-3 flex items-center gap-2">
-                    <span className="w-3 h-px bg-white/20" /> Infraestructura
+                  <div className="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                    <span className="w-3 h-px bg-gray-300" /> Infraestructura
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="bg-[#0a0a0c] border border-[rgba(0,255,136,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '2px solid #00ff88' }}>
+                    <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '3px solid #10b981' }}>
                       <div className="flex justify-between items-start">
-                        <div className="text-[10px] font-black tracking-widest text-[#666] uppercase">Salud General</div>
+                        <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase">Salud General</div>
                         <TrendLine data={primaryHostingHistory} />
                       </div>
                       <div className="mt-3">
-                        <div className="text-3xl font-black text-[#00ff88] [text-shadow:0_0_15px_rgba(0,255,136,0.5)]">
-                          {avgHealthScore ?? '—'}<span className="text-lg">/100</span>
+                        <div className="text-3xl font-black text-gray-900 tracking-tight">
+                          {avgHealthScore ?? '—'}<span className="text-lg text-gray-400">/100</span>
                         </div>
-                        <div className="text-[11px] text-gray-400 mt-2 flex items-center justify-between">
-                          <div className="flex items-center gap-1">
+                        <div className="text-[11px] text-gray-500 mt-2 flex items-center justify-between">
+                          <div className="flex items-center gap-1 font-medium">
                             <span style={{ color: healthTrend.color }}>{healthTrend.arrow}</span>
                             <span style={{ color: healthTrend.color }}>{healthTrend.label}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-mono text-gray-600">MODO PROACTIVO</span>
+                            <span className="text-[9px] font-mono text-gray-400 font-bold">PROACTIVO</span>
                             {unresolved > 0 && (
-                              <span className="bg-red-500/20 text-red-500 px-1.5 py-0.5 rounded-md font-black text-[9px] border border-red-500/30 animate-pulse">
+                              <span className="bg-red-50 text-red-600 px-1.5 py-0.5 rounded-md font-bold text-[9px] border border-red-200 animate-pulse">
                                 {unresolved} ALERTAS
                               </span>
                             )}
@@ -436,29 +437,29 @@ const Dashboard = () => {
                       </div>
                     </div>
 
-                    <div className="bg-[#0a0a0c] border border-[rgba(0,195,255,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '2px solid #00c3ff' }}>
-                      <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">CPU Promedio</div>
+                    <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '3px solid #3b82f6' }}>
+                      <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">CPU Promedio</div>
                       <div>
-                        <div className="text-3xl font-black text-[#00c3ff] [text-shadow:0_0_15px_rgba(0,195,255,0.5)]">
-                          {avgCpu}<span className="text-lg">%</span>
+                        <div className="text-3xl font-black text-gray-900 tracking-tight">
+                          {avgCpu}<span className="text-lg text-gray-400">%</span>
                         </div>
-                        <div className="w-16 h-1 bg-[#00c3ff] rounded-full mt-3 shadow-[0_0_8px_rgba(0,195,255,0.8)]" />
+                        <div className="w-16 h-1.5 bg-blue-500 rounded-full mt-3" />
                       </div>
                     </div>
 
-                    <div className="bg-[#0a0a0c] border border-[rgba(255,170,0,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '2px solid #ffaa00' }}>
-                      <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">RAM Usada</div>
+                    <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '3px solid #f59e0b' }}>
+                      <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">RAM Usada</div>
                       <div>
-                        <div className="text-3xl font-black text-[#ffaa00] [text-shadow:0_0_15px_rgba(255,170,0,0.5)]">{totalRam}</div>
-                        <div className="text-[11px] text-gray-400 mt-2">Medición en tiempo real</div>
+                        <div className="text-3xl font-black text-gray-900 tracking-tight">{totalRam}</div>
+                        <div className="text-[11px] text-gray-500 mt-2 font-medium">Medición en tiempo real</div>
                       </div>
                     </div>
 
-                    <div className="bg-[#0a0a0c] border border-[rgba(166,0,255,0.15)] rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '2px solid #a600ff' }}>
-                      <div className="text-[10px] font-black tracking-widest text-[#666] uppercase mb-3">Almacenamiento</div>
+                    <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '3px solid #8b5cf6' }}>
+                      <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">Almacenamiento</div>
                       <div>
-                        <div className="text-3xl font-black text-[#a600ff] [text-shadow:0_0_15px_rgba(166,0,255,0.5)]">
-                          18<span className="text-lg font-bold text-gray-300"> GB</span>
+                        <div className="text-3xl font-black text-gray-900 tracking-tight">
+                          18<span className="text-lg font-bold text-gray-400"> GB</span>
                         </div>
                       </div>
                     </div>
@@ -494,13 +495,13 @@ const Dashboard = () => {
 
         {/* ERROR TOAST */}
         {errorToast && (
-          <div style={{ position: 'fixed', top: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 9999, display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: 'rgba(10,10,12,0.95)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255,68,68,0.4)', borderRadius: 16, boxShadow: '0 16px 40px rgba(255,0,0,0.2)', color: '#fff', animation: 'toastSlideDown 0.3s cubic-bezier(0.175,0.885,0.32,1.275) forwards' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', background: 'rgba(255,68,68,0.1)', color: '#ff4444' }}><AlertTriangle size={16} /></div>
+          <div style={{ position: 'fixed', top: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 9999, display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 16, boxShadow: '0 10px 40px rgba(0,0,0,0.08)', color: '#111827', animation: 'toastSlideDown 0.3s cubic-bezier(0.175,0.885,0.32,1.275) forwards' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}><AlertTriangle size={16} /></div>
             <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#ff4444', marginBottom: 2 }}>Acción Bloqueada</div>
-              <div style={{ fontSize: 13, color: '#aaa', lineHeight: 1.4, maxWidth: 320 }}>{errorToast}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#ef4444', marginBottom: 2 }}>Acción Bloqueada</div>
+              <div style={{ fontSize: 13, color: '#4b5563', lineHeight: 1.4, maxWidth: 320 }}>{errorToast}</div>
             </div>
-            <button onClick={() => setErrorToast(null)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: 4, marginLeft: 8 }}><X size={16} /></button>
+            <button onClick={() => setErrorToast(null)} style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', padding: 4, marginLeft: 8 }}><X size={16} /></button>
             <style>{`@keyframes toastSlideDown { from { opacity:0; transform:translate(-50%,-20px) scale(0.9); } to { opacity:1; transform:translate(-50%,0) scale(1); } }`}</style>
           </div>
         )}
@@ -511,107 +512,107 @@ const Dashboard = () => {
         <button
           id="support-chat-bubble"
           onClick={() => { setShowSupport(true); setSupportView('chat'); setOpenTicketId(null); }}
-          style={{ position: 'fixed', bottom: '1.75rem', right: '1.75rem', zIndex: 999, width: 52, height: 52, borderRadius: '50%', border: 'none', background: 'linear-gradient(135deg,#00ff88,#00cc70)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 32px rgba(0,255,136,0.4)', transition: 'all 0.2s ease' }}
-          onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.1)'; }}
+          style={{ position: 'fixed', bottom: '1.75rem', right: '1.75rem', zIndex: 999, width: 56, height: 56, borderRadius: '50%', border: 'none', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 24px rgba(99,102,241,0.3)', transition: 'all 0.2s ease' }}
+          onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; }}
           onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
           title="Abrir soporte"
         >
-          <Headset size={22} color="#000" />
+          <Headset size={24} color="#fff" />
         </button>
       )}
 
       {/* AI DIAGNOSIS MODAL */}
       {showDiagnosis && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }}>
-          <div style={{ width: 640, maxWidth: '95%', maxHeight: '85vh', background: '#0a0a0c', border: '1px solid rgba(166,0,255,0.2)', borderRadius: '1.5rem', boxShadow: '0 0 40px rgba(166,0,255,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '1.25rem', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'linear-gradient(90deg,rgba(166,0,255,0.1),transparent)' }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(17,24,39,0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }}>
+          <div style={{ width: 640, maxWidth: '95%', maxHeight: '85vh', background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: '1.5rem', boxShadow: '0 20px 40px rgba(0,0,0,0.1)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '1.25rem', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'linear-gradient(90deg,rgba(139,92,246,0.05),transparent)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <div style={{ width: 32, height: 32, borderRadius: '0.75rem', background: 'rgba(166,0,255,0.2)', color: '#d088ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Bot size={18} /></div>
+                <div style={{ width: 32, height: 32, borderRadius: '0.75rem', background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Bot size={18} /></div>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: '#fff', letterSpacing: '0.5px' }}>AI DEBUG ENGINE</div>
-                  <div style={{ fontSize: 11, color: '#888' }}>{diagnosisData?.hostingName || 'Analizando...'}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#111827', letterSpacing: '0.5px' }}>AI DEBUG ENGINE</div>
+                  <div style={{ fontSize: 11, color: '#6b7280' }}>{diagnosisData?.hostingName || 'Analizando...'}</div>
                 </div>
               </div>
-              <button onClick={() => { setShowDiagnosis(false); resetDiagnosis(); }} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
+              <button onClick={() => { setShowDiagnosis(false); resetDiagnosis(); }} style={{ background: '#f3f4f6', border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
             </div>
-            <div style={{ padding: '1.5rem', flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarWidth: 'thin', scrollbarColor: 'rgba(166,0,255,0.3) transparent' }}>
+            <div style={{ padding: '1.5rem', flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarWidth: 'thin', scrollbarColor: 'rgba(139,92,246,0.3) transparent' }}>
               {diagnosisLoading ? (
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', color: '#a600ff' }}>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', color: '#8b5cf6' }}>
                   <Loader className="animate-spin" size={32} />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: '#888', letterSpacing: '1px' }}>ESCANEANDO LOGS Y MÉTRICAS...</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', letterSpacing: '1px' }}>ESCANEANDO LOGS Y MÉTRICAS...</span>
                 </div>
               ) : diagnosisData ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
                   <div style={{ display: 'flex', gap: '1rem' }}>
-                    <div style={{ flex: 1, background: '#111', padding: '0.75rem', borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div style={{ fontSize: 10, color: '#666', fontWeight: 800, marginBottom: '0.25rem' }}>STATUS</div>
-                      <div style={{ fontSize: 13, color: diagnosisData.status === 'running' ? '#00ff88' : '#ff4444', fontWeight: 600 }}>{diagnosisData.status?.toUpperCase()}</div>
+                    <div style={{ flex: 1, background: '#f9fafb', padding: '0.75rem', borderRadius: '0.75rem', border: '1px solid #f3f4f6' }}>
+                      <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 800, marginBottom: '0.25rem' }}>STATUS</div>
+                      <div style={{ fontSize: 13, color: diagnosisData.status === 'running' ? '#059669' : '#dc2626', fontWeight: 600 }}>{diagnosisData.status?.toUpperCase()}</div>
                     </div>
-                    <div style={{ flex: 1, background: '#111', padding: '0.75rem', borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div style={{ fontSize: 10, color: '#666', fontWeight: 800, marginBottom: '0.25rem' }}>CPU / RAM</div>
-                      <div style={{ fontSize: 13, color: '#fff', fontFamily: 'monospace' }}>{diagnosisData.metrics?.cpu} / {diagnosisData.metrics?.memory}</div>
+                    <div style={{ flex: 1, background: '#f9fafb', padding: '0.75rem', borderRadius: '0.75rem', border: '1px solid #f3f4f6' }}>
+                      <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 800, marginBottom: '0.25rem' }}>CPU / RAM</div>
+                      <div style={{ fontSize: 13, color: '#111827', fontFamily: 'monospace', fontWeight: 600 }}>{diagnosisData.metrics?.cpu} / {diagnosisData.metrics?.memory}</div>
                     </div>
                   </div>
                   {diagnosisData.has_hard_errors && (
-                    <div style={{ background: 'rgba(255,68,68,0.1)', border: '1px solid rgba(255,68,68,0.2)', padding: '0.75rem', borderRadius: '0.75rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                      <AlertTriangle color="#ff4444" size={20} />
-                      <span style={{ fontSize: 12, color: '#ff4444', fontWeight: 600 }}>Se detectaron errores en el código (Logs)</span>
+                    <div style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)', padding: '0.75rem', borderRadius: '0.75rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                      <AlertTriangle color="#ef4444" size={20} />
+                      <span style={{ fontSize: 12, color: '#b91c1c', fontWeight: 600 }}>Se detectaron errores en el código (Logs)</span>
                     </div>
                   )}
                   {(() => {
                     const severity = diagnosisData.diagnosis?.severity || 'ok';
                     const colors = {
-                      critical: { bg: 'rgba(255,68,68,0.05)',    border: 'rgba(255,68,68,0.2)',    text: '#ff4444' },
-                      warning:  { bg: 'rgba(255,170,0,0.05)',    border: 'rgba(255,170,0,0.2)',    text: '#ffaa00' },
-                      ok:       { bg: 'rgba(0,255,136,0.05)',    border: 'rgba(0,255,136,0.1)',    text: '#00ff88' },
-                    }[severity] || { bg: 'rgba(166,0,255,0.05)', border: 'rgba(166,0,255,0.1)', text: '#a600ff' };
+                      critical: { bg: 'rgba(239,68,68,0.05)',    border: 'rgba(239,68,68,0.2)',    text: '#dc2626' },
+                      warning:  { bg: 'rgba(245,158,11,0.05)',   border: 'rgba(245,158,11,0.2)',   text: '#d97706' },
+                      ok:       { bg: 'rgba(16,185,129,0.05)',   border: 'rgba(16,185,129,0.1)',   text: '#059669' },
+                    }[severity] || { bg: 'rgba(139,92,246,0.05)', border: 'rgba(139,92,246,0.1)', text: '#7c3aed' };
                     return (
                       <div style={{ background: colors.bg, borderRadius: '1rem', padding: '1.25rem', border: `1px solid ${colors.border}`, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                           <div style={{ width: 8, height: 8, borderRadius: '50%', background: colors.text, boxShadow: `0 0 10px ${colors.text}` }} />
                           <div style={{ fontSize: 10, color: colors.text, fontWeight: 800, letterSpacing: '1px' }}>ANÁLISIS DEL ASESOR ({severity.toUpperCase()}):</div>
                         </div>
-                        <div style={{ fontSize: 13, color: '#ddd', lineHeight: 1.6 }}>
+                        <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.6 }}>
                           {diagnosisData.diagnosis?.llm_explanation || diagnosisData.diagnosis?.summary || 'No se detectaron problemas evidentes.'}
                         </div>
                         {diagnosisData.diagnosis?.recommendation && (
-                          <div style={{ fontSize: 11, color: '#888', fontStyle: 'italic', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.5rem' }}>
+                          <div style={{ fontSize: 11, color: '#4b5563', fontStyle: 'italic', borderTop: '1px solid #e5e7eb', paddingTop: '0.5rem' }}>
                             💡 {diagnosisData.diagnosis.recommendation}
                           </div>
                         )}
                       </div>
                     );
                   })()}
-                  <div style={{ marginTop: '0.5rem', borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
-                    <div style={{ fontSize: 10, color: '#555', fontWeight: 800, letterSpacing: '1px', marginBottom: '0.75rem' }}>🔍 DEBUG TÉCNICO (ADMIN):</div>
+                  <div style={{ marginTop: '0.5rem', borderTop: '1px dashed #e5e7eb', paddingTop: '1rem' }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', fontWeight: 800, letterSpacing: '1px', marginBottom: '0.75rem' }}>🔍 DEBUG TÉCNICO (ADMIN):</div>
                     {diagnosisData.debug_info?.parsed_errors?.length > 0 ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
                         {diagnosisData.debug_info.parsed_errors.map((err, i) => {
                           const isCritical = err.severity === 'critical';
-                          const color = isCritical ? '#ff4444' : '#ffaa00';
+                          const color = isCritical ? '#dc2626' : '#d97706';
                           return (
-                            <div key={i} style={{ fontSize: 11, fontFamily: 'monospace', color, background: isCritical ? 'rgba(255,68,68,0.05)' : 'rgba(255,170,0,0.05)', padding: '0.5rem', borderRadius: '0.5rem', border: `1px solid ${isCritical ? 'rgba(255,68,68,0.1)' : 'rgba(255,170,0,0.1)'}` }}>
+                            <div key={i} style={{ fontSize: 11, fontFamily: 'monospace', color, background: isCritical ? 'rgba(239,68,68,0.05)' : 'rgba(245,158,11,0.05)', padding: '0.5rem', borderRadius: '0.5rem', border: `1px solid ${isCritical ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)'}` }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span style={{ fontWeight: 800 }}>[{err.type?.toUpperCase()}]</span>
                                 <span style={{ fontSize: 9, opacity: 0.6 }}>{err.severity?.toUpperCase()}</span>
                               </div>
                               <div style={{ marginTop: '2px' }}>{err.file} {err.line > 0 && `(Línea ${err.line})`}</div>
-                              <div style={{ color: '#aaa', marginTop: '2px', fontSize: 10 }}>{err.message}</div>
+                              <div style={{ color: '#6b7280', marginTop: '2px', fontSize: 10 }}>{err.message}</div>
                             </div>
                           );
                         })}
                       </div>
                     ) : (
-                      <div style={{ fontSize: 11, color: '#444', marginBottom: '1rem' }}>No se encontraron patrones de error conocidos en los logs.</div>
+                      <div style={{ fontSize: 11, color: '#6b7280', marginBottom: '1rem' }}>No se encontraron patrones de error conocidos en los logs.</div>
                     )}
-                    <div style={{ fontSize: 10, color: '#444', marginBottom: '0.25rem' }}>SNIPPET DE LOGS RECIENTES:</div>
-                    <pre style={{ fontSize: '9px', fontFamily: 'monospace', color: '#666', background: '#050505', padding: '0.75rem', borderRadius: '0.5rem', overflowX: 'auto', maxHeight: '100px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                    <div style={{ fontSize: 10, color: '#6b7280', marginBottom: '0.25rem', fontWeight: 700 }}>SNIPPET DE LOGS RECIENTES:</div>
+                    <pre style={{ fontSize: '10px', fontFamily: 'monospace', color: '#4b5563', background: '#f8fafc', padding: '0.75rem', borderRadius: '0.5rem', overflowX: 'auto', maxHeight: '120px', border: '1px solid #e2e8f0' }}>
                       {diagnosisData.debug_info?.raw_snippet || 'Sin logs disponibles.'}
                     </pre>
                   </div>
                 </div>
               ) : (
-                <div style={{ color: '#888', textAlign: 'center', marginTop: '2rem' }}>Error al cargar datos.</div>
+                <div style={{ color: '#9ca3af', textAlign: 'center', marginTop: '2rem' }}>Error al cargar datos.</div>
               )}
             </div>
           </div>
@@ -621,14 +622,14 @@ const Dashboard = () => {
       {/* SUPPORT MODAL */}
       {showSupport && (
         supportView === 'history' && !openTicketId ? (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: '1.5rem' }}
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(17,24,39,0.3)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: '1.5rem' }}
             onClick={e => e.target === e.currentTarget && setShowSupport(false)}>
-            <div style={{ width: 460, maxHeight: '80vh', background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '1.5rem', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.8)' }}>
-              <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>Historial de Soporte</div>
+            <div style={{ width: 460, maxHeight: '80vh', background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: '1.5rem', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.1)' }}>
+              <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>Historial de Soporte</div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button onClick={() => { setSupportView('chat'); setOpenTicketId(null); }} style={{ fontSize: 11, padding: '0.3rem 0.75rem', borderRadius: '0.5rem', background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.2)', color: '#00ff88', cursor: 'pointer' }}>+ Nuevo ticket</button>
-                  <button onClick={() => setShowSupport(false)} style={{ background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
+                  <button onClick={() => { setSupportView('chat'); setOpenTicketId(null); }} style={{ fontSize: 11, padding: '0.4rem 0.8rem', borderRadius: '0.5rem', background: '#f3f4f6', border: '1px solid #e5e7eb', color: '#374151', cursor: 'pointer', fontWeight: 600 }}>+ Nuevo ticket</button>
+                  <button onClick={() => setShowSupport(false)} style={{ background: '#f3f4f6', border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
                 </div>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>

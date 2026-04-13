@@ -46,7 +46,7 @@ function AnimatedNumber({ value }) {
   return <motion.span>{display}</motion.span>;
 }
 
-function KPI({ label, value, suffix = '', color = 'text-white' }) {
+function KPI({ label, value, suffix = '', color = 'text-gray-900' }) {
   return (
     <motion.div whileHover={{ scale: 1.01 }} transition={{ duration: 0.2 }}>
       <p className="text-[10px] font-mono text-gray-500 uppercase tracking-wide">

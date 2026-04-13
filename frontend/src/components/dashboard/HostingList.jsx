@@ -44,7 +44,7 @@ export default function HostingList({
         <div className="text-sm font-bold flex items-center gap-2">
           <Globe className="w-4 h-4 text-accent" /> Sus Proyectos
         </div>
-        <button onClick={onRefresh} className="text-muted hover:text-white transition-colors">
+        <button onClick={onRefresh} className="text-gray-400 hover:text-indigo-600 transition-colors">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
@@ -58,12 +58,12 @@ export default function HostingList({
           <div className="py-12 text-center text-muted italic">No hay hostings activos.</div>
         ) : hostings.map(h => (
           <div key={h.hosting_id} className="domain-row-dash group">
-            <div className="w-10 h-10 bg-surface2 rounded-xl flex items-center justify-center font-bold text-accent transition-colors group-hover:bg-accent/10">
+            <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center font-bold text-indigo-600 transition-colors group-hover:bg-indigo-100">
               {h.name[0].toUpperCase()}
             </div>
 
             <div className="flex-1">
-              <div className="text-sm font-bold text-white group-hover:text-accent transition-colors">{h.name}</div>
+              <div className="text-sm font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">{h.name}</div>
               {h.plan === 'free' && h.expires_in_days != null && (
                 <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${
                   h.expires_in_days <= 0    ? 'bg-red-500/20 text-red-400'
@@ -82,7 +82,7 @@ export default function HostingList({
                   {h.subdomain}
                 </a>
                 {healthData[h.hosting_id] && (
-                  <div className="flex items-center gap-2 text-[10px] bg-white/5 px-2 py-0.5 rounded border border-white/5 font-mono text-muted">
+                  <div className="flex items-center gap-2 text-[10px] bg-gray-50 px-2 py-0.5 rounded border border-gray-200 font-mono text-gray-500">
                     <span className="flex items-center gap-1"><Cpu className="w-2.5 h-2.5" /> {healthData[h.hosting_id].cpu}%</span>
                     <span className="flex items-center gap-1"><Database className="w-2.5 h-2.5" /> {healthData[h.hosting_id].ram}%</span>
                   </div>
@@ -104,10 +104,10 @@ export default function HostingList({
                 ● {h.status}
               </div>
 
-              <div className="flex items-center gap-1 border-l border-white/5 pl-2 ml-2">
+              <div className="flex items-center gap-1 border-l border-gray-200 pl-2 ml-2">
                 {actionLoading === h.hosting_id ? (
                   <div className="w-8 h-8 flex items-center justify-center">
-                    <Loader className="w-3.5 h-3.5 animate-spin text-accent" />
+                    <Loader className="w-3.5 h-3.5 animate-spin text-indigo-600" />
                   </div>
                 ) : (
                   <>
@@ -116,7 +116,7 @@ export default function HostingList({
                         <button
                           onClick={() => onUploadZip(h)}
                           title="Subir archivos (.zip)"
-                          className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-[#00ff88]/20 hover:text-[#00ff88] flex items-center justify-center transition-all"
+                          className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-emerald-50 hover:text-emerald-600 flex items-center justify-center transition-all border border-transparent hover:border-emerald-100"
                         >
                           <Upload className="w-3.5 h-3.5" />
                         </button>
@@ -124,7 +124,7 @@ export default function HostingList({
                           <button
                             onClick={() => onOpenFiles(h)}
                             title="Gestor de archivos"
-                            className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-blue-500/20 hover:text-blue-400 flex items-center justify-center transition-all"
+                            className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-blue-50 hover:text-blue-600 flex items-center justify-center transition-all border border-transparent hover:border-blue-100"
                           >
                             <FolderOpen className="w-3.5 h-3.5" />
                           </button>
@@ -132,14 +132,14 @@ export default function HostingList({
                         <button
                           onClick={() => onStop(h.hosting_id)}
                           title="Detener"
-                          className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-danger/20 hover:text-danger flex items-center justify-center transition-all"
+                          className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-red-50 hover:text-red-600 flex items-center justify-center transition-all border border-transparent hover:border-red-100"
                         >
                           <Square className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => onRestart(h.hosting_id)}
                           title="Reiniciar"
-                          className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-accent/20 hover:text-accent flex items-center justify-center transition-all"
+                          className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600 flex items-center justify-center transition-all border border-transparent hover:border-indigo-100"
                         >
                           <RotateCcw className="w-3.5 h-3.5" />
                         </button>
@@ -150,7 +150,7 @@ export default function HostingList({
                       <button
                         onClick={() => onOpenLogs(h)}
                         title="Ver Logs"
-                        className="w-8 h-8 rounded-lg bg-white/5 text-muted hover:bg-accent/20 hover:text-accent flex items-center justify-center transition-all"
+                        className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600 flex items-center justify-center transition-all border border-transparent hover:border-indigo-100"
                       >
                         <FileText className="w-3.5 h-3.5" />
                       </button>
@@ -160,7 +160,7 @@ export default function HostingList({
                       <button
                         onClick={() => onStart(h.hosting_id)}
                         title="Iniciar"
-                        className="w-8 h-8 rounded-lg bg-accent/10 text-accent hover:bg-accent hover:text-background flex items-center justify-center transition-all"
+                        className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white flex items-center justify-center transition-all"
                       >
                         <Play className="w-3.5 h-3.5" />
                       </button>

@@ -13,11 +13,11 @@ export default function OverviewCard({ siteName, headerExtra, children }) {
   const navigate = useNavigate();
 
   return (
-    <div className="bg-[#050505] border border-white/10 rounded-xl p-4 mb-6">
+    <div className="bg-white border border-gray-100 rounded-xl p-4 mb-6 shadow-sm">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-          <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-white">
+          <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-gray-900">
             {siteName || 'Analítica'}
           </span>
         </div>

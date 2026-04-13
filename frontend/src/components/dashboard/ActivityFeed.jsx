@@ -30,7 +30,7 @@ export default function ActivityFeed({ events, onRefresh }) {
             historial
           </div>
         </div>
-        <button onClick={onRefresh} className="text-muted hover:text-white transition-colors" title="Refrescar">
+        <button onClick={onRefresh} className="text-gray-400 hover:text-indigo-600 transition-colors" title="Refrescar">
           <RefreshCw className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -61,7 +61,7 @@ export default function ActivityFeed({ events, onRefresh }) {
             ? 'text-danger'
             : isWarning
             ? 'text-warn'
-            : 'text-white';
+            : 'text-gray-900';
 
           const siteLabel = isHealth
             ? event.container_name
@@ -71,7 +71,7 @@ export default function ActivityFeed({ events, onRefresh }) {
             <div
               key={event.id || event.event_id}
               className={`flex gap-4 items-start border-l-2 pl-4 ml-1 ${
-                isRecovery ? 'border-green-500/30' : isCritical ? 'border-danger/30' : 'border-white/5'
+                isRecovery ? 'border-green-500/30' : isCritical ? 'border-danger/30' : 'border-gray-100'
               }`}
             >
               <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${dotColor}`} />

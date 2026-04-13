@@ -17,7 +17,7 @@ export default function HeroSection({ realtime }) {
             Estado en tiempo real
           </p>
 
-          <h1 className="text-2xl font-semibold text-white mt-1">
+          <h1 className="text-2xl font-semibold text-gray-900 mt-1">
             {active > 0 ? 'Usuarios activos ahora' : 'Sin actividad en tiempo real'}
           </h1>
 
@@ -29,7 +29,7 @@ export default function HeroSection({ realtime }) {
         </div>
 
         <div className="text-right">
-          <p className="text-4xl font-bold text-white">
+          <p className="text-4xl font-bold text-gray-900">
             {active}
           </p>
           <p className="text-xs text-gray-500 font-mono">

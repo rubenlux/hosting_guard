@@ -26,7 +26,7 @@ export default function TopPagesMini({ pages }) {
           >
             {page.path}
           </span>
-          <span className="text-[11px] font-mono text-white font-semibold shrink-0">
+          <span className="text-[11px] font-mono text-gray-900 font-semibold shrink-0">
             {page.views}
           </span>
         </motion.div>

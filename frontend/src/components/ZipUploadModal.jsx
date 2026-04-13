@@ -95,17 +95,17 @@ const ZipUploadModal = ({ isOpen, onClose, hosting }) => {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.93, y: 16 }}
             transition={{ type: 'spring', stiffness: 340, damping: 28 }}
-            className="w-full max-w-md bg-[#111419] border border-white/10 rounded-3xl shadow-2xl overflow-hidden"
+            className="w-full max-w-md bg-white border border-gray-100 rounded-3xl shadow-2xl overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-white/5">
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-[#00ff88]/10 flex items-center justify-center">
                   <Upload className="w-4 h-4 text-[#00ff88]" />
                 </div>
                 <div>
-                  <div className="text-sm font-black text-white">Subir Sitio Web</div>
+                  <div className="text-sm font-black text-gray-900">Subir Sitio Web</div>
                   <div className="text-[10px] text-gray-500 font-mono truncate max-w-[200px]">
                     {hosting?.subdomain}
                   </div>
@@ -114,7 +114,7 @@ const ZipUploadModal = ({ isOpen, onClose, hosting }) => {
               <button
                 onClick={handleClose}
                 disabled={uploading}
-                className="w-8 h-8 rounded-lg bg-white/5 text-gray-500 hover:text-white hover:bg-white/10 flex items-center justify-center transition-all"
+                className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:text-gray-700 hover:bg-gray-100 flex items-center justify-center transition-all"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -134,7 +134,7 @@ const ZipUploadModal = ({ isOpen, onClose, hosting }) => {
                       ? 'border-[#00ff88] bg-[#00ff88]/5'
                       : file
                         ? 'border-[#00ff88]/40 bg-[#00ff88]/5'
-                        : 'border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]'
+                        : 'border-gray-200 bg-gray-50 hover:border-indigo-200 hover:bg-indigo-50'
                     }
                     ${uploading ? 'pointer-events-none' : ''}
                   `}
@@ -156,7 +156,7 @@ const ZipUploadModal = ({ isOpen, onClose, hosting }) => {
                         className="flex flex-col items-center gap-2"
                       >
                         <FileArchive className="w-10 h-10 text-[#00ff88]" />
-                        <div className="text-sm font-bold text-white truncate max-w-[260px]">{file.name}</div>
+                        <div className="text-sm font-bold text-gray-900 truncate max-w-[260px]">{file.name}</div>
                         <div className="text-[11px] text-gray-500">{formatBytes(file.size)}</div>
                         {!uploading && (
                           <div className="text-[10px] text-gray-600 mt-1">Click para cambiar</div>
@@ -169,14 +169,14 @@ const ZipUploadModal = ({ isOpen, onClose, hosting }) => {
                         animate={{ opacity: 1 }}
                         className="flex flex-col items-center gap-3"
                       >
-                        <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center">
+                        <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center">
                           <Upload className="w-6 h-6 text-gray-500" />
                         </div>
                         <div>
-                          <div className="text-sm font-bold text-white">Arrastra tu .zip aquí</div>
+                          <div className="text-sm font-bold text-gray-900">Arrastra tu .zip aquí</div>
                           <div className="text-[11px] text-gray-500 mt-1">o haz click para seleccionar</div>
                         </div>
-                        <div className="text-[10px] text-gray-600 bg-white/5 px-3 py-1.5 rounded-full">
+                        <div className="text-[10px] text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full">
                           Solo archivos .zip • Máx. 50MB
                         </div>
                       </motion.div>
@@ -255,8 +255,8 @@ const ZipUploadModal = ({ isOpen, onClose, hosting }) => {
                   className={`
                     w-full py-4 rounded-2xl font-black text-sm transition-all flex items-center justify-center gap-2
                     ${file && !uploading
-                      ? 'bg-[#00ff88] text-black hover:scale-[1.02] shadow-lg shadow-[#00ff88]/20 active:scale-95'
-                      : 'bg-white/5 text-gray-600 cursor-not-allowed'
+                      ? 'bg-indigo-600 text-white hover:scale-[1.02] shadow-lg shadow-indigo-600/20 active:scale-95'
+                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                     }
                   `}
                 >
@@ -271,7 +271,7 @@ const ZipUploadModal = ({ isOpen, onClose, hosting }) => {
               {result?.success && (
                 <button
                   onClick={handleClose}
-                  className="w-full py-4 rounded-2xl font-black text-sm bg-white/5 text-white hover:bg-white/10 transition-all"
+                  className="w-full py-4 rounded-2xl font-black text-sm bg-gray-100 text-gray-900 hover:bg-gray-200 transition-all"
                 >
                   Cerrar
                 </button>
