@@ -363,7 +363,7 @@ const Dashboard = () => {
                   </div>
 
                   {/* RIGHT COLUMN */}
-                  <div className="space-y-6">
+                  <div className="space-y-6 lg:sticky lg:top-6 self-start">
                     <div className="card-dash p-6 bg-[#121214] border border-white/10 shadow-sm rounded-2xl relative overflow-hidden font-sans">
                       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500"></div>
                       <div className="flex justify-between items-start mb-6">
@@ -408,7 +408,7 @@ const Dashboard = () => {
                 {/* INFRA METRICS */}
                 <div className="mt-6">
                   <div className="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                    <span className="w-3 h-px bg-white/20" /> Infraestructura
+                    <span className="w-3 h-px bg-warn/40" /> Infraestructura
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-emerald-500">

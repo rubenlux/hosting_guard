@@ -35,7 +35,7 @@ export default function ActivityFeed({ events, onRefresh }) {
         </button>
       </div>
 
-      <div className="p-4 space-y-4 max-h-[400px] overflow-y-auto">
+      <div className="p-4 space-y-4 max-h-[600px] overflow-y-auto">
         {events.length === 0 ? (
           <div className="text-[11px] text-muted italic p-2">Sin actividad reciente.</div>
         ) : events.map(event => {
@@ -71,7 +71,7 @@ export default function ActivityFeed({ events, onRefresh }) {
             <div
               key={event.id || event.event_id}
               className={`flex gap-4 items-start border-l-2 pl-4 ml-1 ${
-                isRecovery ? 'border-green-500/30' : isCritical ? 'border-danger/30' : 'border-white/10'
+                isRecovery ? 'border-green-500/30' : isCritical ? 'border-danger/30' : 'border-warn/30'
               }`}
             >
               <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${dotColor}`} />
