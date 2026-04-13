@@ -113,7 +113,7 @@ function DetailPanel({ advisory, onDiagnose }) {
           <div className="text-[10px] font-mono text-muted uppercase tracking-widest mb-1">Hosting</div>
           <div className="text-base font-black text-white">{advisory.hostingName}</div>
         </div>
-        <span className={`text-[9px] font-black px-2 py-1 rounded-lg ${cfg.badge} ${isCritical ? 'animate-pulse' : ''}`}>
+        <span className={`text-[9px] font-black px-2 py-1 rounded-lg ${cfg.badge} ${isCritical ? 'animate-pulse' : ''} border border-white/5`}>
           {cfg.label}
         </span>
       </div>
@@ -175,18 +175,22 @@ function DetailPanel({ advisory, onDiagnose }) {
 }
 
 // ── Diagnosis history timeline ────────────────────────────────────────────────
-const SEV_COLOR = {
-  critical: 'text-danger border-danger/30 bg-danger/5',
-  warning:  'text-warn  border-warn/20  bg-warn/5',
-  info:     'text-accent border-accent/20 bg-accent/5',
-};
-
-const FAILURE_TYPE_STYLE = {
-  syntax:  'bg-yellow-500/15 text-yellow-400 border border-yellow-500/25',
-  import:  'bg-purple-500/15 text-purple-400 border border-purple-500/25',
-  runtime: 'bg-orange-500/15 text-orange-400 border border-orange-500/25',
-  infra:   'bg-red-500/15    text-red-400    border border-red-500/25',
-  unknown: 'bg-white/5       text-gray-500   border border-white/10',
+const SEV_DESIGN = {
+  critical: {
+    container: 'border-l-[3px] border-l-red-500 bg-[#0d1117] border border-white/5',
+    titleColor: 'text-red-400',
+    badge: 'bg-red-500/10 text-red-400 px-2 py-0.5 rounded-full border border-red-500/20 uppercase font-semibold text-[9px]',
+  },
+  warning: {
+    container: 'border-l-[3px] border-l-amber-500 bg-[#0d1117] border border-white/5',
+    titleColor: 'text-amber-400',
+    badge: 'bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full border border-amber-500/20 uppercase font-semibold text-[9px]',
+  },
+  info: {
+    container: 'border-l-[3px] border-l-blue-500 bg-[#0d1117] border border-white/5',
+    titleColor: 'text-blue-400',
+    badge: 'bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/20 uppercase font-semibold text-[9px]',
+  }
 };
 
 function relTime(iso) {
@@ -224,89 +228,124 @@ function DiagnosisHistory({ hostingId }) {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-10">
       {items.map(item => {
-        const color = SEV_COLOR[item.severity] ?? SEV_COLOR.info;
+        const design = SEV_DESIGN[item.severity] || SEV_DESIGN.info;
+
         return (
-          <div key={item.id} className={`rounded-xl border p-3 ${color} space-y-2`}>
-            {/* Header row */}
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-black uppercase tracking-wider">
-                  {item.severity}
-                </span>
-                {item.failure_type && (
-                  <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${FAILURE_TYPE_STYLE[item.failure_type] ?? FAILURE_TYPE_STYLE.unknown}`}>
-                    {item.failure_type}
-                  </span>
-                )}
-              </div>
-              <span
-                className="text-[9px] font-mono text-muted"
-                title={new Date(item.created_at).toLocaleString()}
-              >
-                <Clock className="w-2.5 h-2.5 inline mr-0.5" />
-                {relTime(item.created_at)}
-              </span>
+          <div key={item.id} className="pt-2">
+            <div className="text-[10px] font-mono text-cyan-400 uppercase tracking-widest mb-1.5 flex items-center gap-2">
+              <ShieldCheck className="w-3 h-3" /> Informe de Evidencia
             </div>
+            <h2 className="text-xl font-bold text-white mb-3">
+              Análisis de Inteligencia: <span className="text-cyan-300">{item.failure_type || 'Excepción del Sistema'}</span>
+            </h2>
+            
+            <div className={`rounded-xl shadow-2xl ${design.container} p-6 space-y-6`}>
+               {/* Header status */}
+               <div className="flex justify-between items-center border-b border-white/5 pb-4">
+                 <div className={design.badge}>
+                   ● {item.severity}
+                 </div>
+                 <div className="flex items-center gap-4">
+                   {item.confidence != null && (
+                     <span className="text-[9px] font-mono text-gray-500 border border-white/10 px-2 py-0.5 rounded text-white/50 bg-black/20">
+                       CONFIA: {Math.round(item.confidence * 100)}%
+                     </span>
+                   )}
+                   <span className="text-[10px] text-gray-500 font-mono flex items-center gap-1.5">
+                     <Clock className="w-3 h-3 opacity-60" /> {relTime(item.created_at)}
+                   </span>
+                 </div>
+               </div>
 
-            {/* Summary */}
-            <p className="text-[11px] font-semibold text-white leading-snug">{item.summary}</p>
+               {/* Summary context */}
+               <div className="text-lg font-medium text-gray-100 leading-snug">
+                 {item.summary}
+               </div>
 
-            {/* Root cause */}
-            {item.root_cause && (
-              <p className="text-[10px] text-gray-400 leading-relaxed">{item.root_cause}</p>
-            )}
+               {/* Grid analysis details */}
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                 {item.impact && (
+                   <div>
+                      <div className="flex items-center gap-2 mb-2.5">
+                        <AlertTriangle className={`w-4 h-4 ${design.titleColor}`} />
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Análisis de Impacto</span>
+                      </div>
+                      <div className="bg-black/20 rounded-lg border border-white/5 p-4 h-[calc(100%-28px)]">
+                        <div className="text-[11px] text-gray-300 leading-relaxed font-medium">
+                          {item.impact}
+                        </div>
+                      </div>
+                   </div>
+                 )}
 
-            {/* Location */}
-            {item.file_path && (
-              <div className="flex items-center gap-1 text-[9px] font-mono text-accent">
-                <FileCode className="w-3 h-3 shrink-0" />
-                {item.file_path}{item.line_number ? `:${item.line_number}` : ''}
-              </div>
-            )}
+                 {item.file_path && (
+                   <div>
+                      <div className="flex items-center gap-2 mb-2.5">
+                        <FileCode className={`w-4 h-4 text-[#8b949e]`} />
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Alcance del Recurso</span>
+                      </div>
+                      <div className="flex gap-2 flex-wrap items-start">
+                        <span className="bg-[#1b1f28] border border-[#2b3245] text-gray-300 px-3 py-1.5 rounded-full text-[10px] font-mono shadow-sm">
+                          {item.file_path}{item.line_number ? `:${item.line_number}` : ''}
+                        </span>
+                      </div>
+                   </div>
+                 )}
+               </div>
 
-            {/* Impact */}
-            {item.impact && (
-              <div className="text-[10px] text-red-400 leading-snug">
-                <span className="font-black">Impacto: </span>{item.impact}
-              </div>
-            )}
+               {/* Forensics logs */}
+               {(item.root_cause || (item.evidence && item.evidence.length > 0)) && (
+                 <div>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <div className="flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-[#8b949e]" />
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Registros Forenses</span>
+                      </div>
+                      <div className="text-[9px] font-mono text-[#8b949e] opacity-50 tracking-widest px-2 relative uppercase">
+                        NODE_HASH: {item.id ? item.id.substring(0, 8) : 'NA'}
+                      </div>
+                    </div>
+                    
+                    <div className="bg-[#050505] border border-white/10 rounded-lg p-5 font-mono text-[11px] overflow-hidden space-y-2 shadow-inner">
+                      {item.root_cause && <div className="text-[#a5d6ff] mb-4 opacity-80 leading-relaxed">{item.root_cause}</div>}
+                      {item.evidence && item.evidence.map((ev, i) => (
+                        <div key={i} className="flex gap-4">
+                          <span className="text-gray-600 select-none opacity-50 w-4 text-right">0{i+1}</span>
+                          <span className="text-[#ff7b72] leading-relaxed break-all">{ev}</span>
+                        </div>
+                      ))}
+                    </div>
+                 </div>
+               )}
 
-            {/* Evidence */}
-            {item.evidence?.length > 0 && (
-              <div className="text-[10px] text-gray-500 leading-snug">
-                <span className="font-black text-gray-400">Evidencia: </span>
-                {item.evidence.join(' • ')}
-              </div>
-            )}
+               {/* Steps and recommended action */}
+               {item.fix_steps && item.fix_steps.length > 0 && (
+                 <div className="pt-2">
+                    <h3 className="text-sm font-bold text-white mb-3 tracking-wide">Resolución Recomendada</h3>
+                    <div className="space-y-2">
+                      {item.fix_steps.map((step, i) => (
+                        <div key={i} className="flex items-start gap-3 bg-[#161b22] shadow-sm border border-[#30363d] rounded-lg p-3.5 transition-colors hover:bg-[#1c2128]">
+                          <CheckCircle className="w-4 h-4 text-cyan-500 shrink-0 mt-0.5 opacity-80" />
+                          <span className="text-[12px] font-medium text-gray-200 leading-relaxed">{step}</span>
+                        </div>
+                      ))}
+                    </div>
+                 </div>
+               )}
+               
+               {!item.fix_steps && item.fix_action && (
+                 <div className="pt-2">
+                    <h3 className="text-sm font-bold text-white mb-3 tracking-wide">Acción Sugerida</h3>
+                    <div className="flex items-start gap-3 bg-[#161b22] shadow-sm border border-[#30363d] rounded-lg p-3.5 transition-colors hover:bg-[#1c2128]">
+                      <Zap className="w-4 h-4 text-cyan-500 shrink-0 mt-0.5 opacity-80" />
+                      <span className="text-[12px] font-medium text-gray-200 leading-relaxed">{item.fix_action}</span>
+                    </div>
+                 </div>
+               )}
 
-            {/* Fix action */}
-            {item.fix_action && (
-              <div className="flex items-start gap-1.5 text-[10px]">
-                <Zap className="w-3 h-3 mt-0.5 shrink-0 text-accent" />
-                <span className="text-gray-300">{item.fix_action}</span>
-              </div>
-            )}
-
-            {/* Fix steps */}
-            {item.fix_steps?.length > 0 && (
-              <ul className="space-y-0.5 pl-1">
-                {item.fix_steps.map((step, i) => (
-                  <li key={i} className="text-[10px] text-gray-400 flex items-start gap-1">
-                    <span className="text-accent font-black shrink-0">{i + 1}.</span>
-                    {step}
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {/* Confidence */}
-            {item.confidence != null && (
-              <div className="text-[9px] font-mono text-muted">
-                Confianza: {Math.round(item.confidence * 100)}%
-              </div>
-            )}
+            </div>
           </div>
         );
       })}
@@ -549,13 +588,7 @@ export default function AIAdvisoryPage({ onDiagnose }) {
 
             {selectedAdvisory && (
               <>
-                <div className="card-dash p-4 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-3.5 h-3.5 text-muted" />
-                    <span className="text-[10px] font-mono text-muted uppercase tracking-widest">
-                      Historial IA
-                    </span>
-                  </div>
+                <div className="pt-2">
                   <DiagnosisHistory hostingId={selectedAdvisory.hostingId} />
                 </div>
                 <FixProposalCard hostingId={selectedAdvisory.hostingId} />
