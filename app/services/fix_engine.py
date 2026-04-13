@@ -107,6 +107,14 @@ def _select_fix(
             estimated_downtime=get_downtime(action),
         )
 
+    # ── Score guard ───────────────────────────────────────────────────────────
+    # If the health engine says the system is healthy (score >= 90) there's no
+    # actionable infrastructure problem worth restarting over.  This prevents
+    # the AI from proposing docker_restart when a single irrelevant 404 inflated
+    # the error list but the system is objectively functioning correctly.
+    if score >= 90 and failure_type in ("infra", "runtime", "unknown"):
+        return None
+
     # ── 2. Runtime errors → restart clears stuck processes / bad state ────────
     if failure_type == "runtime":
         action = "docker_restart"

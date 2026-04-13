@@ -18,9 +18,26 @@ _PROBE_PREFIXES = (
     "/console", "/.DS_Store", "/web.config",
 )
 
+# API path patterns that would never be static files on a nginx container.
+# A 404 on these paths means the request was misrouted (sent to the hosting
+# container instead of the API backend) — not an application error.
+# Example: curl accidentally called mi-academia.hostingguard.lat/hosting/1/diagnose
+# instead of api.hostingguard.lat/hosting/1/diagnose.
+_API_PATH_PATTERNS = re.compile(
+    r'^/(?:hosting|api|fix|diagnose|health|login|auth|user|admin|v\d+)(?:/|$)',
+    re.IGNORECASE,
+)
+
 def _is_probe(path: str) -> bool:
     p = path.lower()
     return any(p.startswith(prefix) for prefix in _PROBE_PREFIXES)
+
+def _is_misrouted_api(path: str) -> bool:
+    """
+    Returns True when a 404 path looks like an API call sent to a static container.
+    These are dev/ops mistakes, not application errors.
+    """
+    return bool(_API_PATH_PATTERNS.match(path))
 
 def _extract_ts(line: str) -> str | None:
     """Extract ISO timestamp from a docker --timestamps log line, or None."""
@@ -89,6 +106,22 @@ class LogParser:
                         "severity":    "info",
                         "source":      "external_probe",
                         "message":     f"Probe externo ignorado (404): {path}",
+                        "file":        path,
+                        "line":        0,
+                        "ts":          ts,
+                        "raw_context": line,
+                    })
+                    continue
+
+                # Misrouted API call — request sent to static container instead of
+                # the API backend (e.g. /hosting/1/diagnose on nginx).
+                # Not an application error; classify as dev_noise.
+                if _is_misrouted_api(path):
+                    parsed_errors.append({
+                        "type":        "http_404",
+                        "severity":    "info",
+                        "source":      "dev_noise",
+                        "message":     f"Petición API mal enrutada (sin impacto): {path}",
                         "file":        path,
                         "line":        0,
                         "ts":          ts,

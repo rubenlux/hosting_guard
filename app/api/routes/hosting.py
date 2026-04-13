@@ -776,24 +776,29 @@ async def get_fix_proposal(hosting_id: int, user: dict = Depends(verify_token)):
         return {"proposed_fix": None}
 
     latest = history[0]
-    # Fingerprint is not stored in get_by_hosting — rebuild it from stored fields.
-    # We use the diagnosis id as a stable surrogate key for the cache lookup.
-    cache_key_fp = f"diag-{latest['id']}"
+    # Prefer the real fingerprint stored during diagnosis (exact cache key match).
+    # Fall back to a stable surrogate key based on the row id.
+    cache_fp = latest.get("fingerprint") or f"diag-{latest['id']}"
 
-    # 1. Cache hit
-    cached = get_proposal(hosting_id, cache_key_fp)
+    # 1. Cache hit — fix_memory already has the proposal from diagnose_hosting
+    cached = get_proposal(hosting_id, cache_fp)
     if cached:
         return {"proposed_fix": cached.model_dump()}
 
-    # 2. Rebuild from stored diagnosis fields
+    # 2. Cache miss — rebuild from stored diagnosis fields
     failure_type = latest.get("failure_type") or "unknown"
+    # Map diagnosis severity to a rough score estimate for the fix engine threshold.
+    # Critical → 30, warning → 60, info → 90.  Only affects nginx_reload selection.
+    _sev_score = {"critical": 30, "warning": 60, "info": 90}
+    approx_score = _sev_score.get(latest.get("severity"), 60)
+
     proposal = build_fix_proposal(
         hosting_id=hosting_id,
         container_name=hosting["container_name"],
-        fingerprint=cache_key_fp,
+        fingerprint=cache_fp,
         failure_type=failure_type,
-        container_status="running",   # assume running — we can't inspect now without docker call
-        score=80,                      # conservative default when score isn't stored in ai_diagnosis
+        container_status="running",   # assume running — inspect skipped for latency
+        score=approx_score,
     )
     if proposal:
         save_proposal(proposal)

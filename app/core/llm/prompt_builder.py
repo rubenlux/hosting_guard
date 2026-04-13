@@ -105,9 +105,14 @@ Recurrence status: {recurring_line}
    - You MUST set failure_type: "unknown"
    - You MUST NOT invent issues that are not present in the data
    - summary should state that no actionable issues were detected
-8. NEVER give generic advice
-9. NEVER say "check logs"
-10. Be precise, technical, and direct
+8. If Health Score >= 90:
+   - You MUST NOT return severity: "critical"
+   - Maximum allowed severity is "warning"
+   - A score of 90+ means the health engine found no significant operational failure
+   - A single http_404 or isolated log entry is NOT sufficient evidence for "critical"
+9. NEVER give generic advice
+10. NEVER say "check logs"
+11. Be precise, technical, and direct
 
 ━━━━━━━━━━━━━━━━━━━
 🧾 OUTPUT FORMAT (STRICT JSON)

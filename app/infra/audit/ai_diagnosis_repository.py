@@ -134,6 +134,7 @@ class AIDiagnosisRepository:
         """
         Return the most recent diagnoses for a hosting, newest first.
         JSON fields are deserialized back to Python lists.
+        fingerprint is included so callers can reuse the fix_memory cache key.
         """
         conn = get_connection()
         try:
@@ -144,7 +145,7 @@ class AIDiagnosisRepository:
                        file_path, line_number, service,
                        evidence, impact,
                        fix_action, fix_steps,
-                       confidence, created_at
+                       confidence, fingerprint, created_at
                 FROM   ai_diagnosis
                 WHERE  hosting_id = %s
                 ORDER  BY created_at DESC
