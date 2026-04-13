@@ -53,6 +53,7 @@ def build_fix_proposal(
     cpu: float = 0.0,
     ram: float = 0.0,
     score: int = 100,
+    quality_score: float = 0.0,  # from error_quality_score() — gates weak-signal fixes
 ) -> FixProposal | None:
     """
     Build a FixProposal from diagnosis context.
@@ -71,6 +72,7 @@ def build_fix_proposal(
             cpu=cpu,
             ram=ram,
             score=score,
+            quality_score=quality_score,
         )
     except Exception as exc:
         logger.warning("fix_engine: proposal build failed: %s", exc)
@@ -87,7 +89,20 @@ def _select_fix(
     cpu: float,
     ram: float,
     score: int,
+    quality_score: float,
 ) -> FixProposal | None:
+
+    # ── Fix Engine Gate ───────────────────────────────────────────────────────
+    # Gate 1 — healthy system: score >= 95 + running → nothing to fix.
+    if score >= 95 and container_status == "running":
+        return None
+
+    # Gate 2 — weak signal: quality < 8 means there's not enough evidence
+    # of a real failure to justify any automated action (even nginx_reload).
+    # Exceptions: container is stopped (clear infra failure regardless of quality),
+    # or failure_type is a hard-typed exception (syntax/import — those are manual anyway).
+    if quality_score < 8 and container_status == "running" and failure_type not in ("syntax", "import"):
+        return None
 
     # ── 1. Container is not running → start it ────────────────────────────────
     if container_status not in ("running",):

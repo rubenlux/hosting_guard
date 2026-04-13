@@ -20,11 +20,16 @@ _PROBE_PREFIXES = (
 
 # API path patterns that would never be static files on a nginx container.
 # A 404 on these paths means the request was misrouted (sent to the hosting
-# container instead of the API backend) — not an application error.
-# Example: curl accidentally called mi-academia.hostingguard.lat/hosting/1/diagnose
-# instead of api.hostingguard.lat/hosting/1/diagnose.
+# container instead of the API backend).
 _API_PATH_PATTERNS = re.compile(
     r'^/(?:hosting|api|fix|diagnose|health|login|auth|user|admin|v\d+)(?:/|$)',
+    re.IGNORECASE,
+)
+
+# User-agents that indicate synthetic/test requests — not real end-user traffic.
+# These produce noise in logs but carry zero production signal.
+_SYNTHETIC_UA_PATTERNS = re.compile(
+    r'\b(?:curl|wget|httpie|python-requests|go-http|okhttp|grpc|postman|insomnia)\b',
     re.IGNORECASE,
 )
 
@@ -33,11 +38,118 @@ def _is_probe(path: str) -> bool:
     return any(p.startswith(prefix) for prefix in _PROBE_PREFIXES)
 
 def _is_misrouted_api(path: str) -> bool:
-    """
-    Returns True when a 404 path looks like an API call sent to a static container.
-    These are dev/ops mistakes, not application errors.
-    """
+    """True when a 404 path looks like an API call on a static nginx container."""
     return bool(_API_PATH_PATTERNS.match(path))
+
+def _is_synthetic(log_line: str) -> bool:
+    """True when the request was made by a CLI tool (curl, wget, etc.) — not a real user."""
+    return bool(_SYNTHETIC_UA_PATTERNS.search(log_line))
+
+
+# ── Error quality weights ─────────────────────────────────────────────────────
+# Base signal strength per error type.
+# http_404 base weight is intentionally low (1) — path context multiplier
+# below elevates critical paths (/, /index.html) to realistic signal weight.
+_ERROR_QUALITY_WEIGHTS: dict[str, int] = {
+    "python_exception":    10,
+    "ModuleNotFoundError": 10,
+    "SyntaxError":         10,
+    "ImportError":         10,
+    "AttributeError":       9,
+    "TypeError":            9,
+    "http_5xx":             8,
+    "php_error":            7,
+    "http_404":             1,
+}
+
+# Hard-trigger types — always activate LLM regardless of health_score or quality.
+# These error classes always mean code is broken; no threshold needed.
+_HARD_TRIGGER_TYPES: frozenset[str] = frozenset({
+    "python_exception", "http_5xx", "php_error",
+    "ModuleNotFoundError", "SyntaxError", "ImportError",
+    "AttributeError", "TypeError",
+})
+
+_QUALITY_THRESHOLD = 5
+
+
+def _path_context_multiplier(path: str) -> float:
+    """
+    Context multiplier for http_404 errors based on path criticality.
+
+    Why path-aware:
+      404 /favicon.ico       → 0.1  (cosmetic, no functional impact)
+      404 /old-page.html     → 1.0  (normal, broken link)
+      404 /main.css          → 2.0  (site renders broken)
+      404 /index.html        → 5.0  (site completely unreachable)
+
+    This is what 'weighting by path' means in practice:
+    5 favicon 404s  = quality 0.5  → no LLM (noise)
+    1 index.html 404 = quality 5.0 → LLM (real problem)
+    """
+    if not path:
+        return 1.0
+    p = path.lower().split("?")[0]   # strip query string
+
+    # Entry point — if index is missing, site is completely down for users
+    if p in ("/", "/index.html", "/index.php"):
+        return 5.0
+
+    # Critical bundles — site renders broken without CSS/JS
+    if re.search(r'\.(css|js)$', p):
+        return 2.0
+
+    # Pure cosmetic / font / icon files — no functional impact
+    if re.search(r'\.(ico|svg|woff|woff2|ttf|eot|png|jpg|jpeg|gif|webp|map)$', p):
+        return 0.1
+
+    return 1.0
+
+
+def error_quality_score(errors: list) -> float:
+    """
+    Returns the total quality score for a list of parsed errors.
+    Only considers actionable (source='application') errors.
+    http_404 errors are weighted by path criticality via _path_context_multiplier.
+
+    Examples:
+      1 curl 404 /hosting/1/diagnose → dev_noise (excluded) → 0
+      1 http_404 /index.html         → 1 × 5.0 = 5.0 → LLM activates
+      1 SyntaxError                  → 10 (hard trigger, always LLM)
+      5 http_404 /old-page.html      → 5 × 1.0 = 5.0 → LLM activates
+    """
+    total = 0.0
+    for e in errors:
+        if e.get("source") != "application":
+            continue
+        base = _ERROR_QUALITY_WEIGHTS.get(e.get("type", "unknown"), 2)
+        if e.get("type") == "http_404":
+            total += base * _path_context_multiplier(e.get("file", ""))
+        else:
+            total += float(base)
+    return total
+
+
+def is_signal_worth_diagnosing(actionable_errors: list, health_score: int) -> bool:
+    """
+    Returns True only when the error signal is strong enough to warrant an LLM call.
+
+    Hard triggers (python_exception, http_5xx, etc.) always return True — these
+    error classes always mean code is broken, no threshold applies.
+
+    For everything else: quality_score >= QUALITY_THRESHOLD OR health_score < 85.
+    """
+    # Hard trigger check — one exception = always diagnose
+    for e in actionable_errors:
+        if e.get("type") in _HARD_TRIGGER_TYPES and e.get("source") == "application":
+            return True
+
+    # Health engine already flagged a real problem
+    if health_score < 85:
+        return True
+
+    # Quality threshold gate
+    return error_quality_score(actionable_errors) >= _QUALITY_THRESHOLD
 
 def _extract_ts(line: str) -> str | None:
     """Extract ISO timestamp from a docker --timestamps log line, or None."""
@@ -115,13 +227,28 @@ class LogParser:
 
                 # Misrouted API call — request sent to static container instead of
                 # the API backend (e.g. /hosting/1/diagnose on nginx).
-                # Not an application error; classify as dev_noise.
                 if _is_misrouted_api(path):
                     parsed_errors.append({
                         "type":        "http_404",
                         "severity":    "info",
                         "source":      "dev_noise",
                         "message":     f"Petición API mal enrutada (sin impacto): {path}",
+                        "file":        path,
+                        "line":        0,
+                        "ts":          ts,
+                        "raw_context": line,
+                    })
+                    continue
+
+                # Synthetic request (curl, wget, etc.) — CLI tools, not real users.
+                # Quality weight = 1 but classify as dev_noise so it never inflates
+                # actionable_errors or triggers the LLM.
+                if _is_synthetic(line):
+                    parsed_errors.append({
+                        "type":        "http_404",
+                        "severity":    "info",
+                        "source":      "dev_noise",
+                        "message":     f"Petición sintética (herramienta CLI, sin impacto): {path}",
                         "file":        path,
                         "line":        0,
                         "ts":          ts,

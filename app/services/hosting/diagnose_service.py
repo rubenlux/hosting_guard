@@ -108,13 +108,28 @@ async def _run_structured_diagnosis(
             logger.info("Diagnosis cache HIT for hosting_id=%s fp=%s", hosting_id, fingerprint)
             return cached
 
-        # ── Output governance: no actionable errors → canonical clean result ─
-        # Short-circuit BEFORE calling the LLM and BEFORE saving to DB.
-        # This guarantees the history always reflects the true system state.
-        # Previously the clamp ran after repo.save() — the LLM response was
-        # saved to DB regardless, so the history showed wrong diagnoses even
-        # though the API response was correct.
-        if not actionable_errors:
+        # ── Output governance gate ──────────────────────────────────────────
+        # Two short-circuit conditions — both save canonical clean result to DB:
+        #
+        # A) No actionable errors at all.
+        # B) Minimum signal threshold not met: errors present but quality score is
+        #    too low (e.g. a single isolated http_404 from a curl test) AND the
+        #    health engine says the system is healthy (score >= 85).
+        #    Calling the LLM with weak signals causes over-diagnosis — "critical"
+        #    severity for a 404 that has zero production impact.
+        from app.core.log_parser import is_signal_worth_diagnosing, error_quality_score
+
+        _quality_score = error_quality_score(actionable_errors)
+        _signal_ok = bool(actionable_errors) and is_signal_worth_diagnosing(
+            actionable_errors, score
+        )
+
+        if not _signal_ok:
+            reason = (
+                "no actionable errors"
+                if not actionable_errors
+                else f"low signal quality (score={score}, quality={_quality_score:.1f})"
+            )
             clean = {
                 "severity":     "info",
                 "failure_type": "unknown",
@@ -132,12 +147,12 @@ async def _run_structured_diagnosis(
                     hosting_id=hosting_id,
                     user_id=user_id,
                     parsed=clean,
-                    raw_response="[no-llm: no actionable errors]",
+                    raw_response=f"[no-llm: {reason}]",
                     fingerprint=fingerprint,
                 ),
             )
             logger.info(
-                "Diagnosis short-circuit (no actionable errors) for hosting_id=%s", hosting_id
+                "Diagnosis short-circuit (%s) for hosting_id=%s", reason, hosting_id
             )
             return saved or clean
 
@@ -365,6 +380,42 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
                 "location":     {"file": None, "line": None, "service": "system"},
             }
 
+        # ── Output Consistency Enforcer ─────────────────────────────────────
+        # health_score is the authoritative signal — it is computed deterministically
+        # from real metrics and must always dominate over LLM assessment.
+        #
+        # Rule: if score >= 95, the system is objectively healthy.
+        # Any LLM "critical" at this score is a false positive — override entirely.
+        # Rule: if score >= 85, cap severity at "warning" (no "critical" allowed).
+        #
+        # This is the safety net that prevents contradictions like:
+        #   health_score=100 + severity="critical"
+        # which destroy user trust and break the UI's severity-based routing.
+        # quality_score computed in _run_structured_diagnosis is not available here;
+        # recompute from final actionable_errors for the output enforcer + fix gate.
+        from app.core.log_parser import error_quality_score as _quality_fn
+        _final_quality = _quality_fn(debug_context["logs"].get("actionable_errors", []))
+        _hs = health_result["score"]
+        if structured and isinstance(structured, dict):
+            _sev = structured.get("severity", "info")
+            # Hard rule: score >= 95 AND quality < 10 → system is healthy, force info
+            if _hs >= 95 and _final_quality < 10 and _sev in ("critical", "warning"):
+                structured["severity"]   = "info"
+                structured["root_cause"] = None
+                structured["impact"]     = "No hay impacto. El sistema está funcionando correctamente."
+                structured["fix_action"] = None
+                structured["fix_steps"]  = []
+                logger.info(
+                    "Output enforcer: score=%d quality=%.1f → severity forced to info for hosting_id=%s",
+                    _hs, _final_quality, h_id_db,
+                )
+            elif _hs >= 85 and _sev == "critical":
+                structured["severity"] = "warning"
+                logger.info(
+                    "Output enforcer: score=%d → severity capped at warning for hosting_id=%s",
+                    _hs, h_id_db,
+                )
+
         # ── Fix proposal — built from final structured state, non-blocking ────
         proposed_fix = None
         try:
@@ -387,6 +438,7 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
                 cpu=cpu_val,
                 ram=ram_val,
                 score=health_result["score"],
+                quality_score=_final_quality,
             )
             if proposal:
                 await loop.run_in_executor(None, lambda: save_proposal(proposal))

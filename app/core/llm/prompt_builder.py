@@ -110,9 +110,14 @@ Recurrence status: {recurring_line}
    - Maximum allowed severity is "warning"
    - A score of 90+ means the health engine found no significant operational failure
    - A single http_404 or isolated log entry is NOT sufficient evidence for "critical"
-9. NEVER give generic advice
-10. NEVER say "check logs"
-11. Be precise, technical, and direct
+9. NON-ACTIONABLE EVENTS — if errors contain any of these, classify as "noise", not failures:
+   - Paths starting with /hosting/, /api/, /fix/, /diagnose/ — these are misrouted API calls to a static server
+   - Requests with user-agent "curl", "wget", "python-requests" — synthetic/test requests, not real traffic
+   - A single isolated http_404 in an otherwise clean log — not a production incident
+   - For any of these: set severity "info", failure_type "unknown", root_cause null
+10. NEVER give generic advice
+11. NEVER say "check logs"
+12. Be precise, technical, and direct
 
 ━━━━━━━━━━━━━━━━━━━
 🧾 OUTPUT FORMAT (STRICT JSON)
