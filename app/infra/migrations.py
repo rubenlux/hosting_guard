@@ -211,6 +211,9 @@ _MIGRATIONS_PG = [
     "INSERT INTO ticket_categories (category_id, name, description, ai_prompt_hint, priority_default, is_active) VALUES (2, 'Sitio lento', 'El sitio carga muy despacio', '...', 'medium', 1) ON CONFLICT (category_id) DO NOTHING",
     # Phase 2: store db container name explicitly — avoids fragile dynamic name reconstruction
     "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS db_container_name TEXT",
+    # resolved_at timestamp for site_alerts — enables proper resolution tracking
+    # (previously only 'resolved' INTEGER existed; frontend needs resolved_at)
+    "ALTER TABLE site_alerts ADD COLUMN IF NOT EXISTS resolved_at TEXT",
     # fingerprint column for cache lookups (added after initial table creation)
     "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS fingerprint TEXT",
     # failure_type classification (syntax | import | runtime | infra | unknown)

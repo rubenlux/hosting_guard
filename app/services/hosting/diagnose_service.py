@@ -342,6 +342,20 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
                         message=alert["message"],
                     ),
                 )
+
+            # Auto-resolve stale alerts when system is healthy.
+            # Triggered by a manual diagnosis (user hits "Diagnosticar") — ensures
+            # the Advisory widget reflects reality immediately without waiting for
+            # the next health_checker cycle (every 5 min).
+            if health_result["score"] >= 90 and not alert and h_id_db:
+                resolved = await loop.run_in_executor(
+                    None, lambda: health_repo.resolve_open_alerts(h_id_db)
+                )
+                if resolved:
+                    logger.info(
+                        "diagnose_service: auto-resolved %d stale alert(s) for hosting_id=%s (score=%d)",
+                        resolved, h_id_db, health_result["score"],
+                    )
         except Exception as e:
             logging.error(f"Persistence failed in diagnosis: {e}")
 

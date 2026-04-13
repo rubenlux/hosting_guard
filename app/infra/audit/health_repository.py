@@ -98,11 +98,44 @@ class HealthRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("UPDATE site_alerts SET resolved = 1 WHERE id = %s", (alert_id,))
+            now = datetime.now(timezone.utc).isoformat()
+            cursor.execute(
+                "UPDATE site_alerts SET resolved = 1, resolved_at = %s WHERE id = %s",
+                (now, alert_id),
+            )
             conn.commit()
             return True
         except Exception:
             conn.rollback()
             return False
+        finally:
+            release_connection(conn)
+
+    def resolve_open_alerts(self, site_id: int) -> int:
+        """
+        Mark all open (resolved=0) critical/warning alerts for a site as resolved.
+        Called automatically when health score recovers to >= 90.
+        Returns the number of alerts resolved.
+        """
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            now = datetime.now(timezone.utc).isoformat()
+            cursor.execute(
+                """UPDATE site_alerts
+                   SET resolved = 1, resolved_at = %s
+                   WHERE site_id = %s
+                     AND resolved = 0
+                     AND level IN ('critical', 'warning')
+                """,
+                (now, site_id),
+            )
+            count = cursor.rowcount
+            conn.commit()
+            return count
+        except Exception:
+            logger.exception("Failed to resolve alerts for site_id=%s", site_id)
+            conn.rollback()
+            return 0
         finally:
             release_connection(conn)

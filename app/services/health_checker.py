@@ -137,6 +137,14 @@ def check_all_hostings() -> None:
                 and previous_health.get("alert_type") in ["critical", "warning"]
             )
             if is_now_healthy and previous_was_bad:
+                # Resolve all open critical/warning alerts for this site
+                resolved_count = _health_repo.resolve_open_alerts(hosting_id)
+                if resolved_count:
+                    logger.info(
+                        "health_checker: resolved %d alert(s) for hosting_id=%s (recovery)",
+                        resolved_count, hosting_id,
+                    )
+                # Create a recovery event so the dashboard shows the transition
                 _health_repo.create_alert(
                     user_id=user_id,
                     site_id=hosting_id,

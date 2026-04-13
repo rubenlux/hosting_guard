@@ -87,7 +87,10 @@ export function evaluateHosting(hosting, healthData, alerts) {
   }
 
   // 3. ALERTS — active critical from monitoring system
-  const hasCriticalAlert = alerts.some(
+  // Guard: score >= 90 means the system is objectively healthy right now.
+  // A stale unresolved alert (e.g. from a prior incident) must NOT override
+  // a live healthy score — that creates the "SALUD 100% + CRÍTICO" contradiction.
+  const hasCriticalAlert = hd.score < 90 && alerts.some(
     a => a.site_id === hosting.hosting_id && a.level === 'critical' && !a.resolved_at,
   );
   if (hasCriticalAlert) {
