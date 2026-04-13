@@ -304,7 +304,7 @@ function DiagnosisHistory({ hostingId }) {
                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Registros Forenses</span>
                       </div>
                       <div className="text-[9px] font-mono text-[#8b949e] opacity-50 tracking-widest px-2 relative uppercase">
-                        NODE_HASH: {item.id ? item.id.substring(0, 8) : 'NA'}
+                        NODE_HASH: {item.id ? String(item.id).substring(0, 8) : 'NA'}
                       </div>
                     </div>
                     
