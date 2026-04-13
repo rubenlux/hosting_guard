@@ -22,7 +22,7 @@ export default function InsightCard({ insight }) {
           <p className="text-[10px] font-mono text-amber-300 uppercase tracking-wide mb-1">
             IA Advisory
           </p>
-          <p className="text-sm text-gray-900">
+          <p className="text-sm text-white">
             {insight.message}
           </p>
         </div>

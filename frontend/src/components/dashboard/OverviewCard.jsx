@@ -17,7 +17,7 @@ export default function OverviewCard({ siteName, headerExtra, children }) {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-          <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-gray-900">
+          <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-white">
             {siteName || 'Analítica'}
           </span>
         </div>

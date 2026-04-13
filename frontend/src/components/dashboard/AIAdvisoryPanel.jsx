@@ -115,14 +115,20 @@ export default function AIAdvisoryPanel({ advisories, onDiagnose }) {
   const warningCount  = advisories.filter(a => a.severity === 'warning').length;
 
   return (
-    <div className={`p-4 space-y-3 rounded-xl shadow-sm ${criticalCount > 0 ? 'bg-red-500/10 border border-red-500/30 text-red-500' : warningCount > 0 ? 'bg-amber-500/10 border border-amber-500/30 text-amber-500' : 'bg-[#121214] border border-white/10 text-emerald-400'}`}
+    <div className={`mb-6 p-4 space-y-3 rounded-xl shadow-sm ${criticalCount > 0 ? 'bg-red-500/10 border border-red-500/30 text-red-500' : warningCount > 0 ? 'bg-amber-500/10 border border-amber-500/30 text-amber-500' : 'bg-[#121214] border border-white/10 text-emerald-400'}`}
       style={criticalCount > 0 ? { boxShadow: '0 0 0 1px rgba(255,68,68,0.1), 0 8px 32px rgba(255,68,68,0.08)' } : undefined}
     >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Bot className={`w-4 h-4 ${criticalCount > 0 ? 'text-red-600' : warningCount > 0 ? 'text-amber-600' : 'text-emerald-600'}`} />
-          <span className="text-xs font-bold">AI Advisory</span>
+          <Bot className={`w-4 h-4 ${criticalCount > 0 ? 'text-red-600' : warningCount > 0 ? 'text-amber-600' : 'text-emerald-500'}`} />
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-white">AI Advisory</span>
+            <span className="relative flex h-2 w-2">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${criticalCount > 0 ? 'bg-red-500' : warningCount > 0 ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${criticalCount > 0 ? 'bg-red-500' : warningCount > 0 ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-1.5">
           {criticalCount > 0 && (

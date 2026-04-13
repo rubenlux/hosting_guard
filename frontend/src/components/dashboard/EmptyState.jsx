@@ -14,10 +14,10 @@ export default function EmptyState({ hasSite = false }) {
       <div className="flex flex-col items-center justify-center py-6 gap-3 text-center">
         <span className="text-2xl opacity-40">◈</span>
         <div>
-          <p className="text-[11px] font-mono font-bold text-gray-900">
+          <p className="text-[11px] font-mono font-bold text-white">
             {hasSite ? 'Tu sitio aún no tiene tráfico' : 'No hay sitios registrados'}
           </p>
-          <p className="text-[10px] font-mono text-gray-500 mt-1">
+          <p className="text-[10px] font-mono text-gray-400 mt-1">
             {hasSite
               ? 'Instala el pixel para comenzar a ver métricas'
               : 'Registra tu primer sitio para activar el tracking'}

@@ -13,10 +13,10 @@ export default function ErrorState({ message, onRetry }) {
       <div className="flex flex-col items-center justify-center py-6 gap-3 text-center">
         <span className="text-2xl opacity-60">⚠</span>
         <div>
-          <p className="text-[11px] font-mono font-bold text-gray-900">
+          <p className="text-[11px] font-mono font-bold text-white">
             {message || DEFAULT_MESSAGE}
           </p>
-          <p className="text-[10px] font-mono text-gray-500 mt-1">
+          <p className="text-[10px] font-mono text-gray-400 mt-1">
             Comprueba tu conexión e inténtalo de nuevo
           </p>
         </div>

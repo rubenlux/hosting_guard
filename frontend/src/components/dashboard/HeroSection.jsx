@@ -13,11 +13,11 @@ export default function HeroSection({ realtime }) {
       <div className="flex items-end justify-between">
 
         <div>
-          <p className="text-[10px] font-mono text-gray-500 uppercase tracking-wide">
+          <p className="text-[10px] font-mono text-gray-400 uppercase tracking-wide">
             Estado en tiempo real
           </p>
 
-          <h1 className="text-2xl font-semibold text-gray-900 mt-1">
+          <h1 className="text-2xl font-semibold text-white mt-1">
             {active > 0 ? 'Usuarios activos ahora' : 'Sin actividad en tiempo real'}
           </h1>
 
@@ -29,10 +29,10 @@ export default function HeroSection({ realtime }) {
         </div>
 
         <div className="text-right">
-          <p className="text-4xl font-bold text-gray-900">
+          <p className="text-4xl font-bold text-white">
             {active}
           </p>
-          <p className="text-xs text-gray-500 font-mono">
+          <p className="text-xs text-gray-400 font-mono">
             activos
           </p>
         </div>

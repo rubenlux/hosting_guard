@@ -24,7 +24,7 @@ export default function RealtimeMini({ active, lastPath, lastTime, isLive }) {
           <div className="w-2 h-2 rounded-full bg-white/10 shrink-0" />
         )}
 
-        <span className="text-gray-900">
+        <span className="text-white">
           {active === 0
             ? 'Sin usuarios activos'
             : `${active} ${active === 1 ? 'usuario activo' : 'usuarios activos'} ahora`}
