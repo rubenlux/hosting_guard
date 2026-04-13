@@ -166,11 +166,11 @@ const Dashboard = () => {
       )}
 
       <div
-        className={`dashboard-container fixed inset-0 z-50 overflow-hidden ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}
+        className={`dashboard-container fixed inset-0 z-50 overflow-hidden bg-gray-50 ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}
         style={bannerHeight ? { top: bannerHeight } : undefined}
       >
         {/* ── SIDEBAR ── */}
-        <aside className="sidebar">
+        <aside className="sidebar bg-white border-r border-gray-200">
           <div className="logo-dash">
             <div className="logo-icon-dash text-white"><ShieldCheck className="w-5 h-5" /></div>
             {!isSidebarCollapsed && (
@@ -265,7 +265,7 @@ const Dashboard = () => {
                 : activeView === 'advisory' ? 'AI Advisory Center'
                 : 'Dashboard Overview'}
             </div>
-            <div className="hidden md:flex items-center gap-2 bg-accent/5 text-accent px-3 py-1.5 rounded-full border border-accent/10 text-xs font-medium">
+            <div className="hidden md:flex items-center gap-2 bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-full border border-emerald-200 text-xs font-medium">
               <div className="pulse-dash" /> Servicios Operativos
             </div>
             {activeView !== 'admin' && (
@@ -274,7 +274,7 @@ const Dashboard = () => {
                   if (showCreate) { setShowCreate(false); }
                   else { navigate(activeView === 'sites' ? '/sites' : '/dashboard'); setShowCreate(true); }
                 }}
-                className="btn-dash btn-ghost-dash"
+                className="px-3 py-2 text-sm font-medium rounded-lg border border-gray-200 bg-white hover:bg-gray-100 transition"
               >
                 {showCreate ? 'Volver' : '+ Nuevo sitio'}
               </button>
@@ -282,7 +282,7 @@ const Dashboard = () => {
             <button className="btn-dash btn-primary-dash">Upgrade</button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 lg:p-10">
+          <div className="flex-1 overflow-y-auto p-4 lg:p-10 bg-gray-50">
             {showCreate ? (
               <div className="max-w-4xl mx-auto">
                 <HostingCreationForm onSuccess={() => { setShowCreate(false); refresh(); }} />
@@ -315,7 +315,7 @@ const Dashboard = () => {
                 {/* EXPIRATION WARNINGS */}
                 {expiringHostings.map(h => (
                   <div key={h.hosting_id} className={`flex items-center justify-between gap-4 px-5 py-3 rounded-2xl border mb-3 ${
-                    h.expires_in_days === 0 ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-warn/10 border-warn/30 text-warn'
+                    h.expires_in_days === 0 ? 'bg-red-50 border-red-200 text-red-700' : 'bg-yellow-50 border-yellow-200 text-yellow-700'
                   }`}>
                     <div className="flex items-center gap-3">
                       <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -364,7 +364,7 @@ const Dashboard = () => {
 
                   {/* RIGHT COLUMN */}
                   <div className="space-y-6">
-                    <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-6 relative overflow-hidden font-sans">
+                    <div className="card-dash p-6 bg-white border border-gray-200 shadow-sm rounded-2xl relative overflow-hidden font-sans">
                       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500"></div>
                       <div className="flex justify-between items-start mb-6">
                         <div>
@@ -376,7 +376,7 @@ const Dashboard = () => {
                         </div>
                       </div>
                       <div className="space-y-4">
-                        <div onClick={handleToggleAutoscale} className={`p-4 rounded-2xl border relative overflow-hidden group transition-all cursor-pointer shadow-sm hover:shadow-md ${user?.autoscale_enabled ? 'border-emerald-500/30 bg-emerald-50/50' : 'border-gray-200 bg-gray-50/50 hover:border-gray-300'}`}>
+                        <div onClick={handleToggleAutoscale} className={`p-4 rounded-2xl relative overflow-hidden group transition-all cursor-pointer shadow-sm hover:shadow-md ${user?.autoscale_enabled ? 'border border-emerald-500/30 bg-emerald-50' : 'border border-gray-200 bg-gray-50 hover:bg-gray-100'}`}>
                           {userActionLoading === 'user' && <div className="absolute inset-0 bg-white/50 backdrop-blur-[1px] flex items-center justify-center z-10"><RefreshCw className="w-4 h-4 animate-spin text-indigo-600" /></div>}
                           <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity"><Zap className="w-16 h-16 text-indigo-900" /></div>
                           <div className="relative">
