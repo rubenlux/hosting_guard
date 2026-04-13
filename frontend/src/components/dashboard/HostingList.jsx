@@ -58,12 +58,12 @@ export default function HostingList({
           <div className="py-12 text-center text-muted italic">No hay hostings activos.</div>
         ) : hostings.map(h => (
           <div key={h.hosting_id} className="domain-row-dash group">
-            <div className="w-10 h-10 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center font-bold text-indigo-600 transition-colors group-hover:bg-indigo-100">
+            <div className="w-10 h-10 bg-[#1a1a24] border border-white/10 rounded-xl flex items-center justify-center font-bold text-indigo-400 transition-colors group-hover:bg-[#20202c]">
               {h.name[0].toUpperCase()}
             </div>
 
             <div className="flex-1">
-              <div className="text-sm font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">{h.name}</div>
+              <div className="text-sm font-bold text-white group-hover:text-indigo-400 transition-colors">{h.name}</div>
               {h.plan === 'free' && h.expires_in_days != null && (
                 <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${
                   h.expires_in_days <= 0    ? 'bg-red-500/20 text-red-400'
@@ -82,7 +82,7 @@ export default function HostingList({
                   {h.subdomain}
                 </a>
                 {healthData[h.hosting_id] && (
-                  <div className="flex items-center gap-2 text-[10px] bg-gray-50 px-2 py-0.5 rounded border border-gray-200 font-mono text-gray-500">
+                  <div className="flex items-center gap-2 text-[10px] bg-[#121214] px-2 py-0.5 rounded border border-white/10 font-mono text-gray-400">
                     <span className="flex items-center gap-1"><Cpu className="w-2.5 h-2.5" /> {healthData[h.hosting_id].cpu}%</span>
                     <span className="flex items-center gap-1"><Database className="w-2.5 h-2.5" /> {healthData[h.hosting_id].ram}%</span>
                   </div>
@@ -104,7 +104,7 @@ export default function HostingList({
                 ● {h.status}
               </div>
 
-              <div className="flex items-center gap-1 border-l border-gray-200 pl-2 ml-2">
+              <div className="flex items-center gap-1 border-l border-white/10 pl-2 ml-2">
                 {actionLoading === h.hosting_id ? (
                   <div className="w-8 h-8 flex items-center justify-center">
                     <Loader className="w-3.5 h-3.5 animate-spin text-indigo-600" />
@@ -116,7 +116,7 @@ export default function HostingList({
                         <button
                           onClick={() => onUploadZip(h)}
                           title="Subir archivos (.zip)"
-                          className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-emerald-50 hover:text-emerald-600 flex items-center justify-center transition-all border border-transparent hover:border-emerald-100"
+                          className="w-8 h-8 rounded-lg bg-white/5 text-gray-400 hover:bg-emerald-500/10 hover:text-emerald-400 flex items-center justify-center transition-all border border-transparent hover:border-emerald-500/20"
                         >
                           <Upload className="w-3.5 h-3.5" />
                         </button>
@@ -124,7 +124,7 @@ export default function HostingList({
                           <button
                             onClick={() => onOpenFiles(h)}
                             title="Gestor de archivos"
-                            className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-blue-50 hover:text-blue-600 flex items-center justify-center transition-all border border-transparent hover:border-blue-100"
+                            className="w-8 h-8 rounded-lg bg-white/5 text-gray-400 hover:bg-blue-500/10 hover:text-blue-400 flex items-center justify-center transition-all border border-transparent hover:border-blue-500/20"
                           >
                             <FolderOpen className="w-3.5 h-3.5" />
                           </button>
@@ -132,14 +132,14 @@ export default function HostingList({
                         <button
                           onClick={() => onStop(h.hosting_id)}
                           title="Detener"
-                          className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-red-50 hover:text-red-600 flex items-center justify-center transition-all border border-transparent hover:border-red-100"
+                          className="w-8 h-8 rounded-lg bg-white/5 text-gray-400 hover:bg-red-500/10 hover:text-red-400 flex items-center justify-center transition-all border border-transparent hover:border-red-500/20"
                         >
                           <Square className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => onRestart(h.hosting_id)}
                           title="Reiniciar"
-                          className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600 flex items-center justify-center transition-all border border-transparent hover:border-indigo-100"
+                          className="w-8 h-8 rounded-lg bg-white/5 text-gray-400 hover:bg-indigo-500/10 hover:text-indigo-400 flex items-center justify-center transition-all border border-transparent hover:border-indigo-500/20"
                         >
                           <RotateCcw className="w-3.5 h-3.5" />
                         </button>
@@ -150,7 +150,7 @@ export default function HostingList({
                       <button
                         onClick={() => onOpenLogs(h)}
                         title="Ver Logs"
-                        className="w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600 flex items-center justify-center transition-all border border-transparent hover:border-indigo-100"
+                        className="w-8 h-8 rounded-lg bg-white/5 text-gray-400 hover:bg-indigo-500/10 hover:text-indigo-400 flex items-center justify-center transition-all border border-transparent hover:border-indigo-500/20"
                       >
                         <FileText className="w-3.5 h-3.5" />
                       </button>

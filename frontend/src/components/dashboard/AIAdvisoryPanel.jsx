@@ -62,7 +62,7 @@ function AdvisoryItem({ advisory, onDiagnose }) {
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] font-bold text-gray-900 truncate">{advisory.hostingName}</span>
+            <span className="text-[11px] font-bold text-white truncate">{advisory.hostingName}</span>
             <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider ${cfg.badge} ${isCritical ? 'animate-pulse' : ''}`}>
               {cfg.label}
             </span>
@@ -115,7 +115,7 @@ export default function AIAdvisoryPanel({ advisories, onDiagnose }) {
   const warningCount  = advisories.filter(a => a.severity === 'warning').length;
 
   return (
-    <div className={`p-4 space-y-3 rounded-xl shadow-sm ${criticalCount > 0 ? 'bg-red-50 border border-red-200 text-red-700' : warningCount > 0 ? 'bg-amber-50 border border-amber-200 text-amber-700' : 'bg-emerald-50 border border-emerald-200 text-emerald-700'}`}
+    <div className={`p-4 space-y-3 rounded-xl shadow-sm ${criticalCount > 0 ? 'bg-red-500/10 border border-red-500/30 text-red-500' : warningCount > 0 ? 'bg-amber-500/10 border border-amber-500/30 text-amber-500' : 'bg-[#121214] border border-white/10 text-emerald-400'}`}
       style={criticalCount > 0 ? { boxShadow: '0 0 0 1px rgba(255,68,68,0.1), 0 8px 32px rgba(255,68,68,0.08)' } : undefined}
     >
       {/* Header */}
@@ -136,7 +136,7 @@ export default function AIAdvisoryPanel({ advisories, onDiagnose }) {
             </span>
           )}
           {attention.length === 0 && (
-            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">
+            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               TODO OK
             </span>
           )}
@@ -146,10 +146,10 @@ export default function AIAdvisoryPanel({ advisories, onDiagnose }) {
       {/* Items */}
       {attention.length === 0 ? (
         <div className="flex items-center gap-3 p-3">
-          <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+          <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
           <div>
-            <div className="text-[11px] font-bold text-emerald-700">Sistema estable</div>
-            <div className="text-[10px] text-emerald-600/80">Todos los hostings operando con normalidad.</div>
+            <div className="text-[11px] font-bold text-emerald-400">Sistema estable</div>
+            <div className="text-[10px] text-gray-400">Todos los hostings operando con normalidad.</div>
           </div>
         </div>
       ) : (

@@ -166,11 +166,11 @@ const Dashboard = () => {
       )}
 
       <div
-        className={`dashboard-container fixed inset-0 z-50 overflow-hidden bg-gray-50 ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}
+        className={`dashboard-container fixed inset-0 z-50 overflow-hidden bg-[#0a0a0c] ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}
         style={bannerHeight ? { top: bannerHeight } : undefined}
       >
         {/* ── SIDEBAR ── */}
-        <aside className="sidebar bg-white border-r border-gray-200">
+        <aside className="sidebar bg-[#121214] border-r border-white/10">
           <div className="logo-dash">
             <div className="logo-icon-dash text-white"><ShieldCheck className="w-5 h-5" /></div>
             {!isSidebarCollapsed && (
@@ -240,7 +240,7 @@ const Dashboard = () => {
               </div>
               {!isSidebarCollapsed && (
                 <div className="flex-1 min-w-0 opacity-fadeIn">
-                  <div className="text-[11px] font-bold text-gray-900 truncate">{user?.email}</div>
+                  <div className="text-[11px] font-bold text-white truncate">{user?.email}</div>
                   <div className="text-[9px] text-[var(--accent)] font-mono uppercase font-bold tracking-wide">Plan {user?.plan || 'Free'}</div>
                 </div>
               )}
@@ -265,7 +265,7 @@ const Dashboard = () => {
                 : activeView === 'advisory' ? 'AI Advisory Center'
                 : 'Dashboard Overview'}
             </div>
-            <div className="hidden md:flex items-center gap-2 bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-full border border-emerald-200 text-xs font-medium">
+            <div className="hidden md:flex items-center gap-2 bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-500/20 text-xs font-medium">
               <div className="pulse-dash" /> Servicios Operativos
             </div>
             {activeView !== 'admin' && (
@@ -274,7 +274,7 @@ const Dashboard = () => {
                   if (showCreate) { setShowCreate(false); }
                   else { navigate(activeView === 'sites' ? '/sites' : '/dashboard'); setShowCreate(true); }
                 }}
-                className="px-3 py-2 text-sm font-medium rounded-lg border border-gray-200 bg-white hover:bg-gray-100 transition"
+                className="px-3 py-2 text-sm font-medium rounded-lg border border-white/10 bg-[#121214] hover:bg-white/5 transition"
               >
                 {showCreate ? 'Volver' : '+ Nuevo sitio'}
               </button>
@@ -282,7 +282,7 @@ const Dashboard = () => {
             <button className="btn-dash btn-primary-dash">Upgrade</button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 lg:p-10 bg-gray-50">
+          <div className="flex-1 overflow-y-auto p-4 lg:p-10 bg-[#0a0a0c]">
             {showCreate ? (
               <div className="max-w-4xl mx-auto">
                 <HostingCreationForm onSuccess={() => { setShowCreate(false); refresh(); }} />
@@ -315,7 +315,7 @@ const Dashboard = () => {
                 {/* EXPIRATION WARNINGS */}
                 {expiringHostings.map(h => (
                   <div key={h.hosting_id} className={`flex items-center justify-between gap-4 px-5 py-3 rounded-2xl border mb-3 ${
-                    h.expires_in_days === 0 ? 'bg-red-50 border-red-200 text-red-700' : 'bg-yellow-50 border-yellow-200 text-yellow-700'
+                    h.expires_in_days === 0 ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-500'
                   }`}>
                     <div className="flex items-center gap-3">
                       <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -364,31 +364,31 @@ const Dashboard = () => {
 
                   {/* RIGHT COLUMN */}
                   <div className="space-y-6">
-                    <div className="card-dash p-6 bg-white border border-gray-200 shadow-sm rounded-2xl relative overflow-hidden font-sans">
+                    <div className="card-dash p-6 bg-[#121214] border border-white/10 shadow-sm rounded-2xl relative overflow-hidden font-sans">
                       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500"></div>
                       <div className="flex justify-between items-start mb-6">
                         <div>
-                          <div className="text-[10px] text-indigo-600 font-mono font-bold uppercase tracking-[0.2em] mb-2">Tu Saldo</div>
-                          <div className="text-3xl font-black text-gray-900 tracking-tight">${user?.balance?.toFixed(2) || '0.00'}</div>
+                          <div className="text-[10px] text-indigo-400 font-mono font-bold uppercase tracking-[0.2em] mb-2">Tu Saldo</div>
+                          <div className="text-3xl font-black text-white tracking-tight">${user?.balance?.toFixed(2) || '0.00'}</div>
                         </div>
                         <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${user?.has_payment_method ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
                           {user?.has_payment_method ? '💳 Vinculada' : '⚠️ Sin Tarjeta'}
                         </div>
                       </div>
                       <div className="space-y-4">
-                        <div onClick={handleToggleAutoscale} className={`p-4 rounded-2xl relative overflow-hidden group transition-all cursor-pointer shadow-sm hover:shadow-md ${user?.autoscale_enabled ? 'border border-emerald-500/30 bg-emerald-50' : 'border border-gray-200 bg-gray-50 hover:bg-gray-100'}`}>
-                          {userActionLoading === 'user' && <div className="absolute inset-0 bg-white/50 backdrop-blur-[1px] flex items-center justify-center z-10"><RefreshCw className="w-4 h-4 animate-spin text-indigo-600" /></div>}
-                          <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity"><Zap className="w-16 h-16 text-indigo-900" /></div>
+                        <div onClick={handleToggleAutoscale} className={`p-4 rounded-2xl relative overflow-hidden group transition-all cursor-pointer shadow-sm hover:shadow-md ${user?.autoscale_enabled ? 'border border-emerald-500/30 bg-emerald-500/10' : 'border border-white/10 bg-[#0a0a0c] hover:bg-white/5'}`}>
+                          {userActionLoading === 'user' && <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px] flex items-center justify-center z-10"><RefreshCw className="w-4 h-4 animate-spin text-indigo-400" /></div>}
+                          <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity"><Zap className="w-16 h-16 text-indigo-500" /></div>
                           <div className="relative">
                             <div className="flex justify-between items-center mb-1">
-                              <span className="text-xs font-bold text-gray-900 flex items-center gap-2">
+                              <span className="text-xs font-bold text-white flex items-center gap-2">
                                 <Zap className={`w-3 h-3 ${user?.autoscale_enabled ? 'text-emerald-500 fill-emerald-500' : 'text-gray-400'}`} /> Auto-Scaling
                               </span>
-                              <span className={`text-[10px] font-black uppercase ${user?.autoscale_enabled ? 'text-emerald-600' : 'text-gray-500'}`}>
+                              <span className={`text-[10px] font-black uppercase ${user?.autoscale_enabled ? 'text-emerald-500' : 'text-gray-500'}`}>
                                 {user?.autoscale_enabled ? 'Activado' : 'Desactivado'}
                               </span>
                             </div>
-                            <p className="text-[10px] text-gray-500 font-medium leading-relaxed pr-8">Optimiza recursos dinámicamente según picos de demanda real.</p>
+                            <p className="text-[10px] text-gray-400 font-medium leading-relaxed pr-8">Optimiza recursos dinámicamente según picos de demanda real.</p>
                           </div>
                         </div>
                         {!user?.has_payment_method && user?.balance <= 0 && (
@@ -408,19 +408,19 @@ const Dashboard = () => {
                 {/* INFRA METRICS */}
                 <div className="mt-6">
                   <div className="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                    <span className="w-3 h-px bg-gray-300" /> Infraestructura
+                    <span className="w-3 h-px bg-white/20" /> Infraestructura
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-emerald-500">
+                    <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-emerald-500">
                       <div className="flex justify-between items-start">
-                        <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase">Salud General</div>
+                        <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase">Salud General</div>
                         <TrendLine data={primaryHostingHistory} />
                       </div>
                       <div className="mt-3">
-                        <div className="text-3xl font-black text-gray-900 tracking-tight">
-                          {avgHealthScore ?? '—'}<span className="text-lg text-gray-400">/100</span>
+                        <div className="text-3xl font-black text-white tracking-tight">
+                          {avgHealthScore ?? '—'}<span className="text-lg text-gray-500">/100</span>
                         </div>
-                        <div className="text-[11px] text-gray-500 mt-2 flex items-center justify-between">
+                        <div className="text-[11px] text-gray-400 mt-2 flex items-center justify-between">
                           <div className="flex items-center gap-1 font-medium">
                             <span style={{ color: healthTrend.color }}>{healthTrend.arrow}</span>
                             <span style={{ color: healthTrend.color }}>{healthTrend.label}</span>
@@ -437,29 +437,29 @@ const Dashboard = () => {
                       </div>
                     </div>
 
-                    <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-blue-500">
-                      <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">CPU Promedio</div>
+                    <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-blue-500">
+                      <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-3">CPU Promedio</div>
                       <div>
-                        <div className="text-3xl font-black text-gray-900 tracking-tight">
-                          {avgCpu}<span className="text-lg text-gray-400">%</span>
+                        <div className="text-3xl font-black text-white tracking-tight">
+                          {avgCpu}<span className="text-lg text-gray-500">%</span>
                         </div>
                         <div className="w-16 h-1.5 bg-blue-500 rounded-full mt-3" />
                       </div>
                     </div>
 
-                    <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-amber-500">
-                      <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">RAM Usada</div>
+                    <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-amber-500">
+                      <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-3">RAM Usada</div>
                       <div>
-                        <div className="text-3xl font-black text-gray-900 tracking-tight">{totalRam}</div>
-                        <div className="text-[11px] text-gray-500 mt-2 font-medium">Medición en tiempo real</div>
+                        <div className="text-3xl font-black text-white tracking-tight">{totalRam}</div>
+                        <div className="text-[11px] text-gray-400 mt-2 font-medium">Medición en tiempo real</div>
                       </div>
                     </div>
 
-                    <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-purple-500">
-                      <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">Almacenamiento</div>
+                    <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-purple-500">
+                      <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-3">Almacenamiento</div>
                       <div>
-                        <div className="text-3xl font-black text-gray-900 tracking-tight">
-                          18<span className="text-lg font-bold text-gray-400"> GB</span>
+                        <div className="text-3xl font-black text-white tracking-tight">
+                          18<span className="text-lg font-bold text-gray-500"> GB</span>
                         </div>
                       </div>
                     </div>

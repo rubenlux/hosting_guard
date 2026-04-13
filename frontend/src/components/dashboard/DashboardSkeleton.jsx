@@ -14,7 +14,7 @@ function Bone({ className }) {
 
 export default function DashboardSkeleton() {
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6 shadow-sm">
+    <div className="bg-[#121214] border border-white/10 rounded-xl p-4 mb-6 shadow-sm">
 
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
@@ -57,7 +57,7 @@ export default function DashboardSkeleton() {
       </div>
 
       {/* Realtime row */}
-      <div className="border-t border-gray-200 pt-2 flex items-center gap-2">
+      <div className="border-t border-white/10 pt-2 flex items-center gap-2">
         <div className="w-1.5 h-1.5 rounded-full bg-white/10" />
         <Bone className="w-16 h-2" />
         <Bone className="w-32 h-2" />
