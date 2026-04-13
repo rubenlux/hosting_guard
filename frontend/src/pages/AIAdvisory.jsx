@@ -9,8 +9,8 @@
  * Props:
  *   onDiagnose — (hostingId) => void  — opens AI diagnosis modal in Dashboard
  */
-import { useState, useMemo, useEffect } from 'react';
-import { Bot, AlertTriangle, CheckCircle, Zap, Activity, Clock, FileCode } from 'lucide-react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import { Bot, AlertTriangle, CheckCircle, Zap, Activity, Clock, FileCode, Wrench, ShieldCheck, ShieldAlert, Shield, Loader2 } from 'lucide-react';
 import { useDashboardData } from '../hooks/useDashboardData';
 import { useAIAdvisory } from '../hooks/useAIAdvisory';
 import api from '../services/api';
@@ -314,6 +314,161 @@ function DiagnosisHistory({ hostingId }) {
   );
 }
 
+// ── Fix Proposal Card ─────────────────────────────────────────────────────────
+const RISK_STYLE = {
+  low:    { badge: 'bg-green-500/15 text-green-400 border border-green-500/25',  icon: <ShieldCheck className="w-3.5 h-3.5 text-green-400" />,  label: 'RIESGO BAJO' },
+  medium: { badge: 'bg-warn/15 text-warn border border-warn/25',                 icon: <ShieldAlert className="w-3.5 h-3.5 text-warn" />,       label: 'RIESGO MEDIO' },
+  high:   { badge: 'bg-danger/15 text-danger border border-danger/25',           icon: <Shield className="w-3.5 h-3.5 text-danger" />,           label: 'RIESGO ALTO' },
+  none:   { badge: 'bg-white/5 text-gray-500 border border-white/10',            icon: <Wrench className="w-3.5 h-3.5 text-gray-500" />,         label: 'MANUAL' },
+};
+
+function FixProposalCard({ hostingId }) {
+  const [proposal, setProposal] = useState(null);
+  const [loading, setLoading]   = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [result, setResult]     = useState(null);
+  const [error, setError]       = useState(null);
+
+  useEffect(() => {
+    if (!hostingId) return;
+    let cancelled = false;
+    setProposal(null);
+    setResult(null);
+    setError(null);
+    setLoading(true);
+    api.get(`/hosting/${hostingId}/fix`)
+      .then(r => { if (!cancelled) setProposal(r.data?.proposed_fix ?? null); })
+      .catch(() => { if (!cancelled) setProposal(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [hostingId]);
+
+  const handleApply = useCallback(async () => {
+    if (!proposal) return;
+    setApplying(true);
+    setResult(null);
+    setError(null);
+    try {
+      const r = await api.post('/fix/apply', {
+        hosting_id:  proposal.hosting_id,
+        fingerprint: proposal.fingerprint,
+        approved:    true,
+      });
+      setResult(r.data);
+      if (r.data.success) setProposal(null); // consumed
+    } catch (e) {
+      setError(e?.response?.data?.detail ?? 'Error al aplicar el fix.');
+    } finally {
+      setApplying(false);
+    }
+  }, [proposal]);
+
+  if (loading) {
+    return (
+      <div className="card-dash p-4 flex items-center gap-2 text-[10px] text-muted">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        Buscando fix disponible…
+      </div>
+    );
+  }
+
+  // Show execution result even after proposal is consumed
+  if (result) {
+    return (
+      <div className={`card-dash p-4 space-y-2 ${result.success ? 'border-green-500/30' : 'border-danger/30'}`}>
+        <div className="flex items-center gap-2">
+          {result.success
+            ? <CheckCircle className="w-3.5 h-3.5 text-green-400" />
+            : <AlertTriangle className="w-3.5 h-3.5 text-danger" />}
+          <span className={`text-[11px] font-black ${result.success ? 'text-green-400' : 'text-danger'}`}>
+            {result.success ? 'Fix aplicado correctamente' : 'Fix fallido'}
+          </span>
+          {result.rolled_back && (
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-warn/10 text-warn border border-warn/20">
+              ROLLBACK
+            </span>
+          )}
+        </div>
+        {result.error && <p className="text-[10px] text-red-400">{result.error}</p>}
+        {result.stdout && (
+          <pre className="text-[9px] font-mono text-gray-500 bg-white/3 rounded p-2 overflow-x-auto max-h-20">
+            {result.stdout.trim()}
+          </pre>
+        )}
+      </div>
+    );
+  }
+
+  if (!proposal) return null;
+
+  const risk = RISK_STYLE[proposal.risk_level] ?? RISK_STYLE.none;
+  const canApply = proposal.can_auto_fix && proposal.risk_level !== 'high';
+
+  return (
+    <div className="card-dash p-4 space-y-3 border-accent/20">
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <Wrench className="w-3.5 h-3.5 text-accent" />
+        <span className="text-[10px] font-mono text-accent uppercase tracking-widest flex-1">
+          Fix Propuesto
+        </span>
+        <span className={`text-[9px] font-black px-2 py-0.5 rounded-lg ${risk.badge} flex items-center gap-1`}>
+          {risk.icon} {risk.label}
+        </span>
+      </div>
+
+      {/* Title + description */}
+      <div>
+        <div className="text-[12px] font-black text-white">{proposal.title}</div>
+        <p className="text-[10px] text-gray-400 mt-0.5 leading-relaxed">{proposal.description}</p>
+      </div>
+
+      {/* Downtime */}
+      <div className="flex items-center gap-4 text-[10px] text-muted">
+        <span>
+          <span className="text-gray-400 font-semibold">Acción:</span>{' '}
+          <span className="font-mono text-accent">{proposal.action}</span>
+        </span>
+        <span>
+          <span className="text-gray-400 font-semibold">Downtime estimado:</span>{' '}
+          {proposal.estimated_downtime}
+        </span>
+      </div>
+
+      {/* Manual fix notice */}
+      {!proposal.can_auto_fix && (
+        <div className="text-[10px] text-gray-500 italic border border-white/8 rounded-lg p-2">
+          Este fix no se puede aplicar automáticamente. Requiere intervención manual del desarrollador.
+        </div>
+      )}
+
+      {/* High-risk notice */}
+      {proposal.risk_level === 'high' && (
+        <div className="flex items-start gap-1.5 text-[10px] text-danger">
+          <Shield className="w-3 h-3 mt-0.5 shrink-0" />
+          Riesgo alto — aplica manualmente desde el panel de control.
+        </div>
+      )}
+
+      {/* Error feedback */}
+      {error && <p className="text-[10px] text-danger">{error}</p>}
+
+      {/* CTA */}
+      {canApply && (
+        <button
+          onClick={handleApply}
+          disabled={applying}
+          className="w-full py-2.5 rounded-xl bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all border border-accent/20 text-[11px] font-black uppercase tracking-wider flex items-center justify-center gap-2"
+        >
+          {applying
+            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Aplicando…</>
+            : <><Zap className="w-3.5 h-3.5" /> Aprobar y Aplicar Fix</>}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function AIAdvisoryPage({ onDiagnose }) {
   const { hostings, healthData, alerts } = useDashboardData();
@@ -393,15 +548,18 @@ export default function AIAdvisoryPage({ onDiagnose }) {
             }
 
             {selectedAdvisory && (
-              <div className="card-dash p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-3.5 h-3.5 text-muted" />
-                  <span className="text-[10px] font-mono text-muted uppercase tracking-widest">
-                    Historial IA
-                  </span>
+              <>
+                <div className="card-dash p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-3.5 h-3.5 text-muted" />
+                    <span className="text-[10px] font-mono text-muted uppercase tracking-widest">
+                      Historial IA
+                    </span>
+                  </div>
+                  <DiagnosisHistory hostingId={selectedAdvisory.hostingId} />
                 </div>
-                <DiagnosisHistory hostingId={selectedAdvisory.hostingId} />
-              </div>
+                <FixProposalCard hostingId={selectedAdvisory.hostingId} />
+              </>
             )}
           </div>
 

@@ -753,6 +753,96 @@ async def get_ai_diagnosis_history(
     return AIDiagnosisRepository().get_by_hosting(hosting_id, limit=min(limit, 20))
 
 
+@router.get("/hosting/{hosting_id}/fix")
+async def get_fix_proposal(hosting_id: int, user: dict = Depends(verify_token)):
+    """
+    Return the cached FixProposal for the hosting's current diagnosis fingerprint.
+    Rebuilds from the latest diagnosis if nothing is in the cache.
+    Returns 204 when no fix is applicable (clean system or no diagnosis yet).
+    """
+    from app.infra.audit.ai_diagnosis_repository import AIDiagnosisRepository
+    from app.services.fix_engine import build_fix_proposal
+    from app.services.fix_memory import get_proposal, save_proposal
+
+    user_id = int(user["user_id"])
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting or str(hosting["user_id"]) != str(user_id):
+        raise HTTPException(status_code=404, detail="Hosting no encontrado o sin permisos")
+
+    # Fetch the latest diagnosis to get the fingerprint
+    diag_repo = AIDiagnosisRepository()
+    history = diag_repo.get_by_hosting(hosting_id, limit=1)
+    if not history:
+        return {"proposed_fix": None}
+
+    latest = history[0]
+    # Fingerprint is not stored in get_by_hosting — rebuild it from stored fields.
+    # We use the diagnosis id as a stable surrogate key for the cache lookup.
+    cache_key_fp = f"diag-{latest['id']}"
+
+    # 1. Cache hit
+    cached = get_proposal(hosting_id, cache_key_fp)
+    if cached:
+        return {"proposed_fix": cached.model_dump()}
+
+    # 2. Rebuild from stored diagnosis fields
+    failure_type = latest.get("failure_type") or "unknown"
+    proposal = build_fix_proposal(
+        hosting_id=hosting_id,
+        container_name=hosting["container_name"],
+        fingerprint=cache_key_fp,
+        failure_type=failure_type,
+        container_status="running",   # assume running — we can't inspect now without docker call
+        score=80,                      # conservative default when score isn't stored in ai_diagnosis
+    )
+    if proposal:
+        save_proposal(proposal)
+        return {"proposed_fix": proposal.model_dump()}
+
+    return {"proposed_fix": None}
+
+
+class ApplyFixRequest(BaseModel):
+    hosting_id: int
+    fingerprint: str
+    approved: bool
+
+
+@router.post("/fix/apply")
+async def apply_fix(data: ApplyFixRequest, user: dict = Depends(verify_token)):
+    """
+    Execute an approved FixProposal.
+    Requires approved=True — this is the human gate that must be satisfied
+    before any command runs. Automatically rolls back on failure.
+    """
+    from app.services.fix_memory import get_proposal, delete_proposal
+    from app.services.execution_engine import execute_fix
+
+    if not data.approved:
+        raise HTTPException(status_code=400, detail="Fix must be explicitly approved (approved=true).")
+
+    user_id = int(user["user_id"])
+    hosting = hosting_repo.get_hosting(data.hosting_id, user_id)
+    if not hosting or str(hosting["user_id"]) != str(user_id):
+        raise HTTPException(status_code=404, detail="Hosting no encontrado o sin permisos")
+
+    proposal = get_proposal(data.hosting_id, data.fingerprint)
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Fix proposal no encontrado o expirado. Ejecutá un diagnóstico nuevo.")
+
+    # Safety: verify the proposal targets the hosting the user owns
+    if proposal.container_name != hosting["container_name"]:
+        raise HTTPException(status_code=400, detail="Fix proposal no corresponde a este hosting.")
+
+    result = await execute_fix(proposal)
+
+    # Invalidate the cache on success so the next diagnosis sees a fresh state
+    if result.success:
+        delete_proposal(data.hosting_id, data.fingerprint)
+
+    return result.model_dump()
+
+
 @router.get("/{hosting_id}/health/history")
 async def get_health_history_legacy(hosting_id: int, user: dict = Depends(verify_token)):
     """Endpoint solicitado por la guía de implementación."""

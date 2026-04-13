@@ -365,6 +365,35 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
                 "location":     {"file": None, "line": None, "service": "system"},
             }
 
+        # ── Fix proposal — built from final structured state, non-blocking ────
+        proposed_fix = None
+        try:
+            from app.services.fix_engine import build_fix_proposal
+            from app.services.fix_memory import save_proposal
+
+            fp = _build_fingerprint(
+                score=health_result["score"],
+                cpu=cpu_val,
+                ram=ram_val,
+                parsed_errors=debug_context["logs"]["actionable_errors"],
+            )
+            failure_type = (structured or {}).get("failure_type") or "unknown"
+            proposal = build_fix_proposal(
+                hosting_id=h_id_db,
+                container_name=container_name,
+                fingerprint=fp,
+                failure_type=failure_type,
+                container_status=status,
+                cpu=cpu_val,
+                ram=ram_val,
+                score=health_result["score"],
+            )
+            if proposal:
+                await loop.run_in_executor(None, lambda: save_proposal(proposal))
+                proposed_fix = proposal.model_dump()
+        except Exception as _fe:
+            logger.warning("Fix proposal build skipped: %s", _fe)
+
         return {
             "status": status,
             "metrics": metrics,
@@ -372,6 +401,7 @@ async def diagnose_hosting(hosting_id: str, request: Request, user: dict = Depen
             # structured (Claude) takes precedence; old AI Orchestrator is the fallback
             "diagnosis": structured or diagnosis,
             "structured_diagnosis": structured,
+            "proposed_fix": proposed_fix,
             "has_hard_errors": debug_context["logs"]["has_errors"],
             "debug_info": {
                 "parsed_errors": debug_context["logs"]["parsed_errors"],
