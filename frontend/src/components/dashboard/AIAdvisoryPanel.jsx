@@ -115,13 +115,13 @@ export default function AIAdvisoryPanel({ advisories, onDiagnose }) {
   const warningCount  = advisories.filter(a => a.severity === 'warning').length;
 
   return (
-    <div className={`card-dash p-4 space-y-3 ${criticalCount > 0 ? 'border-danger/30' : ''}`}
+    <div className={`p-4 space-y-3 rounded-xl shadow-sm ${criticalCount > 0 ? 'bg-red-50 border border-red-200 text-red-700' : warningCount > 0 ? 'bg-amber-50 border border-amber-200 text-amber-700' : 'bg-emerald-50 border border-emerald-200 text-emerald-700'}`}
       style={criticalCount > 0 ? { boxShadow: '0 0 0 1px rgba(255,68,68,0.1), 0 8px 32px rgba(255,68,68,0.08)' } : undefined}
     >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Bot className={`w-4 h-4 ${criticalCount > 0 ? 'text-danger' : 'text-accent'}`} />
+          <Bot className={`w-4 h-4 ${criticalCount > 0 ? 'text-red-600' : warningCount > 0 ? 'text-amber-600' : 'text-emerald-600'}`} />
           <span className="text-xs font-bold">AI Advisory</span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -136,7 +136,7 @@ export default function AIAdvisoryPanel({ advisories, onDiagnose }) {
             </span>
           )}
           {attention.length === 0 && (
-            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 border border-green-500/30">
+            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">
               TODO OK
             </span>
           )}
@@ -145,11 +145,11 @@ export default function AIAdvisoryPanel({ advisories, onDiagnose }) {
 
       {/* Items */}
       {attention.length === 0 ? (
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-green-500/5 border border-green-500/15">
-          <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />
+        <div className="flex items-center gap-3 p-3">
+          <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
           <div>
-            <div className="text-[11px] font-bold text-green-400">Sistema estable</div>
-            <div className="text-[10px] text-gray-500">Todos los hostings operando con normalidad.</div>
+            <div className="text-[11px] font-bold text-emerald-700">Sistema estable</div>
+            <div className="text-[10px] text-emerald-600/80">Todos los hostings operando con normalidad.</div>
           </div>
         </div>
       ) : (

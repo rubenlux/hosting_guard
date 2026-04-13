@@ -10,7 +10,7 @@ export default function EmptyState({ hasSite = false }) {
   const navigate = useNavigate();
 
   return (
-    <div className="bg-white border border-gray-100 rounded-xl p-4 mb-6 shadow-sm">
+    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6 shadow-sm">
       <div className="flex flex-col items-center justify-center py-6 gap-3 text-center">
         <span className="text-2xl opacity-40">◈</span>
         <div>

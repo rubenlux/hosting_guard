@@ -364,7 +364,7 @@ const Dashboard = () => {
 
                   {/* RIGHT COLUMN */}
                   <div className="space-y-6">
-                    <div className="card-dash p-6 bg-white border-[var(--border)] shadow-sm rounded-2xl relative overflow-hidden font-sans">
+                    <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-6 relative overflow-hidden font-sans">
                       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500"></div>
                       <div className="flex justify-between items-start mb-6">
                         <div>
@@ -411,7 +411,7 @@ const Dashboard = () => {
                     <span className="w-3 h-px bg-gray-300" /> Infraestructura
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '3px solid #10b981' }}>
+                    <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-emerald-500">
                       <div className="flex justify-between items-start">
                         <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase">Salud General</div>
                         <TrendLine data={primaryHostingHistory} />
@@ -437,7 +437,7 @@ const Dashboard = () => {
                       </div>
                     </div>
 
-                    <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '3px solid #3b82f6' }}>
+                    <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-blue-500">
                       <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">CPU Promedio</div>
                       <div>
                         <div className="text-3xl font-black text-gray-900 tracking-tight">
@@ -447,7 +447,7 @@ const Dashboard = () => {
                       </div>
                     </div>
 
-                    <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '3px solid #f59e0b' }}>
+                    <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-amber-500">
                       <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">RAM Usada</div>
                       <div>
                         <div className="text-3xl font-black text-gray-900 tracking-tight">{totalRam}</div>
@@ -455,7 +455,7 @@ const Dashboard = () => {
                       </div>
                     </div>
 
-                    <div className="bg-white border border-gray-100 shadow-sm rounded-xl p-5 flex flex-col justify-between" style={{ borderTop: '3px solid #8b5cf6' }}>
+                    <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-purple-500">
                       <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">Almacenamiento</div>
                       <div>
                         <div className="text-3xl font-black text-gray-900 tracking-tight">

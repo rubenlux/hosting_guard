@@ -8,7 +8,7 @@ import { motion } from 'framer-motion';
  */
 export default function SparklineChart({ data }) {
   if (!data || data.length < 2) {
-    return <div className="h-[48px] bg-gray-50 border border-gray-100 rounded-lg animate-pulse" />;
+    return <div className="h-[48px] bg-gray-50 border border-gray-200 rounded-lg animate-pulse" />;
   }
 
   const vals = data.map(d => d.page_views || 0);
@@ -25,7 +25,7 @@ export default function SparklineChart({ data }) {
     .join(' ');
 
   return (
-    <div className="bg-white border border-gray-100 rounded-lg p-4 shadow-sm">
+    <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
       <svg
         viewBox={`0 0 ${W} ${H}`}
         className="w-full"

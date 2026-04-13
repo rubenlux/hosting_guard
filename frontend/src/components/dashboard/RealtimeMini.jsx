@@ -11,7 +11,7 @@ import { motion } from 'framer-motion';
  */
 export default function RealtimeMini({ active, lastPath, lastTime, isLive }) {
   return (
-    <div className="text-[10px] font-mono text-gray-400 border-t border-gray-100 pt-2">
+    <div className="text-[10px] font-mono text-gray-400 border-t border-gray-200 pt-2">
 
       <div className="flex items-center gap-2">
         {isLive ? (

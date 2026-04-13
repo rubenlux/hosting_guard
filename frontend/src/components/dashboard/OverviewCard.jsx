@@ -13,7 +13,7 @@ export default function OverviewCard({ siteName, headerExtra, children }) {
   const navigate = useNavigate();
 
   return (
-    <div className="bg-white border border-gray-100 rounded-xl p-4 mb-6 shadow-sm">
+    <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6 shadow-sm">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />

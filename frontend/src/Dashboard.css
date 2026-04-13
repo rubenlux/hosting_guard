@@ -1,13 +1,14 @@
 :root {
-    --bg: #fafafa;
-    --surface: #ffffff;
+    --bg: #f9fafb; /* gray-50 */
+    --surface: #ffffff; /* white */
     --surface2: #f3f4f6;
-    --border: rgba(0,0,0,0.08);
-    --border2: rgba(0,0,0,0.12);
+    --border: #e5e7eb; /* gray-200 */
+    --border2: #d1d5db; /* gray-300 */
     --text: #111827;
     --muted: #6b7280;
-    --accent: #6366f1; /* Indigo SaaS brand */
-    --accent-light: #e0e7ff;
+    --accent: #4f46e5; /* indigo-600 */
+    --accent-light: #eef2ff; /* indigo-50 */
+    --accent-hover: #e0e7ff; /* indigo-100 */
     --accent2: #8b5cf6;
     --warn: #f59e0b;
     --danger: #ef4444;
@@ -42,7 +43,6 @@
     flex-shrink: 0;
     transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
-    box-shadow: 1px 0 20px rgba(0,0,0,0.02);
     z-index: 20;
   }
 
@@ -227,7 +227,7 @@
   .metric-card-dash {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 16px;
+    border-radius: 12px;
     padding: 18px 20px;
     position: relative;
     overflow: hidden;
@@ -255,7 +255,7 @@
   .card-dash {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 16px;
+    border-radius: 12px;
     overflow: hidden;
     box-shadow: var(--shadow-sm);
   }
