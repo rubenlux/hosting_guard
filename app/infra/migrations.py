@@ -260,6 +260,9 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_hosting ON ai_diagnosis (hosting_id, created_at DESC)",
     # AI diagnosis cache lookup by fingerprint
     "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_fp ON ai_diagnosis (hosting_id, fingerprint)",
+    # Plan management: explicit expiry override for free-tier users
+    # NULL = use default 14-day rule; far-future date = free forever; past date = force-expire
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expires_at TEXT",
 ]
 
 def ensure_monthly_partitions(cursor):

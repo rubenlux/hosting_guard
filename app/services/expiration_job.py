@@ -112,14 +112,26 @@ def check_and_expire_free_hostings():
 
         for hosting in hostings:
             try:
-                # Parsear fechas de forma segura (ignorando si traen o no zona horaria, asumiendo UTC desde isoformat)
-                created_str = hosting["created_at"].replace("Z", "+00:00")
-                created = datetime.fromisoformat(created_str)
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=timezone.utc)
-                
-                elapsed = (now - created).total_seconds() / 86400
-                days_remaining = FREE_PLAN_DAYS - elapsed
+                # Admin can set an explicit expiry override on the user (plan_expires_at).
+                # "2099-..." = free forever — skip expiration entirely.
+                user_expires_at_str = hosting.get("user_plan_expires_at")
+                if user_expires_at_str and "2099" in user_expires_at_str:
+                    continue  # free forever — never expire
+
+                if user_expires_at_str:
+                    exp_str = user_expires_at_str.replace("Z", "+00:00")
+                    exp_dt = datetime.fromisoformat(exp_str)
+                    if exp_dt.tzinfo is None:
+                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                    days_remaining = (exp_dt - now).total_seconds() / 86400
+                else:
+                    # Default: 14-day rule from hosting created_at
+                    created_str = hosting["created_at"].replace("Z", "+00:00")
+                    created = datetime.fromisoformat(created_str)
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    elapsed = (now - created).total_seconds() / 86400
+                    days_remaining = FREE_PLAN_DAYS - elapsed
 
                 if days_remaining <= 0:
                     # Expirado — encolar para suspender

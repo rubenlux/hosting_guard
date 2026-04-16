@@ -1,7 +1,7 @@
 import asyncio
 import subprocess
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -333,4 +333,166 @@ def get_finance_summary(_: dict = Depends(require_role("admin"))):
             [{"email": u["email"], "balance": u.get("balance") or 0, "plan": u.get("plan","free")} for u in users],
             key=lambda x: x["balance"], reverse=True
         )[:10],
+    }
+
+
+# ── Plan Management ─────────────────────────────────────────────────────────
+
+_VALID_PAID_PLANS = {"personal", "negocio", "agencia"}
+_PLAN_RESOURCES = {
+    "personal": {"cpu": "0.5",  "memory": "512m"},
+    "negocio":  {"cpu": "1",    "memory": "1g"},
+    "agencia":  {"cpu": "2",    "memory": "2g"},
+}
+_FREE_FOREVER_DATE = "2099-12-31T23:59:59+00:00"
+
+
+class ExtendPlanBody(BaseModel):
+    days: Literal[14, 30]
+
+
+class UpgradePlanBody(BaseModel):
+    plan: str
+
+
+@router.post("/users/{user_id}/plan/extend")
+def admin_extend_free_plan(
+    user_id: int,
+    body: ExtendPlanBody,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Extend a free-tier user's trial by 14 or 30 days from today."""
+    user = _user_repo.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if user.get("plan") not in ("free",):
+        raise HTTPException(status_code=400, detail="Solo se puede extender el período de prueba del plan free")
+
+    # Calculate new expiry: start from current plan_expires_at if set (and not free-forever),
+    # otherwise from today. Extend forward by the requested days.
+    current_override = user.get("plan_expires_at")
+    if current_override and "2099" not in current_override:
+        try:
+            base = datetime.fromisoformat(current_override.replace("Z", "+00:00"))
+            if base.tzinfo is None:
+                base = base.replace(tzinfo=timezone.utc)
+            # If already in the past, start from now instead
+            if base < datetime.now(timezone.utc):
+                base = datetime.now(timezone.utc)
+        except ValueError:
+            base = datetime.now(timezone.utc)
+    else:
+        base = datetime.now(timezone.utc)
+
+    new_expires_at = (base + timedelta(days=body.days)).isoformat()
+    _user_repo.update_plan(user_id, "free", new_expires_at)
+
+    _hosting_repo.log_orchestrator_event(
+        container_name="—",
+        user_id=user_id,
+        event_type="PLAN_EXTENDED",
+        message=f"Admin {admin['email']} extendió el plan free por {body.days} días. Nuevo vencimiento: {new_expires_at}",
+    )
+    return {"ok": True, "plan_expires_at": new_expires_at, "extended_days": body.days}
+
+
+@router.post("/users/{user_id}/plan/free-forever")
+def admin_set_free_forever(
+    user_id: int,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Mark a free-tier user as 'free forever' — trial never expires."""
+    user = _user_repo.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if user.get("plan") not in ("free",):
+        raise HTTPException(status_code=400, detail="Solo aplica a usuarios con plan free")
+
+    _user_repo.update_plan(user_id, "free", _FREE_FOREVER_DATE)
+    _hosting_repo.log_orchestrator_event(
+        container_name="—",
+        user_id=user_id,
+        event_type="PLAN_FREE_FOREVER",
+        message=f"Admin {admin['email']} marcó al usuario como free forever.",
+    )
+    return {"ok": True, "plan": "free", "plan_expires_at": _FREE_FOREVER_DATE}
+
+
+@router.post("/users/{user_id}/plan/deactivate")
+def admin_deactivate_free_plan(
+    user_id: int,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Force-expire a free-tier user immediately (spam, abuse, policy violation)."""
+    user = _user_repo.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if user.get("plan") not in ("free",):
+        raise HTTPException(status_code=400, detail="Solo aplica a usuarios con plan free")
+
+    # Set expiry in the past → expiration job will suspend on next run
+    past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    _user_repo.update_plan(user_id, "free", past)
+    _hosting_repo.log_orchestrator_event(
+        container_name="—",
+        user_id=user_id,
+        event_type="PLAN_DEACTIVATED",
+        message=f"Admin {admin['email']} desactivó el plan free del usuario. Expira en el próximo ciclo del job.",
+    )
+    return {"ok": True, "plan_expires_at": past, "note": "El contenedor se suspenderá en el próximo ciclo del job de expiración"}
+
+
+@router.post("/users/{user_id}/plan/upgrade")
+async def admin_upgrade_plan(
+    user_id: int,
+    body: UpgradePlanBody,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Upgrade a user to a paid plan. Updates user plan, all their free hostings, and Docker resources."""
+    if body.plan not in _VALID_PAID_PLANS:
+        raise HTTPException(status_code=400, detail=f"Plan inválido. Opciones: {', '.join(_VALID_PAID_PLANS)}")
+
+    user = _user_repo.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    resources = _PLAN_RESOURCES[body.plan]
+
+    # 1. Update user plan record (clear plan_expires_at — paid plans don't expire)
+    _user_repo.update_plan(user_id, body.plan, None)
+
+    # 2. Update all their hostings and apply Docker resource limits
+    hostings = _hosting_repo.get_user_hostings(user_id)
+    docker_errors = []
+    for h in hostings:
+        _hosting_repo.update_hosting_plan(h["hosting_id"], body.plan)
+        if h.get("status") in ("active", "starting"):
+            result = await _run_docker(
+                "docker", "update",
+                "--cpus", resources["cpu"],
+                "--memory", resources["memory"],
+                "--memory-swap", resources["memory"],  # disable swap
+                h["container_name"],
+                timeout=10,
+            )
+            if result.returncode != 0:
+                err = result.stderr.strip()
+                docker_errors.append({"container": h["container_name"], "error": err})
+
+    _hosting_repo.log_orchestrator_event(
+        container_name="—",
+        user_id=user_id,
+        event_type="PLAN_UPGRADED",
+        message=(
+            f"Admin {admin['email']} actualizó el plan a '{body.plan}'. "
+            f"CPU: {resources['cpu']}, RAM: {resources['memory']}. "
+            f"Hostings afectados: {len(hostings)}."
+        ),
+    )
+    return {
+        "ok": True,
+        "plan": body.plan,
+        "hostings_updated": len(hostings),
+        "docker_errors": docker_errors,
     }

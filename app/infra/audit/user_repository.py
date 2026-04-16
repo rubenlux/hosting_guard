@@ -34,7 +34,7 @@ class UserRepository:
             cursor = conn.cursor()
             # password_hash included — required for login credential verification only
             cursor.execute(
-                "SELECT user_id, email, password_hash, role, plan, balance, "
+                "SELECT user_id, email, password_hash, role, plan, plan_expires_at, balance, "
                 "has_payment_method, autoscale_enabled, created_at "
                 "FROM users WHERE email = %s",
                 (email,)
@@ -50,7 +50,7 @@ class UserRepository:
             cursor = conn.cursor()
             # password_hash intentionally excluded — not needed for identity resolution
             cursor.execute(
-                "SELECT user_id, email, role, plan, balance, "
+                "SELECT user_id, email, role, plan, plan_expires_at, balance, "
                 "has_payment_method, autoscale_enabled, created_at "
                 "FROM users WHERE user_id = %s",
                 (user_id,)
@@ -106,10 +106,27 @@ class UserRepository:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT user_id, email, role, plan, balance, has_payment_method, autoscale_enabled, created_at "
+                "SELECT user_id, email, role, plan, plan_expires_at, balance, "
+                "has_payment_method, autoscale_enabled, created_at "
                 "FROM users ORDER BY created_at DESC"
             )
             return [dict(row) for row in cursor.fetchall()]
+        finally:
+            release_connection(conn)
+
+    def update_plan(self, user_id: int, plan: str, plan_expires_at: Optional[str] = None) -> bool:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET plan = %s, plan_expires_at = %s WHERE user_id = %s",
+                (plan, plan_expires_at, user_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             release_connection(conn)
 

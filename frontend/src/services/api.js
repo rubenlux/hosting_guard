@@ -229,6 +229,26 @@ export const getAdminFinanceSummary = async () => {
     return response.data;
 };
 
+export const adminExtendPlan = async (userId, days) => {
+    const response = await api.post(`/admin/users/${userId}/plan/extend`, { days });
+    return response.data;
+};
+
+export const adminSetFreePlanForever = async (userId) => {
+    const response = await api.post(`/admin/users/${userId}/plan/free-forever`);
+    return response.data;
+};
+
+export const adminDeactivateFreePlan = async (userId) => {
+    const response = await api.post(`/admin/users/${userId}/plan/deactivate`);
+    return response.data;
+};
+
+export const adminUpgradePlan = async (userId, plan) => {
+    const response = await api.post(`/admin/users/${userId}/plan/upgrade`, { plan });
+    return response.data;
+};
+
 export const getAdminPixelHealth = async () => {
     const response = await api.get('/pixel/admin/health');
     return response.data;

@@ -193,8 +193,28 @@ class HostingRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM hostings WHERE plan = 'free' AND status = 'active' LIMIT %s OFFSET %s", (batch_size, offset))
+            cursor.execute(
+                """SELECT h.*, u.plan_expires_at AS user_plan_expires_at
+                   FROM hostings h
+                   JOIN users u ON h.user_id = u.user_id
+                   WHERE h.plan = 'free' AND h.status = 'active'
+                   LIMIT %s OFFSET %s""",
+                (batch_size, offset),
+            )
             return [dict(row) for row in cursor.fetchall()]
+        finally:
+            release_connection(conn)
+
+    def update_hosting_plan(self, hosting_id: int, plan: str) -> bool:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE hostings SET plan = %s WHERE hosting_id = %s", (plan, hosting_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             release_connection(conn)
 

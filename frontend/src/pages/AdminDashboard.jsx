@@ -8,6 +8,7 @@ import {
   HeadsetIcon, ShieldAlert, Ban, UserCog, PlusCircle,
   ToggleLeft, ToggleRight, ChevronDown, Pencil, Trash2,
   Terminal, RotateCcw, Play, Square, KeyRound,
+  Crown, Infinity, CalendarClock, ShieldOff, TrendingUp as Upgrade, X,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
@@ -17,6 +18,7 @@ import {
   listStaff, createStaff, updateStaff, deactivateStaff, resetStaffPassword,
   adminRestartHosting, adminStopHosting, adminStartHosting,
   adminGetHostingLogs, adminTerminateHosting,
+  adminExtendPlan, adminSetFreePlanForever, adminDeactivateFreePlan, adminUpgradePlan,
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import StaffAnalytics from '../components/StaffAnalytics';
@@ -378,13 +380,13 @@ export default function AdminDashboard() {
                   <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 text-[11px] font-medium border-b-2 -mb-px transition-all ${tab===t.id ? 'border-[#00ff88] text-[#00ff88]' : 'border-transparent text-gray-500 hover:text-white'}`}>{t.label}</button>
                 ))}
               </div>
-              {tab === 'users'    && <UsersTable    users={users}       loading={loading} navigate={navigate} />}
+              {tab === 'users'    && <UsersTable    users={users}       loading={loading} navigate={navigate} onReloadUsers={fetchAll} />}
               {tab === 'hostings' && <HostingsTable hostings={hostings} loading={loading} metricsMap={metricsMap} onReload={fetchAll} />}
               {tab === 'pixel'    && <PixelLog      events={filteredPixel.slice(0,50)} loading={loading} filter={pixelFilter} setFilter={setPixelFilter} />}
             </>)}
 
             {/* ══ USER MANAGEMENT ══ */}
-            {section === 'users' && <UsersTable users={users} loading={loading} navigate={navigate} />}
+            {section === 'users' && <UsersTable users={users} loading={loading} navigate={navigate} onReloadUsers={fetchAll} />}
 
             {/* ══ HOSTING ══ */}
             {section === 'hostings' && <HostingsTable hostings={hostings} loading={loading} metricsMap={metricsMap} onReload={fetchAll} />}
@@ -650,10 +652,181 @@ export default function AdminDashboard() {
   );
 }
 
+const FREE_FOREVER_DATE = '2099-12-31T23:59:59+00:00';
+
+function planExpiryLabel(user) {
+  if (user.plan !== 'free') return null;
+  const exp = user.plan_expires_at;
+  if (!exp) return null;
+  if (exp.includes('2099')) return { label: 'Free forever', color: 'text-emerald-400' };
+  const d = new Date(exp);
+  const now = new Date();
+  if (d < now) return { label: 'Vencido', color: 'text-red-400' };
+  const days = Math.ceil((d - now) / 86400000);
+  return { label: `+${days}d`, color: days <= 3 ? 'text-red-400' : 'text-amber-400' };
+}
+
+/* ── Plan Management Modal ──────────────────────────────────── */
+function PlanManagementModal({ user, onClose, onSuccess }) {
+  const [loading, setLoading] = useState(null); // action key being executed
+  const [error, setError]     = useState(null);
+
+  const run = async (key, fn) => {
+    setLoading(key);
+    setError(null);
+    try {
+      await fn();
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || 'Error al ejecutar acción');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const isFreePlan = user.plan === 'free';
+  const isForever  = user.plan_expires_at?.includes('2099');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="relative w-full max-w-md bg-[#111] border border-white/10 rounded-2xl shadow-2xl p-6"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <div className="flex items-center gap-2 mb-0.5">
+              <Crown className="w-4 h-4 text-amber-400" />
+              <span className="text-sm font-bold text-white">Gestión de Plan</span>
+            </div>
+            <div className="text-[10px] text-gray-500 truncate max-w-[280px]">{user.email}</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+            <X className="w-4 h-4 text-gray-500" />
+          </button>
+        </div>
+
+        {/* Current plan badge */}
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/8 mb-5">
+          <div>
+            <div className="text-[9px] uppercase tracking-widest text-gray-500 mb-0.5">Plan actual</div>
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${PLAN_STYLE[user.plan] || 'bg-white/5 text-gray-400'}`}>
+                {user.plan || 'free'}
+              </span>
+              {(() => {
+                const lbl = planExpiryLabel(user);
+                return lbl ? (
+                  <span className={`text-[10px] font-medium ${lbl.color}`}>{lbl.label}</span>
+                ) : null;
+              })()}
+            </div>
+          </div>
+          {user.plan_expires_at && !isForever && (
+            <div className="ml-auto text-right">
+              <div className="text-[9px] text-gray-500">Vence</div>
+              <div className="text-[10px] font-mono text-gray-300">
+                {new Date(user.plan_expires_at).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">{error}</div>
+        )}
+
+        {/* Free-plan actions */}
+        {isFreePlan && (
+          <div className="space-y-2 mb-4">
+            <div className="text-[9px] uppercase tracking-widest text-gray-600 mb-2">Período de prueba</div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => run('ext14', () => adminExtendPlan(user.user_id, 14))}
+                disabled={!!loading}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[11px] font-bold
+                  bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors disabled:opacity-50"
+              >
+                {loading === 'ext14' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CalendarClock className="w-3 h-3" />}
+                +14 días
+              </button>
+              <button
+                onClick={() => run('ext30', () => adminExtendPlan(user.user_id, 30))}
+                disabled={!!loading}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[11px] font-bold
+                  bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors disabled:opacity-50"
+              >
+                {loading === 'ext30' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CalendarClock className="w-3 h-3" />}
+                +30 días
+              </button>
+            </div>
+
+            <button
+              onClick={() => run('forever', () => adminSetFreePlanForever(user.user_id))}
+              disabled={!!loading || isForever}
+              className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[11px] font-bold
+                bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors
+                disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {loading === 'forever' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Infinity className="w-3.5 h-3.5" />}
+              {isForever ? 'Ya es Free Forever' : 'Convertir a Free Forever'}
+            </button>
+
+            <button
+              onClick={() => {
+                if (!window.confirm(`¿Desactivar el plan free de ${user.email}?\nEl contenedor se suspenderá en el próximo ciclo del job.`)) return;
+                run('deactivate', () => adminDeactivateFreePlan(user.user_id));
+              }}
+              disabled={!!loading}
+              className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[11px] font-bold
+                bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50"
+            >
+              {loading === 'deactivate' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <ShieldOff className="w-3 h-3" />}
+              Desactivar plan (spam / abuso)
+            </button>
+          </div>
+        )}
+
+        {/* Upgrade section */}
+        <div className="space-y-2">
+          <div className="text-[9px] uppercase tracking-widest text-gray-600 mb-2">Convertir a plan pago</div>
+          {[
+            { plan: 'personal', label: 'Personal',  desc: '0.5 CPU · 512 MB',  color: 'text-blue-400   bg-blue-500/10   hover:bg-blue-500/20' },
+            { plan: 'negocio',  label: 'Negocio',   desc: '1 CPU · 1 GB',      color: 'text-amber-400  bg-amber-500/10  hover:bg-amber-500/20' },
+            { plan: 'agencia',  label: 'Agencia',   desc: '2 CPU · 2 GB',      color: 'text-purple-400 bg-purple-500/10 hover:bg-purple-500/20' },
+          ].map(({ plan, label, desc, color }) => (
+            <button
+              key={plan}
+              onClick={() => {
+                if (!window.confirm(`¿Convertir a ${user.email} al plan ${label}?\nSe actualizarán los recursos Docker inmediatamente.`)) return;
+                run(`upgrade_${plan}`, () => adminUpgradePlan(user.user_id, plan));
+              }}
+              disabled={!!loading || user.plan === plan}
+              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl text-[11px] font-bold
+                transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${color}`}
+            >
+              <span className="flex items-center gap-1.5">
+                {loading === `upgrade_${plan}` ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Crown className="w-3 h-3" />}
+                {label}
+                {user.plan === plan && <span className="text-[9px] opacity-60 ml-1">(actual)</span>}
+              </span>
+              <span className="text-[9px] opacity-70 font-mono">{desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Sub-components ─────────────────────────────────────────── */
-function UsersTable({ users, loading, navigate }) {
+function UsersTable({ users, loading, navigate, onReloadUsers }) {
   const { activateSupportSession } = useAuth();
-  const [supporting, setSupporting] = useState(null); // user_id being activated
+  const [supporting, setSupporting]   = useState(null); // user_id being activated
+  const [planModal, setPlanModal]     = useState(null);  // user object for modal
 
   const handleSupport = async (e, u) => {
     e.stopPropagation();
@@ -673,24 +846,36 @@ function UsersTable({ users, loading, navigate }) {
 
   return (
     <div className="space-y-4">
+      {planModal && (
+        <PlanManagementModal
+          user={planModal}
+          onClose={() => setPlanModal(null)}
+          onSuccess={() => { setPlanModal(null); onReloadUsers?.(); }}
+        />
+      )}
       <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
         <table className="w-full text-[11px]">
           <thead>
             <tr className="border-b border-white/5">
-              {['ID','Email','Role','Plan','Balance','Created Date','Soporte'].map(h => (
+              {['ID','Email','Role','Plan','Balance','Created Date','Soporte',''].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-[9px] uppercase tracking-wider text-gray-500 font-medium">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={7} className="p-10 text-center"><RefreshCw className="w-4 h-4 animate-spin mx-auto text-gray-600" /></td></tr>
-            : users.length === 0 ? <tr><td colSpan={7} className="p-10 text-center text-gray-600 italic text-xs">Sin usuarios.</td></tr>
+            {loading ? <tr><td colSpan={8} className="p-10 text-center"><RefreshCw className="w-4 h-4 animate-spin mx-auto text-gray-600" /></td></tr>
+            : users.length === 0 ? <tr><td colSpan={8} className="p-10 text-center text-gray-600 italic text-xs">Sin usuarios.</td></tr>
             : users.map(u => (
               <tr key={u.user_id} onClick={() => navigate(`/admin/users/${u.user_id}`)} className="border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors">
                 <td className="px-4 py-3 font-mono text-gray-500">#{String(u.user_id).padStart(4,'0')}</td>
                 <td className="px-4 py-3"><div className="flex items-center gap-2"><Initials email={u.email} /><span className="text-white font-medium">{u.email}</span></div></td>
                 <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${u.role==='admin' ? 'bg-red-500/20 text-red-400' : 'bg-white/5 text-gray-400'}`}>{u.role}</span></td>
-                <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${PLAN_STYLE[u.plan] || 'bg-white/5 text-gray-400'}`}>{u.plan||'free'}</span></td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${PLAN_STYLE[u.plan] || 'bg-white/5 text-gray-400'}`}>{u.plan||'free'}</span>
+                    {(() => { const l = planExpiryLabel(u); return l ? <span className={`text-[9px] font-medium ${l.color}`}>{l.label}</span> : null; })()}
+                  </div>
+                </td>
                 <td className="px-4 py-3 font-mono text-emerald-400">${(u.balance||0).toFixed(2)}</td>
                 <td className="px-4 py-3 text-gray-500">{u.created_at ? new Date(u.created_at).toLocaleDateString('es-AR',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</td>
                 <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
@@ -711,6 +896,17 @@ function UsersTable({ users, loading, navigate }) {
                       Soporte
                     </button>
                   )}
+                </td>
+                <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                  <button
+                    onClick={() => setPlanModal(u)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold
+                      bg-white/5 text-gray-300 hover:bg-white/10 transition-colors"
+                    title="Gestionar plan del usuario"
+                  >
+                    <Crown className="w-3 h-3 text-amber-400" />
+                    Plan
+                  </button>
                 </td>
               </tr>
             ))}
