@@ -298,6 +298,36 @@ class PixelRepository:
         finally:
             release_connection(conn)
 
+    def get_overview_admin(self) -> Dict:
+        """Admin overview — alias of get_all_stats_admin for the /admin/pixel/overview route."""
+        return self.get_all_stats_admin()
+
+    def get_all_events_admin(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+        """Admin: all events across all users/sites, paginated. Powers /admin/pixel/events."""
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT pe.event_id, pe.site_id, pe.user_id, pe.event_type,
+                       pe.url, pe.referrer, pe.user_agent, pe.ip,
+                       pe.country, pe.device, pe.browser, pe.os,
+                       pe.session_id, pe.visitor_id,
+                       pe.properties, pe.created_at,
+                       ps.name AS site_name
+                FROM pixel_events pe
+                LEFT JOIN pixel_sites ps ON ps.site_id = pe.site_id
+                ORDER BY pe.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset),
+            )
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            release_connection(conn)
+
     def get_all_sites_health(self) -> List[Dict]:
         """Admin: todos los sitios con last_seen_at y conteo de eventos."""
         from app.infra.db import get_connection, release_connection
