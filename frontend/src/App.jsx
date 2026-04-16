@@ -17,6 +17,8 @@ import StaffDashboard from './pages/StaffDashboard';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import TermsConditions from './pages/TermsConditions';
 import ApiDocs from './pages/ApiDocs';
+import VerifyEmail from './pages/VerifyEmail';
+import ResetPassword from './pages/ResetPassword';
 import { useAuth } from './hooks/useAuth';
 
 const PrivateRoute = ({ children }) => {
@@ -76,9 +78,11 @@ function App() {
           <Route path="/admin/pixel-users"            element={<AdminRoute><AdminPixelUsers /></AdminRoute>} />
           <Route path="/admin/pixel-users/:user_id"   element={<AdminRoute><AdminPixelUserDetail /></AdminRoute>} />
           {/* Legal & public pages — accessible without authentication */}
-          <Route path="/privacy"   element={<PrivacyPolicy />} />
-          <Route path="/terminos"  element={<TermsConditions />} />
-          <Route path="/api-docs"  element={<ApiDocs />} />
+          <Route path="/privacy"        element={<PrivacyPolicy />} />
+          <Route path="/terminos"       element={<TermsConditions />} />
+          <Route path="/api-docs"       element={<ApiDocs />} />
+          <Route path="/verify-email"   element={<VerifyEmail />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           {/* Fallback staff routes (shouldn't normally be needed but keeps router happy) */}
           <Route path="/staff/login"     element={<StaffLogin />} />
           <Route path="/staff/dashboard" element={<StaffDashboard />} />

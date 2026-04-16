@@ -1,6 +1,6 @@
 import { useState, useMemo, lazy, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { updateUserConfig, topupBalance } from '../services/api';
+import { updateUserConfig, topupBalance, resendVerification } from '../services/api';
 import { useAuth }                   from '../hooks/useAuth';
 import { useDashboardData }          from '../hooks/useDashboardData';
 import { useHostingActions }         from '../hooks/useHostingActions';
@@ -102,6 +102,8 @@ const Dashboard = () => {
   const [openTicketId,          setOpenTicketId]          = useState(null);
   const [showDiagnosis,         setShowDiagnosis]         = useState(false);
   const [errorToast,            setErrorToast]            = useState(null);
+  const [resendingVerif,        setResendingVerif]        = useState(false);
+  const [verifSent,             setVerifSent]             = useState(false);
 
   // ── Event handlers ────────────────────────────────────────────────────────────
   const showError = (msg) => {
@@ -148,13 +150,34 @@ const Dashboard = () => {
     finally { setUserActionLoading(false); }
   };
 
+  const handleResendVerif = async () => {
+    if (resendingVerif || verifSent || !user?.email) return;
+    setResendingVerif(true);
+    try { await resendVerification(user.email); setVerifSent(true); }
+    catch (_) { setVerifSent(true); } // silent — same message regardless
+    finally { setResendingVerif(false); }
+  };
+
   // ── Admin shortcut ────────────────────────────────────────────────────────────
   if (user?.role === 'admin') return <AdminDashboard />;
 
-  const bannerHeight = isSupportSession && supportSession ? 44 : 0;
+  const showVerifBanner = user && user.email_verified === false;
+  const bannerHeight = (isSupportSession && supportSession ? 44 : 0) + (showVerifBanner ? 44 : 0);
 
   return (
     <>
+      {showVerifBanner && (
+        <div className="fixed top-0 left-0 right-0 z-[59] h-11 flex items-center justify-center gap-3 px-4 bg-amber-500/10 border-b border-amber-500/20"
+          style={isSupportSession && supportSession ? { top: 44 } : undefined}>
+          <Mail className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span className="text-amber-300 text-xs">Verificá tu email para poder crear hostings.</span>
+          <button onClick={handleResendVerif} disabled={resendingVerif || verifSent}
+            className="text-[11px] font-bold text-amber-400 hover:text-amber-300 underline disabled:opacity-50 transition-colors">
+            {verifSent ? 'Enviado' : resendingVerif ? 'Enviando...' : 'Reenviar email'}
+          </button>
+        </div>
+      )}
+
       {isSupportSession && supportSession && (
         <div className="fixed top-0 left-0 right-0 z-[60]">
           <SupportBanner

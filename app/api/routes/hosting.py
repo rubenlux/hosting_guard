@@ -119,6 +119,15 @@ class CreateHostingRequest(BaseModel):
 @router.post("/create-hosting")
 async def create_hosting(data: CreateHostingRequest, request: Request, user: dict = Depends(verify_token)):
     try:
+        # Block unverified emails — prevents free-trial abuse with disposable addresses
+        _uid = user.get("user_id")
+        user_db = _user_repo.get_user_by_id(int(_uid)) if _uid is not None else None
+        if user_db and not user_db.get("email_verified", 1):
+            raise HTTPException(
+                status_code=403,
+                detail="email_not_verified",
+            )
+
         # FIX #7: validar nombre antes de usarlo en subdominios y labels
         _validate_project_name(data.name)
 

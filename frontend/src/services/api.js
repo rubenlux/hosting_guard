@@ -255,6 +255,26 @@ export const adminUpgradePlan = async (userId, plan) => {
     return response.data;
 };
 
+export const forgotPassword = async (email) => {
+    const response = await api.post('/auth/forgot-password', { email });
+    return response.data;
+};
+
+export const resetPassword = async (token, newPassword) => {
+    const response = await api.post('/auth/reset-password', { token, new_password: newPassword });
+    return response.data;
+};
+
+export const verifyEmail = async (token) => {
+    const response = await api.get(`/auth/verify-email?token=${token}`);
+    return response.data;
+};
+
+export const resendVerification = async (email) => {
+    const response = await api.post('/auth/resend-verification', { email });
+    return response.data;
+};
+
 export const getAdminPixelHealth = async () => {
     const response = await api.get('/pixel/admin/health');
     return response.data;

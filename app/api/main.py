@@ -154,16 +154,98 @@ def register(request: Request, body: RegisterRequest):
         raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
     hashed_password = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
     try:
-        user_repo.create_user(
+        user_id = user_repo.create_user(
             body.email,
             hashed_password,
             first_name=body.first_name.strip(),
             last_name=body.last_name.strip(),
             phone=body.phone.strip(),
         )
-        return {"email": body.email, "status": "registered"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # Create verification token and send email (best-effort — never block registration)
+    try:
+        from app.infra.auth_token_repository import AuthTokenRepository
+        from app.services.mailer import send_verification_email
+        token = AuthTokenRepository().create_token(user_id, "email_verification", expires_minutes=1440)
+        send_verification_email(body.email, body.first_name.strip(), token)
+    except Exception as exc:
+        logger.error("Failed to send verification email to %s: %s", body.email, exc)
+
+    return {"email": body.email, "status": "registered"}
+
+
+@app.get("/auth/verify-email")
+@limiter.limit("10/minute")
+def verify_email(request: Request, token: str):
+    from app.infra.auth_token_repository import AuthTokenRepository
+    repo = AuthTokenRepository()
+    record = repo.get_valid_token(token, "email_verification")
+    if not record:
+        raise HTTPException(status_code=400, detail="Token inválido o expirado")
+    repo.mark_used(token)
+    user_repo.set_email_verified(record["user_id"])
+    return {"status": "verified"}
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+@app.post("/auth/forgot-password")
+@limiter.limit("3/minute")
+def forgot_password(request: Request, body: ForgotPasswordRequest):
+    # Always return success to avoid email enumeration
+    user = user_repo.get_user_by_email(body.email)
+    if user:
+        try:
+            from app.infra.auth_token_repository import AuthTokenRepository
+            from app.services.mailer import send_password_reset_email
+            token = AuthTokenRepository().create_token(user["user_id"], "password_reset", expires_minutes=60)
+            first = user.get("first_name") or user["email"].split("@")[0]
+            send_password_reset_email(body.email, first, token)
+        except Exception as exc:
+            logger.error("Failed to send password reset email to %s: %s", body.email, exc)
+    return {"status": "ok", "detail": "Si el email existe, recibirás un enlace en tu casilla."}
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+@app.post("/auth/reset-password")
+@limiter.limit("5/minute")
+def reset_password(request: Request, body: ResetPasswordRequest):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
+    from app.infra.auth_token_repository import AuthTokenRepository
+    repo = AuthTokenRepository()
+    record = repo.get_valid_token(body.token, "password_reset")
+    if not record:
+        raise HTTPException(status_code=400, detail="El enlace es inválido o ya expiró")
+    repo.mark_used(body.token)
+    new_hash = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
+    user_repo.update_password(record["user_id"], new_hash)
+    return {"status": "ok", "detail": "Contraseña actualizada. Ya podés iniciar sesión."}
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+@app.post("/auth/resend-verification")
+@limiter.limit("3/minute")
+def resend_verification(request: Request, body: ResendVerificationRequest):
+    user = user_repo.get_user_by_email(body.email)
+    if user and not user.get("email_verified"):
+        try:
+            from app.infra.auth_token_repository import AuthTokenRepository
+            from app.services.mailer import send_verification_email
+            token = AuthTokenRepository().create_token(user["user_id"], "email_verification", expires_minutes=1440)
+            first = user.get("first_name") or user["email"].split("@")[0]
+            send_verification_email(body.email, first, token)
+        except Exception as exc:
+            logger.error("Failed to resend verification to %s: %s", body.email, exc)
+    return {"status": "ok", "detail": "Si el email existe y no está verificado, recibirás el enlace."}
 
 @app.post("/login")
 @limiter.limit("5/minute")
@@ -319,6 +401,7 @@ def get_me(user: dict = Depends(verify_token)):
         "balance": user_db.get("balance", 0.0),
         "has_payment_method": bool(user_db.get("has_payment_method", 0)),
         "autoscale_enabled": bool(user_db.get("autoscale_enabled", 1)),
+        "email_verified": bool(user_db.get("email_verified", 1)),
         "status": "authenticated",
         "is_support_session": user.get("is_support_session", False),
     }

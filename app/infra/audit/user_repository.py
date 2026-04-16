@@ -21,8 +21,9 @@ class UserRepository:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO users (email, password_hash, role, first_name, last_name, phone, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING user_id",
+                "INSERT INTO users "
+                "(email, password_hash, role, first_name, last_name, phone, email_verified, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, 0, %s) RETURNING user_id",
                 (email, password_hash, role, first_name, last_name, phone,
                  datetime.now(timezone.utc).isoformat())
             )
@@ -37,14 +38,45 @@ class UserRepository:
         finally:
             release_connection(conn)
 
+    def set_email_verified(self, user_id: int) -> None:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET email_verified = 1 WHERE user_id = %s",
+                (user_id,),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            release_connection(conn)
+
+    def update_password(self, user_id: int, new_hash: str) -> None:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET password_hash = %s WHERE user_id = %s",
+                (new_hash, user_id),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            release_connection(conn)
+
     def get_user_by_email(self, email: str) -> Optional[Dict]:
         conn = get_connection()
         try:
             cursor = conn.cursor()
             # password_hash included — required for login credential verification only
             cursor.execute(
-                "SELECT user_id, email, password_hash, role, plan, plan_expires_at, balance, "
-                "has_payment_method, autoscale_enabled, created_at "
+                "SELECT user_id, email, password_hash, role, plan, plan_expires_at, "
+                "first_name, last_name, phone, email_verified, "
+                "balance, has_payment_method, autoscale_enabled, created_at "
                 "FROM users WHERE email = %s",
                 (email,)
             )

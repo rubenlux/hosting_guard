@@ -267,6 +267,19 @@ _INDEXES = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT",
+    # Email verification — DEFAULT 1 grandfathers existing users as verified
+    # new registrations explicitly set 0 in create_user()
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER DEFAULT 1",
+    # Tokens for email verification and password reset (single-use, time-limited)
+    """CREATE TABLE IF NOT EXISTS auth_tokens (
+        token_id   TEXT PRIMARY KEY,
+        user_id    INTEGER NOT NULL,
+        token_type TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at    TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+    )""",
 ]
 
 def ensure_monthly_partitions(cursor):
