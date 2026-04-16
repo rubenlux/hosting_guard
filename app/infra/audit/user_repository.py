@@ -8,14 +8,23 @@ logger = logging.getLogger(__name__)
 class UserRepository:
     """Repositorio de Usuarios - Versión PostgreSQL."""
 
-    def create_user(self, email: str, password_hash: str, role: str = "user") -> int:
+    def create_user(
+        self,
+        email: str,
+        password_hash: str,
+        role: str = "user",
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        phone: Optional[str] = None,
+    ) -> int:
         conn = get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO users (email, password_hash, role, created_at) "
-                "VALUES (%s, %s, %s, %s) RETURNING user_id",
-                (email, password_hash, role, datetime.now(timezone.utc).isoformat())
+                "INSERT INTO users (email, password_hash, role, first_name, last_name, phone, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING user_id",
+                (email, password_hash, role, first_name, last_name, phone,
+                 datetime.now(timezone.utc).isoformat())
             )
             row = cursor.fetchone()
             conn.commit()
@@ -50,8 +59,8 @@ class UserRepository:
             cursor = conn.cursor()
             # password_hash intentionally excluded — not needed for identity resolution
             cursor.execute(
-                "SELECT user_id, email, role, plan, plan_expires_at, balance, "
-                "has_payment_method, autoscale_enabled, created_at "
+                "SELECT user_id, email, role, plan, plan_expires_at, first_name, last_name, phone, "
+                "balance, has_payment_method, autoscale_enabled, created_at "
                 "FROM users WHERE user_id = %s",
                 (user_id,)
             )

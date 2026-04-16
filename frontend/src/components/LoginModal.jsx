@@ -1,17 +1,68 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { X, Eye, EyeOff, User, Mail, Phone, Lock } from 'lucide-react';
 import { login, register } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
+
+function Field({ label, icon: Icon, type = 'text', placeholder, value, onChange, required = true, hint }) {
+  const [show, setShow] = useState(false);
+  const isPassword = type === 'password';
+  return (
+    <div className="space-y-1">
+      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{label}</label>
+      <div className="relative">
+        {Icon && <Icon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600 pointer-events-none" />}
+        <input
+          type={isPassword ? (show ? 'text' : 'password') : type}
+          placeholder={placeholder}
+          required={required}
+          value={value}
+          onChange={onChange}
+          className="w-full py-3 rounded-lg bg-black/60 border border-gray-800 text-white text-sm
+            focus:border-green-500 focus:outline-none transition-colors placeholder:text-gray-700
+            pr-3"
+          style={{ paddingLeft: Icon ? '2.25rem' : '0.75rem' }}
+        />
+        {isPassword && (
+          <button
+            type="button"
+            onClick={() => setShow(s => !s)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-400 transition-colors"
+            tabIndex={-1}
+          >
+            {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        )}
+      </div>
+      {hint && <p className="text-[10px] text-gray-600">{hint}</p>}
+    </div>
+  );
+}
 
 const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
   const { loginAction } = useAuth();
 
   const [isRegister, setIsRegister] = useState(false);
-  const [email, setEmail] = useState('');
+
+  // Login fields
+  const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
+
+  // Register-only fields
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName]   = useState('');
+  const [phone, setPhone]         = useState('');
+
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]     = useState('');
+
+  const resetForm = () => {
+    setEmail(''); setPassword('');
+    setFirstName(''); setLastName(''); setPhone('');
+    setError('');
+  };
+
+  const switchMode = () => { resetForm(); setIsRegister(r => !r); };
 
   if (!isOpen) return null;
 
@@ -22,111 +73,146 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
 
     try {
       if (isRegister) {
-        await register(email, password);
+        if (password.length < 8) {
+          setError('La contraseña debe tener al menos 8 caracteres');
+          return;
+        }
+        await register(email, password, firstName, lastName, phone);
       }
 
       const data = await login(email, password);
 
-      if (data?.status === "ok") {
-        if (data?.account_type === "staff") {
-          // Colaborador — redirigir al panel de staff sin cargar /me de cliente
+      if (data?.status === 'ok') {
+        if (data?.account_type === 'staff') {
           onClose();
-          window.location.href = "/staff/dashboard";
+          window.location.href = '/staff/dashboard';
           return;
         }
-        // Cliente / admin normal
         await loginAction();
         onLoginSuccess();
         onClose();
       } else {
-        throw new Error("Respuesta inesperada del servidor");
+        throw new Error('Respuesta inesperada del servidor');
       }
     } catch (err) {
-      console.error(err);
-      
       const detail = err.response?.data?.detail;
-      let errorMessage = "Error al conectar con el servidor";
-
-      if (detail === "Invalid credentials") {
-        errorMessage = "Email o contraseña incorrectos";
-      } else if (detail === "Email already exists") {
-        errorMessage = "El email ya está registrado";
-      } else if (err.response?.status === 429) {
-        errorMessage = "Demasiados intentos. Espera un momento e inténtalo de nuevo.";
-      }
-      // No exponer detalles internos del servidor al usuario final
-      
-      setError(errorMessage);
+      let msg = 'Error al conectar con el servidor';
+      if (detail === 'Invalid credentials')   msg = 'Email o contraseña incorrectos';
+      else if (detail === 'Email already exists') msg = 'El email ya está registrado';
+      else if (typeof detail === 'string')    msg = detail;
+      else if (err.response?.status === 429)  msg = 'Demasiados intentos. Esperá un momento.';
+      setError(msg);
     } finally {
       setLoading(false);
     }
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-4">
-      <div className="bg-[#111] w-full max-w-md p-6 rounded-xl relative shadow-2xl border border-white/5">
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
-        >
-          <X size={20} />
-        </button>
+    <div
+      className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[#111] w-full max-w-md rounded-2xl relative shadow-2xl border border-white/8 overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Top accent */}
+        <div className="h-0.5 w-full bg-gradient-to-r from-green-500/0 via-green-500 to-green-500/0" />
 
-        <h2 className="text-white text-xl font-bold mb-6">
-          {isRegister ? 'Crear cuenta' : 'Iniciar sesión'}
-        </h2>
+        <div className="p-7">
+          {/* Header */}
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <h2 className="text-white text-xl font-black">
+                {isRegister ? 'Crear cuenta' : 'Iniciar sesión'}
+              </h2>
+              <p className="text-gray-500 text-xs mt-0.5">
+                {isRegister ? 'Completá tus datos para comenzar' : 'Bienvenido de vuelta'}
+              </p>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-gray-500 hover:text-white">
+              <X size={18} />
+            </button>
+          </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-xs text-gray-500 font-bold uppercase">Email</label>
-            <input
+          <form onSubmit={handleSubmit} className="space-y-3.5">
+            {/* Register-only fields */}
+            {isRegister && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field
+                    label="Nombre"
+                    icon={User}
+                    placeholder="Juan"
+                    value={firstName}
+                    onChange={e => setFirstName(e.target.value)}
+                  />
+                  <Field
+                    label="Apellido"
+                    icon={User}
+                    placeholder="García"
+                    value={lastName}
+                    onChange={e => setLastName(e.target.value)}
+                  />
+                </div>
+                <Field
+                  label="Teléfono"
+                  icon={Phone}
+                  type="tel"
+                  placeholder="+54 9 11 1234-5678"
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                  hint="Con código de país. Ej: +54 9 11 1234-5678"
+                />
+              </>
+            )}
+
+            <Field
+              label="Email"
+              icon={Mail}
               type="email"
               placeholder="tu@email.com"
-              required
-              className="w-full p-3 rounded bg-black border border-gray-800 text-white focus:border-green-500 focus:outline-none transition-colors"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={e => setEmail(e.target.value)}
             />
-          </div>
 
-          <div className="space-y-1">
-            <label className="text-xs text-gray-500 font-bold uppercase">Contraseña</label>
-            <input
+            <Field
+              label="Contraseña"
+              icon={Lock}
               type="password"
               placeholder="••••••••"
-              required
-              className="w-full p-3 rounded bg-black border border-gray-800 text-white focus:border-green-500 focus:outline-none transition-colors"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={e => setPassword(e.target.value)}
+              hint={isRegister ? 'Mínimo 8 caracteres' : undefined}
             />
-          </div>
 
-          {error && (
-            <p className="text-red-500 text-sm italic">{error}</p>
-          )}
+            {error && (
+              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                {error}
+              </div>
+            )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-green-500 py-3.5 rounded font-black text-black hover:bg-green-400 transition-colors disabled:opacity-50 mt-2"
-          >
-            {loading
-              ? 'Procesando...'
-              : isRegister
-              ? 'REGISTRARSE'
-              : 'ENTRAR'}
-          </button>
-        </form>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-green-500 py-3.5 rounded-xl font-black text-black text-sm
+                hover:bg-green-400 active:scale-[.98] transition-all disabled:opacity-50 mt-1"
+            >
+              {loading
+                ? 'Procesando...'
+                : isRegister
+                ? 'CREAR CUENTA'
+                : 'ENTRAR'}
+            </button>
+          </form>
 
-        <p className="text-center text-sm text-gray-400 mt-6 pt-4 border-t border-white/5">
-          {isRegister ? '¿Ya tenés cuenta?' : '¿No tenés cuenta?'}{' '}
-          <button
-            onClick={() => setIsRegister(!isRegister)}
-            className="text-green-500 font-bold hover:underline"
-          >
-            {isRegister ? 'Inicia sesión' : 'Registrate gratis'}
-          </button>
-        </p>
+          <p className="text-center text-xs text-gray-500 mt-5 pt-4 border-t border-white/5">
+            {isRegister ? '¿Ya tenés cuenta?' : '¿No tenés cuenta?'}{' '}
+            <button onClick={switchMode} className="text-green-500 font-bold hover:underline">
+              {isRegister ? 'Iniciá sesión' : 'Registrate gratis'}
+            </button>
+          </p>
+        </div>
       </div>
     </div>,
     document.body

@@ -135,6 +135,9 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
+    first_name: str
+    last_name: str
+    phone: str
 
 
 @app.get("/")
@@ -147,9 +150,17 @@ def root():
 @app.post("/register")
 @limiter.limit("5/minute")
 def register(request: Request, body: RegisterRequest):
+    if len(body.password) < 8:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
     hashed_password = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
     try:
-        user_repo.create_user(body.email, hashed_password)
+        user_repo.create_user(
+            body.email,
+            hashed_password,
+            first_name=body.first_name.strip(),
+            last_name=body.last_name.strip(),
+            phone=body.phone.strip(),
+        )
         return {"email": body.email, "status": "registered"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -263,6 +263,10 @@ _INDEXES = [
     # Plan management: explicit expiry override for free-tier users
     # NULL = use default 14-day rule; far-future date = free forever; past date = force-expire
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expires_at TEXT",
+    # User profile fields added in registration flow v2
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT",
 ]
 
 def ensure_monthly_partitions(cursor):

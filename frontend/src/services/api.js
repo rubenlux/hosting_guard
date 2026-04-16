@@ -93,8 +93,14 @@ export const login = async (email, password) => {
   return response.data;
 };
 
-export const register = async (email, password) => {
-  const response = await api.post('/register', { email, password });
+export const register = async (email, password, firstName, lastName, phone) => {
+  const response = await api.post('/register', {
+    email,
+    password,
+    first_name: firstName,
+    last_name:  lastName,
+    phone,
+  });
   return response.data;
 };
 
