@@ -248,10 +248,34 @@ class HostingRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
+            # expires_in_days priority:
+            #   1. plan_expires_at LIKE '2099%'  → NULL (free forever, never show expiry)
+            #   2. plan_expires_at IS NOT NULL   → days until that explicit date
+            #   3. fallback                      → 14-day rule from hosting created_at
             cursor.execute(
-                f"SELECT *, CASE WHEN plan = 'free' THEN {SQL_DAYS_REMAINING_14} ELSE NULL END AS days_remaining "
-                "FROM hostings WHERE user_id = %s LIMIT %s OFFSET %s",
-                (user_id, limit, skip)
+                """SELECT h.*,
+                      CASE
+                        WHEN h.plan = 'free' AND u.plan_expires_at LIKE '2099%%'
+                          THEN NULL
+                        WHEN h.plan = 'free' AND u.plan_expires_at IS NOT NULL
+                          THEN GREATEST(0,
+                                 CEIL(EXTRACT(EPOCH FROM
+                                   (u.plan_expires_at::timestamptz - NOW() AT TIME ZONE 'UTC')
+                                 ) / 86400)
+                               )::INTEGER
+                        WHEN h.plan = 'free'
+                          THEN GREATEST(0,
+                                 14 - EXTRACT(DAY FROM AGE(
+                                   NOW() AT TIME ZONE 'UTC', h.created_at::timestamptz
+                                 ))::INTEGER
+                               )
+                        ELSE NULL
+                      END AS days_remaining
+                   FROM hostings h
+                   JOIN users u ON h.user_id = u.user_id
+                   WHERE h.user_id = %s
+                   LIMIT %s OFFSET %s""",
+                (user_id, limit, skip),
             )
             result = []
             for row in cursor.fetchall():
