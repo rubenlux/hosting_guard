@@ -1,4 +1,4 @@
-import React, { useState, useMemo, lazy, Suspense } from 'react';
+import { useState, useMemo, lazy, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { updateUserConfig, topupBalance } from '../services/api';
 import { useAuth }                   from '../hooks/useAuth';
@@ -19,6 +19,7 @@ import HostingList          from '../components/dashboard/HostingList';
 import ActivityFeed         from '../components/dashboard/ActivityFeed';
 import TrendLine            from '../components/dashboard/TrendLine';
 import AIAdvisoryPanel      from '../components/dashboard/AIAdvisoryPanel';
+import StatusCommandBar     from '../components/dashboard/StatusCommandBar';
 import HostingCreationForm  from '../components/HostingCreationForm';
 import LogsModal            from '../components/LogsModal';
 import ZipUploadModal       from '../components/ZipUploadModal';
@@ -312,9 +313,17 @@ const Dashboard = () => {
               />
             ) : (
               <>
+                {/* STATUS COMMAND BAR — always-visible, no loading state */}
+                <StatusCommandBar
+                  hostings={hostings}
+                  healthData={healthData}
+                  advisories={advisories}
+                  alerts={alerts}
+                />
+
                 {/* EXPIRATION WARNINGS */}
                 {expiringHostings.map(h => (
-                  <div key={h.hosting_id} className={`flex items-center justify-between gap-4 px-5 py-3 rounded-2xl border mb-3 ${
+                  <div key={h.hosting_id} className={`flex items-center justify-between gap-4 px-5 py-3 rounded-2xl border mb-3 mt-4 ${
                     h.expires_in_days === 0 ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-500'
                   }`}>
                     <div className="flex items-center gap-3">
@@ -331,18 +340,23 @@ const Dashboard = () => {
                   </div>
                 ))}
 
-                {/* BUSINESS OVERVIEW */}
-                <Suspense fallback={<div className="p-4 text-xs text-muted">Cargando módulo...</div>}>
-                  <BusinessOverview />
-                </Suspense>
+                {/* HERO SPLIT — traffic analytics + AI advisory side by side */}
+                <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 mt-4">
+                  <div className="xl:col-span-3">
+                    <Suspense fallback={<div className="p-4 text-xs text-muted">Cargando módulo...</div>}>
+                      <BusinessOverview />
+                    </Suspense>
+                  </div>
+                  <div className="xl:col-span-2">
+                    <AIAdvisoryPanel
+                      advisories={advisories}
+                      onDiagnose={handleDiagnose}
+                    />
+                  </div>
+                </div>
 
-                <AIAdvisoryPanel
-                  advisories={advisories}
-                  onDiagnose={handleDiagnose}
-                />
-
-                {/* GRID */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* SITES + ACCOUNT */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
                   <div className="lg:col-span-2 space-y-6">
                     <HostingList
                       hostings={hostings}
@@ -362,17 +376,17 @@ const Dashboard = () => {
                     <ActivityFeed events={events} onRefresh={refresh} />
                   </div>
 
-                  {/* RIGHT COLUMN */}
+                  {/* ACCOUNT PANEL */}
                   <div className="h-full">
                     <div className="card-dash p-6 h-full bg-[#121214] border border-white/10 shadow-sm rounded-2xl relative overflow-hidden font-sans flex flex-col">
-                      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500"></div>
+                      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500" />
                       <div className="flex justify-between items-start mb-6">
                         <div>
                           <div className="text-[10px] text-indigo-400 font-mono font-bold uppercase tracking-[0.2em] mb-2">Tu Saldo</div>
                           <div className="text-3xl font-black text-white tracking-tight">${user?.balance?.toFixed(2) || '0.00'}</div>
                         </div>
                         <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${user?.has_payment_method ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
-                          {user?.has_payment_method ? '💳 Vinculada' : '⚠️ Sin Tarjeta'}
+                          {user?.has_payment_method ? 'Vinculada' : 'Sin Tarjeta'}
                         </div>
                       </div>
                       <div className="space-y-4 flex-1 flex flex-col">
@@ -394,7 +408,7 @@ const Dashboard = () => {
                           </div>
                           {!user?.has_payment_method && user?.balance <= 0 && (
                             <div className="text-[10px] bg-red-400/10 text-red-400 p-3 rounded-xl border border-red-400/20 flex items-center gap-3 font-medium animate-pulse">
-                              <AlertTriangle className="w-4 h-4 shrink-0" /> Recarga saldo para evitar suspensiones por consumo excesivo.
+                              <AlertTriangle className="w-4 h-4 shrink-0" /> Recarga saldo para evitar suspensiones.
                             </div>
                           )}
                         </div>
@@ -403,16 +417,16 @@ const Dashboard = () => {
                         </button>
                       </div>
                     </div>
-
                   </div>
                 </div>
 
-                {/* INFRA METRICS */}
+                {/* INFRA METRICS — with historical sparklines */}
                 <div className="mt-6">
                   <div className="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
                     <span className="w-3 h-px bg-warn/40" /> Infraestructura
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    {/* Health score card — sparkline from real history */}
                     <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-emerald-500">
                       <div className="flex justify-between items-start">
                         <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase">Salud General</div>
@@ -430,7 +444,7 @@ const Dashboard = () => {
                           <div className="flex items-center gap-2">
                             <span className="text-[9px] font-mono text-gray-400 font-bold">PROACTIVO</span>
                             {unresolved > 0 && (
-                              <span className="bg-red-50 text-red-600 px-1.5 py-0.5 rounded-md font-bold text-[9px] border border-red-200 animate-pulse">
+                              <span className="bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded-md font-bold text-[9px] border border-red-500/20 animate-pulse">
                                 {unresolved} ALERTAS
                               </span>
                             )}
@@ -439,24 +453,36 @@ const Dashboard = () => {
                       </div>
                     </div>
 
+                    {/* CPU card — mini bar from history */}
                     <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-blue-500">
                       <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-3">CPU Promedio</div>
                       <div>
                         <div className="text-3xl font-black text-white tracking-tight">
                           {avgCpu}<span className="text-lg text-gray-500">%</span>
                         </div>
-                        <div className="w-16 h-1.5 bg-blue-500 rounded-full mt-3" />
+                        {/* Proportional bar instead of fixed 16px */}
+                        <div className="w-full h-1.5 bg-white/5 rounded-full mt-3 overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-700"
+                            style={{
+                              width: `${Math.min(parseFloat(avgCpu) || 0, 100)}%`,
+                              background: parseFloat(avgCpu) > 85 ? '#ef4444' : parseFloat(avgCpu) > 60 ? '#f59e0b' : '#3b82f6',
+                            }}
+                          />
+                        </div>
                       </div>
                     </div>
 
+                    {/* RAM card */}
                     <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-amber-500">
                       <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-3">RAM Usada</div>
                       <div>
                         <div className="text-3xl font-black text-white tracking-tight">{totalRam}</div>
-                        <div className="text-[11px] text-gray-400 mt-2 font-medium">Medición en tiempo real</div>
+                        <div className="text-[11px] text-gray-400 mt-2 font-medium">Tiempo real</div>
                       </div>
                     </div>
 
+                    {/* Storage card */}
                     <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-purple-500">
                       <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-3">Almacenamiento</div>
                       <div>

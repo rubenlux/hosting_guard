@@ -91,7 +91,7 @@ export function evaluateHosting(hosting, healthData, alerts) {
   // A stale unresolved alert (e.g. from a prior incident) must NOT override
   // a live healthy score — that creates the "SALUD 100% + CRÍTICO" contradiction.
   const hasCriticalAlert = hd.score < 90 && alerts.some(
-    a => a.site_id === hosting.hosting_id && a.level === 'critical' && !a.resolved_at,
+    a => a.site_id === hosting.hosting_id && a.level === 'critical' && !a.resolved && !a.resolved_at,
   );
   if (hasCriticalAlert) {
     return {
