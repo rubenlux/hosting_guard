@@ -26,7 +26,7 @@ class SupportSessionRepository:
             now = datetime.now(timezone.utc)
             cursor.execute(
                 """INSERT INTO support_sessions
-                   (session_id, admin_id, target_user_id, created_at_ts, expires_at_ts, 
+                   (session_id, admin_id, target_user_id, created_at, expires_at, 
                     ip_address, issue_description, origin, session_type, initiated_by, staff_agent)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (session_id, admin_id, target_user_id, now, expires_at, ip_address, 
@@ -53,7 +53,7 @@ class SupportSessionRepository:
             cursor = conn.cursor()
             now = datetime.now(timezone.utc)
             cursor.execute(
-                "UPDATE support_sessions SET ended_at_ts = %s, result = %s, resolution_notes = %s, action_taken = %s WHERE session_id = %s",
+                "UPDATE support_sessions SET ended_at = %s, result = %s, resolution_notes = %s, action_taken = %s WHERE session_id = %s",
                 (now, result, resolution_notes, action_taken, session_id),
             )
             conn.commit()
@@ -71,7 +71,7 @@ class SupportSessionRepository:
             cursor = conn.cursor()
             now = datetime.now(timezone.utc)
             cursor.execute(
-                "UPDATE support_sessions SET revoked_at_ts = %s WHERE session_id = %s AND admin_id = %s AND revoked_at_ts IS NULL",
+                "UPDATE support_sessions SET revoked_at = %s WHERE session_id = %s AND admin_id = %s AND revoked_at IS NULL",
                 (now, session_id, admin_id),
             )
             conn.commit()
@@ -107,11 +107,11 @@ class SupportSessionRepository:
             cursor.execute(
                 """SELECT 
                       s.session_id, s.admin_id, s.target_user_id, s.ip_address, s.issue_description,
-                      s.origin, s.session_type, s.initiated_by, s.ended_at_ts AS ended_at, s.result,
+                      s.origin, s.session_type, s.initiated_by, s.ended_at AS ended_at, s.result,
                       s.resolution_notes, s.action_taken, s.staff_agent,
-                      s.created_at_ts AS created_at,
-                      s.expires_at_ts AS expires_at,
-                      s.revoked_at_ts AS revoked_at,
+                      s.created_at AS created_at,
+                      s.expires_at AS expires_at,
+                      s.revoked_at AS revoked_at,
                       u_target.email AS target_email,
                       COALESCE(sa.full_name, u_admin.email, 'Sistema') AS initiator_name,
                       COALESCE(sa.email, u_admin.email)                AS initiator_email,
@@ -120,7 +120,7 @@ class SupportSessionRepository:
                    LEFT JOIN users u_target ON s.target_user_id = u_target.user_id
                    LEFT JOIN users u_admin  ON s.admin_id = u_admin.user_id AND s.initiated_by = 'admin'
                    LEFT JOIN staff_accounts sa ON s.admin_id = sa.staff_id AND s.initiated_by = 'staff'
-                   ORDER BY s.created_at_ts DESC LIMIT %s""",
+                   ORDER BY s.created_at DESC LIMIT %s""",
                 (limit,),
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -137,10 +137,10 @@ class SupportSessionRepository:
                       s.session_id, s.admin_id, s.target_user_id, s.ip_address, s.issue_description,
                       s.origin, s.session_type, s.initiated_by, s.result, s.resolution_notes,
                       s.action_taken, s.staff_agent,
-                      s.created_at_ts AS created_at,
-                      s.expires_at_ts AS expires_at,
-                      s.revoked_at_ts AS revoked_at,
-                      s.ended_at_ts AS ended_at,
+                      s.created_at AS created_at,
+                      s.expires_at AS expires_at,
+                      s.revoked_at AS revoked_at,
+                      s.ended_at AS ended_at,
                       u_target.email AS target_email, u_target.plan AS target_plan,
                       COALESCE(sa.full_name, u_admin.email, 'Sistema') AS initiator_name,
                       COALESCE(sa.email, u_admin.email)                AS initiator_email,
@@ -163,12 +163,12 @@ class SupportSessionRepository:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                """SELECT l.*, l.created_at_ts AS created_at,
+                """SELECT l.*,
                       sa.full_name AS staff_name, sa.email AS staff_email 
                    FROM staff_activity_log l 
                    LEFT JOIN staff_accounts sa ON l.staff_id = sa.staff_id 
                    WHERE l.session_id = %s 
-                   ORDER BY l.created_at_ts ASC""",
+                   ORDER BY l.created_at ASC""",
                 (session_id,),
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -183,12 +183,12 @@ class SupportSessionRepository:
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT s.session_id, s.admin_id, s.target_user_id, s.issue_description, s.result,
-                          s.created_at_ts AS created_at,
+                          s.created_at AS created_at,
                           u_target.email AS target_email FROM support_sessions s 
                    LEFT JOIN users u_target ON s.target_user_id = u_target.user_id 
                    WHERE s.admin_id = %s AND s.initiated_by = 'staff' 
-                   AND s.created_at_ts >= %s 
-                   ORDER BY s.created_at_ts DESC LIMIT %s""",
+                   AND s.created_at >= %s 
+                   ORDER BY s.created_at DESC LIMIT %s""",
                 (staff_id, since, limit),
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -202,16 +202,16 @@ class SupportSessionRepository:
             cursor = conn.cursor()
             cursor.execute(
                 """SELECT s.session_id, s.issue_description, s.result,
-                          s.created_at_ts AS created_at,
-                          s.expires_at_ts AS expires_at,
-                          s.revoked_at_ts AS revoked_at,
-                          s.ended_at_ts AS ended_at,
+                          s.created_at AS created_at,
+                          s.expires_at AS expires_at,
+                          s.revoked_at AS revoked_at,
+                          s.ended_at AS ended_at,
                           COALESCE(sa.full_name, u_admin.email, 'Sistema') AS admin_email
                    FROM support_sessions s
                    LEFT JOIN users u_admin ON s.admin_id = u_admin.user_id AND s.initiated_by = 'admin'
                    LEFT JOIN staff_accounts sa ON s.admin_id = sa.staff_id AND s.initiated_by = 'staff'
                    WHERE s.target_user_id = %s 
-                   ORDER BY s.created_at_ts DESC LIMIT %s""",
+                   ORDER BY s.created_at DESC LIMIT %s""",
                 (user_id, limit),
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -231,8 +231,8 @@ class SupportSessionRepository:
                           COALESCE(SUM(CASE WHEN result = 'resolved' THEN 1 ELSE 0 END), 0) AS resolved,
                           COALESCE(SUM(CASE WHEN result = 'unresolved' THEN 1 ELSE 0 END), 0) AS unresolved,
                           COALESCE(SUM(CASE WHEN result = 'escalated' THEN 1 ELSE 0 END), 0) AS escalated,
-                          COALESCE(SUM(CASE WHEN ended_at_ts IS NULL AND expires_at_ts > %s THEN 1 ELSE 0 END), 0) AS active
-                   FROM support_sessions WHERE created_at_ts >= %s""",
+                          COALESCE(SUM(CASE WHEN ended_at IS NULL AND expires_at > %s THEN 1 ELSE 0 END), 0) AS active
+                   FROM support_sessions WHERE created_at >= %s""",
                 (now, since),
             )
             row = cursor.fetchone()
