@@ -84,7 +84,7 @@ const HostingCreationForm = ({ onSuccess }) => {
   };
 
   return (
-    <div className="glass-card p-6 md:p-10 rounded-3xl border border-white/5 relative overflow-hidden bg-surface shadow-2xl">
+    <div id="nuevo-proyecto" className="glass-card p-6 md:p-10 rounded-3xl border border-white/5 relative overflow-hidden bg-surface shadow-2xl">
       <div className="absolute top-0 right-0 p-8 opacity-5">
         <Terminal className="w-32 h-32 text-primary" />
       </div>

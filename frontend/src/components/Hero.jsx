@@ -43,14 +43,17 @@ const Hero = () => {
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <a
-                href="#create"
+                href="#nuevo-proyecto"
                 className="bg-primary text-background px-8 py-4 rounded-xl font-bold text-lg hover:scale-105 transition-transform shadow-2xl glow-primary flex items-center gap-2 w-full sm:w-auto justify-center"
               >
                 Crear mi web ahora <ArrowRight className="w-5 h-5" />
               </a>
-              <button className="bg-surface/50 backdrop-blur-sm text-white border border-white/10 px-8 py-4 rounded-xl font-bold text-lg hover:border-white/20 transition-colors w-full sm:w-auto">
+              <a
+                href="#funcionamiento"
+                className="bg-surface/50 backdrop-blur-sm text-white border border-white/10 px-8 py-4 rounded-xl font-bold text-lg hover:border-white/20 transition-colors w-full sm:w-auto text-center"
+              >
                 Ver cómo funciona
-              </button>
+              </a>
             </div>
           </motion.div>
   

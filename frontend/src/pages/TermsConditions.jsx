@@ -164,14 +164,12 @@ export default function TermsConditions() {
           </Section>
 
           <Section id="soporte" title="7. Soporte técnico">
-            <p>El soporte técnico se provee según el plan:</p>
+            <p>Todos los planes incluyen acceso a soporte técnico las <strong className="text-white">24 horas del día, los 7 días de la semana</strong>, mediante:</p>
             <ul className="space-y-1.5 pl-1 mt-2">
-              <Li><strong className="text-white">Free:</strong> Soporte vía email con respuesta en 72 horas hábiles.</Li>
-              <Li><strong className="text-white">Personal:</strong> Soporte vía email con respuesta en 48 horas hábiles.</Li>
-              <Li><strong className="text-white">Negocio:</strong> Soporte prioritario con respuesta en 24 horas hábiles.</Li>
-              <Li><strong className="text-white">Agencia:</strong> Soporte dedicado con respuesta en 8 horas hábiles.</Li>
+              <Li><strong className="text-white">Motor de diagnóstico con IA:</strong> análisis automático e inteligente del estado de tu hosting en tiempo real, disponible 24/7 desde el panel de control.</Li>
+              <Li><strong className="text-white">Soporte remoto 24/7:</strong> nuestro equipo puede acceder asistidamente a tu cuenta para resolver incidentes en cualquier momento del día.</Li>
             </ul>
-            <p className="mt-3">El soporte remoto (acceso asistido a tu cuenta) solo se realiza con tu consentimiento explícito y queda registrado en el log de auditoría de la plataforma.</p>
+            <p className="mt-3">El soporte remoto (acceso asistido a tu cuenta) se realiza <strong className="text-white">únicamente con tu consentimiento explícito</strong>, queda completamente registrado en el log de auditoría de la plataforma, y podés revocarlo en cualquier momento.</p>
           </Section>
 
           <Section id="propiedad" title="8. Propiedad intelectual">
