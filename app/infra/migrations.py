@@ -260,6 +260,10 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_hosting ON ai_diagnosis (hosting_id, created_at DESC)",
     # AI diagnosis cache lookup by fingerprint
     "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_fp ON ai_diagnosis (hosting_id, fingerprint)",
+    # Hostings lookup by owner — powers every user-facing hosting list query
+    "CREATE INDEX IF NOT EXISTS idx_hostings_user ON hostings(user_id)",
+    # Orchestrator event history per user — powers dashboard event feed + pagination
+    "CREATE INDEX IF NOT EXISTS idx_orchestrator_events_user_created ON orchestrator_events(user_id, created_at)",
     # Plan management: explicit expiry override for free-tier users
     # NULL = use default 14-day rule; far-future date = free forever; past date = force-expire
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expires_at TEXT",
@@ -279,6 +283,14 @@ _INDEXES = [
         used_at    TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users (user_id)
+    )""",
+    # Topup idempotency — prevents double-charge on network retry
+    # Client sends a stable UUID per payment attempt; server rejects duplicates
+    """CREATE TABLE IF NOT EXISTS topup_idempotency (
+        idempotency_key TEXT PRIMARY KEY,
+        user_id         INTEGER NOT NULL,
+        amount          REAL NOT NULL,
+        created_at      TEXT NOT NULL
     )""",
 ]
 

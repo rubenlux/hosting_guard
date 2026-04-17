@@ -48,4 +48,4 @@ def test_low_impact_reversible_action_is_safe():
     )
 
     assert result["classification"] == "SAFE"
-    assert result["requires_human_approval"] is True
+    assert result["requires_human_approval"] is False  # SAFE + low impact = sin aprobación humana

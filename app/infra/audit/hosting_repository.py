@@ -36,6 +36,25 @@ class HostingRepository:
         finally:
             release_connection(conn)
 
+    def count_active_hostings(self, user_id: int) -> int:
+        """Count non-deleted hostings for a user. Used to enforce plan container limits.
+
+        'deleted' status means the container was explicitly removed by the user.
+        'zombie' containers still occupy a slot — the user must investigate them.
+        Stopped/suspended containers also count: they still hold a plan slot.
+        """
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) AS cnt FROM hostings WHERE user_id = %s AND status != 'deleted'",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            return int(row["cnt"]) if row else 0
+        finally:
+            release_connection(conn)
+
     def get_hosting(self, hosting_id: int, user_id: int) -> Optional[Dict]:
         conn = get_connection()
         try:
@@ -283,5 +302,30 @@ class HostingRepository:
                 h["expires_in_days"] = h.pop("days_remaining", None)
                 result.append(h)
             return result
+        finally:
+            release_connection(conn)
+
+    def get_all_running(self) -> List[Dict]:
+        """Returns all hostings whose status is 'running' — used by the zombie reconciler."""
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT hosting_id, container_name FROM hostings WHERE status = 'running'"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            release_connection(conn)
+
+    def update_status(self, hosting_id: int, status: str) -> None:
+        """Updates the status of a single hosting."""
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE hostings SET status = %s WHERE hosting_id = %s",
+                (status, hosting_id),
+            )
+            conn.commit()
         finally:
             release_connection(conn)

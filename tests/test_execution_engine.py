@@ -1,3 +1,4 @@
+from unittest.mock import MagicMock, patch
 from app.core.execution.engine import ExecutionEngine
 from app.core.execution.registry import EXECUTOR_REGISTRY
 
@@ -11,9 +12,12 @@ def test_execution_dry_run_fail():
 
 
 def test_execution_restart_service_success():
-    engine = ExecutionEngine()
-    action = {"action_type": "restart_service", "service_name": "nginx"}
-    result = engine.run(action)
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    with patch("app.core.execution.executors.subprocess.run", return_value=mock_result):
+        engine = ExecutionEngine()
+        action = {"action_type": "restart_service", "service_name": "nginx"}
+        result = engine.run(action)
     assert result == "EXECUTED"
 
 

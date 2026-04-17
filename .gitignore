@@ -17,6 +17,9 @@ data/
 *.key
 *.pem
 
+# PgBouncer credentials — never commit real userlist
+pgbouncer/userlist.txt
+
 # Databases
 *.sqlite
 *.db
@@ -53,3 +56,4 @@ auditoria/
 hosting_guard_complete.pdf
 generate_pdf.py
 frontend/dist/
+.claude/settings.local.json

@@ -5,7 +5,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
-import redis as redis_lib
 from fastapi import Depends, Header, HTTPException, Request, status
 from jose import jwt, JWTError
 
@@ -19,26 +18,21 @@ if not SECRET:
 
 ALGO = "HS256"
 
-# --- Revocation store respaldado por Redis ---
-# Fallback a store in-memory si REDIS_URL no está configurado (entornos de desarrollo).
-_REDIS_URL = os.getenv("REDIS_URL", "")  # expected format: redis://:PASSWORD@redis:6379/0
-_redis: Optional[redis_lib.Redis] = None
+# --- Revocation store — shared Redis client ---
+from app.infra.redis_client import get_redis as _get_redis
+_redis = _get_redis()
 
-if _REDIS_URL:
-    try:
-        _redis = redis_lib.from_url(_REDIS_URL, decode_responses=True, socket_connect_timeout=3)
-        _redis.ping()
-        logger.info("Revocation store: Redis conectado en %s", _REDIS_URL)
-    except Exception as exc:
-        logger.error("No se pudo conectar a Redis (%s): %s. Fallback a in-memory.", _REDIS_URL, exc)
-        _revoked_tokens = {}
-        _redis = None
-else:
-    logger.warning(
-        "REDIS_URL no configurado. Revocación de tokens usando store in-memory. "
-        "NO apto para multi-instancia ni producción."
-    )
-    _revoked_tokens: dict[str, float] = {}
+# In-memory fallback for dev environments without Redis
+_revoked_tokens: dict[str, float] = {}
+if _redis is None:
+    import os as _os
+    if _os.getenv("REDIS_URL"):
+        pass  # already logged by redis_client
+    else:
+        logger.warning(
+            "REDIS_URL no configurado. Revocación de tokens usando store in-memory. "
+            "NO apto para multi-instancia ni producción."
+        )
 
 
 def revoke_token(jti: str, expires_at: datetime) -> None:

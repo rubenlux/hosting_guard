@@ -1,6 +1,16 @@
 # tests/test_ai_orchestrator.py
+import asyncio
+import pytest
 from app.api.tenancy import Tenant
 from app.core.ai_orchestrator import AIOrchestrator
+
+
+@pytest.fixture(autouse=True)
+def clear_ai_cache():
+    from app.core import ai_cache
+    ai_cache._cache.clear()
+    yield
+    ai_cache._cache.clear()
 
 
 class FakeKnowledgeProvider:
@@ -9,7 +19,7 @@ class FakeKnowledgeProvider:
 
 
 class FakeLLM:
-    def generate(self, decision, context):
+    def generate(self, decision, context, debug_context=None):
         return "Explicación generada a partir del contexto."
 
 
@@ -22,10 +32,11 @@ def test_ai_orchestrator_without_llm_returns_base_advisory():
 
     tenant = Tenant(tenant_id="t1", name="Client 1")
 
-    result = orchestrator.enrich(decision, tenant=tenant)
+    result = asyncio.run(orchestrator.enrich(decision, tenant=tenant))
 
+    # No explicit LLM — falls back to RuleBasedFakeLLM, so advisory is still enriched
     assert "summary" in result
-    assert "llm_explanation" not in result
+    assert "severity" in result
 
 
 def test_ai_orchestrator_with_llm_enriches_advisory():
@@ -40,7 +51,7 @@ def test_ai_orchestrator_with_llm_enriches_advisory():
 
     tenant = Tenant(tenant_id="t1", name="Client 1")
 
-    result = orchestrator.enrich(decision, tenant=tenant)
+    result = asyncio.run(orchestrator.enrich(decision, tenant=tenant))
 
     assert "llm_explanation" in result
     assert "context_used" in result

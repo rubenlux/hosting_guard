@@ -20,32 +20,37 @@ from email.mime.text import MIMEText
 
 logger = logging.getLogger(__name__)
 
-_SMTP_HOST  = os.getenv("SMTP_HOST", "")
-_SMTP_PORT  = int(os.getenv("SMTP_PORT", "587"))
-_SMTP_USER  = os.getenv("SMTP_USER", "")
-_SMTP_PASS  = os.getenv("SMTP_PASS", "")
-_FROM_EMAIL = os.getenv("FROM_EMAIL", "noreply@hostingguard.lat")
-_APP_URL    = os.getenv("APP_URL", "https://hostingguard.lat").rstrip("/")
+
+def _cfg():
+    return {
+        "host":       os.getenv("SMTP_HOST", ""),
+        "port":       int(os.getenv("SMTP_PORT", "587")),
+        "user":       os.getenv("SMTP_USER", ""),
+        "password":   os.getenv("SMTP_PASS", ""),
+        "from_email": os.getenv("FROM_EMAIL", "noreply@hostingguard.lat"),
+        "app_url":    os.getenv("APP_URL", "https://hostingguard.lat").rstrip("/"),
+    }
 
 
 def _send(to_email: str, subject: str, html: str, text: str) -> None:
-    if not _SMTP_HOST:
+    c = _cfg()
+    if not c["host"]:
         logger.warning("[mailer] SMTP_HOST not configured — skipping real send.\nTo: %s\nSubject: %s\nHTML preview: %s…", to_email, subject, html[:200])
         return
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"]    = f"HostingGuard <{_FROM_EMAIL}>"
+    msg["From"]    = f"HostingGuard <{c['from_email']}>"
     msg["To"]      = to_email
     msg.attach(MIMEText(text, "plain", "utf-8"))
     msg.attach(MIMEText(html, "html",  "utf-8"))
 
     try:
-        with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=10) as smtp:
+        with smtplib.SMTP(c["host"], c["port"], timeout=10) as smtp:
             smtp.ehlo()
             smtp.starttls()
-            smtp.login(_SMTP_USER, _SMTP_PASS)
-            smtp.sendmail(_FROM_EMAIL, [to_email], msg.as_bytes())
+            smtp.login(c["user"], c["password"])
+            smtp.sendmail(c["from_email"], [to_email], msg.as_bytes())
         logger.info("[mailer] Sent '%s' to %s", subject, to_email)
     except Exception as exc:
         logger.error("[mailer] Failed to send '%s' to %s: %s", subject, to_email, exc)
@@ -54,7 +59,8 @@ def _send(to_email: str, subject: str, html: str, text: str) -> None:
 
 # ── HTML shell ────────────────────────────────────────────────────────────────
 
-def _html_wrap(title: str, body: str) -> str:
+def _html_wrap(title: str, body: str, app_url: str = "") -> str:
+    app_url = app_url or _cfg()["app_url"]
     return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -83,7 +89,7 @@ def _html_wrap(title: str, body: str) -> str:
           <tr>
             <td style="padding:20px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;">
               <p style="margin:0;font-size:11px;color:#555;">
-                © 2026 HostingGuard · <a href="{_APP_URL}/privacy" style="color:#555;">Privacidad</a> · <a href="{_APP_URL}/terminos" style="color:#555;">Términos</a>
+                © 2026 HostingGuard · <a href="{app_url}/privacy" style="color:#555;">Privacidad</a> · <a href="{app_url}/terminos" style="color:#555;">Términos</a>
               </p>
               <p style="margin:6px 0 0;font-size:11px;color:#444;">
                 Si no realizaste esta acción, podés ignorar este correo.
@@ -109,7 +115,8 @@ def _btn(href: str, label: str) -> str:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def send_verification_email(to_email: str, first_name: str, token: str) -> None:
-    link = f"{_APP_URL}/verify-email?token={token}"
+    app_url = _cfg()["app_url"]
+    link = f"{app_url}/verify-email?token={token}"
     subject = "Verificá tu email — HostingGuard"
 
     body_html = f"""
@@ -132,11 +139,12 @@ def send_verification_email(to_email: str, first_name: str, token: str) -> None:
         f"Verificá tu email haciendo clic en el siguiente enlace (válido 24 h):\n{link}\n\n"
         f"Si no creaste una cuenta, ignorá este correo.\n\nHostingGuard"
     )
-    _send(to_email, subject, _html_wrap(subject, body_html), body_text)
+    _send(to_email, subject, _html_wrap(subject, body_html, app_url), body_text)
 
 
 def send_password_reset_email(to_email: str, first_name: str, token: str) -> None:
-    link = f"{_APP_URL}/reset-password?token={token}"
+    app_url = _cfg()["app_url"]
+    link = f"{app_url}/reset-password?token={token}"
     subject = "Restablecer contraseña — HostingGuard"
 
     body_html = f"""
@@ -159,4 +167,4 @@ def send_password_reset_email(to_email: str, first_name: str, token: str) -> Non
         f"Para restablecer tu contraseña, ingresá al siguiente enlace (válido 1 h):\n{link}\n\n"
         f"Si no solicitaste esto, ignorá este correo.\n\nHostingGuard"
     )
-    _send(to_email, subject, _html_wrap(subject, body_html), body_text)
+    _send(to_email, subject, _html_wrap(subject, body_html, app_url), body_text)

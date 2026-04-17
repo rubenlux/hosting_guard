@@ -1,0 +1,113 @@
+groups:
+  - name: hosting_guard_critical
+    rules:
+
+      # Site health score dropped to 0 — site is completely down
+      - alert: SiteHealthZero
+        expr: hosting_guard_site_health_score == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Site health score is 0 for {{ $labels.hosting_id }}"
+          description: >
+            Hosting {{ $labels.hosting_id }} ({{ $labels.container_name }}) has had a
+            health score of 0 for more than 2 minutes. The site may be completely unreachable.
+
+      # Container entered 'exited' state unexpectedly
+      - alert: ContainerExited
+        expr: hosting_guard_container_status{status="exited"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container exited unexpectedly: {{ $labels.container_name }}"
+          description: >
+            Container {{ $labels.container_name }} for hosting {{ $labels.hosting_id }}
+            has been in 'exited' state for more than 1 minute. Manual intervention may be required.
+
+      # Zombie containers detected by the reconciler
+      - alert: ZombieContainerDetected
+        expr: hosting_guard_container_status{status="zombie"} == 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Zombie container: {{ $labels.container_name }}"
+          description: >
+            Container {{ $labels.container_name }} is marked 'running' in the database but
+            was not found in `docker ps`. The reconciler has flagged it as a zombie.
+
+  - name: hosting_guard_database
+    rules:
+
+      # High DB error rate — pool exhaustion or connectivity issues
+      - alert: DBHighErrorRate
+        expr: >
+          rate(hosting_guard_db_errors_total[5m]) > 0.1
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database error rate is high"
+          description: >
+            More than 0.1 DB errors per second over the last 5 minutes.
+            Check connection pool utilization and PostgreSQL logs.
+
+      # Pool near exhaustion — maxconn=60, warn at 80%
+      - alert: DBPoolNearExhaustion
+        expr: >
+          hosting_guard_db_pool_connections_active / 60 > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DB connection pool is at {{ $value | humanizePercentage }} capacity"
+          description: >
+            The PostgreSQL connection pool is above 80% utilization. Under sustained load
+            this will cause request queuing and latency spikes. Consider increasing maxconn
+            or reducing query duration.
+
+  - name: hosting_guard_infrastructure
+    rules:
+
+      # Disk usage above 85% on any monitored volume
+      - alert: DiskSpaceHigh
+        expr: >
+          (node_filesystem_avail_bytes{fstype!="tmpfs"} /
+           node_filesystem_size_bytes{fstype!="tmpfs"}) < 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk usage above 85% on {{ $labels.mountpoint }}"
+          description: >
+            Available space on {{ $labels.mountpoint }} is below 15%.
+            Remove old Docker images, rotate logs, or expand the volume.
+
+      # API latency p95 above 2 seconds — degraded user experience
+      - alert: APILatencyHigh
+        expr: >
+          histogram_quantile(0.95,
+            rate(hosting_guard_decision_latency_seconds_bucket[5m])
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p95 latency is {{ $value | humanizeDuration }}"
+          description: >
+            The 95th percentile request latency has been above 2 seconds for 5 minutes.
+            Check slow queries, container health, and backend resource utilization.
+
+      # App is completely unreachable — no scrapes in 2 minutes
+      - alert: AppDown
+        expr: up{job="hosting_guard"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HostingGuard API is down"
+          description: >
+            Prometheus cannot reach the /metrics endpoint on app:8000.
+            The application may have crashed or the container exited.

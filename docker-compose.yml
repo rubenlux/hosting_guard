@@ -77,7 +77,7 @@ services:
     env_file: .env.production
     depends_on:
       - docker-socket-proxy
-      - postgres
+      - pgbouncer
       - redis
 
     environment:
@@ -117,6 +117,40 @@ services:
       - "traefik.http.routers.frontend.entrypoints=websecure"
       - "traefik.http.routers.frontend.tls.certresolver=le"
       - "traefik.http.services.frontend.loadbalancer.server.port=80"
+
+  # ---------------------------------------------------------------------------
+  # pgbouncer — connection pooler between the app and PostgreSQL.
+  #
+  # Why: psycopg2's ThreadedConnectionPool holds persistent connections.
+  # With maxconn=60 and multiple workers, PostgreSQL can reach its
+  # connection limit (default 100). PgBouncer multiplexes app connections
+  # onto a smaller set of real PG connections (pool_size=20 is enough for
+  # most workloads) and handles connection storm during restart.
+  #
+  # Mode: transaction — safe for FastAPI (no SET LOCAL, no advisory locks,
+  # no LISTEN/NOTIFY). Use session mode only if you add those features.
+  #
+  # The app's DATABASE_URL should point here:
+  #   postgresql://user:pass@pgbouncer:5432/dbname
+  # ---------------------------------------------------------------------------
+  pgbouncer:
+    image: edoburu/pgbouncer:1.22.0
+    container_name: pgbouncer
+    restart: always
+    env_file: .env.production   # reads PGBOUNCER_* vars (see pgbouncer/pgbouncer.ini)
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    networks:
+      - hosting_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ---------------------------------------------------------------------------
   # postgres — base de datos relacional

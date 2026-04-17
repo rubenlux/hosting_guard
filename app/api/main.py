@@ -12,11 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+import time as _time_module
 from app.api.config import APP_ENV, ENABLE_ACTION_EXECUTION, ENABLE_AI_ADVISORY
 from app.api.rate_limit import limiter
 from app.api.schemas import DecisionRequest, DecisionResponse, HumanActionRequest
 from app.api.security import create_token, create_refresh_token, verify_token, revoke_token, require_role, require_not_support, SECRET, ALGO, _is_revoked
 from app.api.security_headers import SecurityHeadersMiddleware
+from app.api.correlation import CorrelationMiddleware
 from app.api.tenancy import Tenant
 from app.api.tenant_resolver import resolve_tenant
 from app.infra.audit.user_repository import UserRepository
@@ -40,12 +42,13 @@ from app.observability.metrics import (
     HUMAN_ACTIONS_TOTAL,
 )
 
+from app.infra.logging_config import setup_logging
+setup_logging()
 logger = logging.getLogger("hosting_guard_audit")
-logging.basicConfig(level=logging.INFO)
 
 
 from app.infra.db import init_db_pool
-init_db_pool(minconn=2, maxconn=30)
+init_db_pool(minconn=2, maxconn=60)
 
 app = FastAPI(
     title="Hosting Guard API",
@@ -458,6 +461,7 @@ from pydantic import field_validator
 
 class TopupRequest(BaseModel):
     amount: float
+    idempotency_key: Optional[str] = None
 
     @field_validator("amount")
     @classmethod
@@ -468,13 +472,47 @@ class TopupRequest(BaseModel):
 
 @app.post("/user/topup")
 def topup(data: TopupRequest, user=Depends(require_not_support)):
+    from app.infra.db import get_connection, release_connection
+    from datetime import datetime, timezone
+
     try:
+        # Idempotency check — same key = same operation already processed
+        if data.idempotency_key:
+            conn = get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT amount FROM topup_idempotency WHERE idempotency_key = %s AND user_id = %s",
+                    (data.idempotency_key, user["user_id"]),
+                )
+                existing = cur.fetchone()
+            finally:
+                release_connection(conn)
+
+            if existing:
+                user_db = user_repo.get_user_by_id(user["user_id"])
+                return {"balance": user_db["balance"], "idempotent": True}
+
         user_repo.update_balance(user["user_id"], data.amount)
+
+        # Record idempotency key after a successful credit
+        if data.idempotency_key:
+            conn = get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "INSERT INTO topup_idempotency (idempotency_key, user_id, amount, created_at) "
+                    "VALUES (%s, %s, %s, %s) ON CONFLICT (idempotency_key) DO NOTHING",
+                    (data.idempotency_key, user["user_id"], data.amount,
+                     datetime.now(timezone.utc).isoformat()),
+                )
+                conn.commit()
+            finally:
+                release_connection(conn)
+
         user_db = user_repo.get_user_by_id(user["user_id"])
-        
         if not user_db:
             raise HTTPException(status_code=404, detail="User not found")
-            
         return {"balance": user_db["balance"]}
     except HTTPException:
         raise
@@ -490,8 +528,39 @@ def get_advisory_mock(user=Depends(verify_token)):
         {"message": "Intento de intrusión bloqueado por IA Guard", "level": "security", "time": "Hace 5h"}
     ]
 
-# Middleware de seguridad
+# ---------------------------------------------------------------------------
+# HTTP metrics middleware — records latency + status for every request
+# ---------------------------------------------------------------------------
+from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
+from app.observability.metrics import HTTP_REQUEST_LATENCY, HTTP_REQUESTS_TOTAL, HTTP_REQUESTS_IN_FLIGHT
+
+class _MetricsMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        start = _time_module.perf_counter()
+        response = await call_next(request)
+        elapsed = _time_module.perf_counter() - start
+
+        # Normalize path: replace path params with placeholders to avoid cardinality explosion
+        # e.g. /hostings/42/restart → /hostings/{id}/restart
+        path = request.url.path
+        for seg in path.split("/"):
+            if seg.isdigit():
+                path = path.replace(seg, "{id}", 1)
+
+        method = request.method
+        status_code = str(response.status_code)
+
+        HTTP_REQUEST_LATENCY.labels(method=method, path=path, status_code=status_code).observe(elapsed)
+        HTTP_REQUESTS_TOTAL.labels(method=method, path=path, status_code=status_code).inc()
+        if response.status_code >= 400:
+            HTTP_REQUESTS_IN_FLIGHT.labels(method=method, path=path, status_code=status_code).inc()
+
+        return response
+
+# Middleware de seguridad y trazabilidad
+app.add_middleware(_MetricsMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(CorrelationMiddleware)
 
 # CORS - Producción
 origins = [
@@ -666,16 +735,19 @@ async def make_decision(
     except Exception as e:
         logger.error(f"Error persisting audit event: {e}")
 
-    # Auditoría de seguridad por tenant (log)
+    # Auditoría de seguridad por tenant (log estructurado)
+    from app.api.correlation import request_id_var
     logger.info(
         json.dumps(
             {
                 "event": "api_decision_processed",
+                "request_id": request_id_var.get(),
                 "tenant_id": tenant.tenant_id,
                 "ip": request.client.host if request.client else "unknown",
                 "decision_id": decision["decision_id"],
                 "status": decision["overall_status"],
                 "human_required": advisory["requires_human_attention"],
+                "latency_ms": round((time.time() - start_time) * 1000),
             }
         )
     )

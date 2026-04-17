@@ -12,8 +12,10 @@ from psycopg2.pool import ThreadedConnectionPool
 
 logger = logging.getLogger(__name__)
 
+_TESTING = os.getenv("TESTING") == "1"
+
 DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
+if not DATABASE_URL and not _TESTING:
     raise RuntimeError("Falta la variable de entorno DATABASE_URL (obligatoria para PostgreSQL).")
 
 # Global Pool Singleton
@@ -23,6 +25,9 @@ _pool_lock = threading.Lock()
 def init_db_pool(minconn: int = 2, maxconn: int = 20):
     """Inicializa el pool de conexiones global (llamado en main.py al startup)."""
     global _pool
+    if _TESTING:
+        logger.info("[db] TESTING mode — skipping pool init")
+        return
     with _pool_lock:
         if _pool is None:
             try:
@@ -111,20 +116,43 @@ class _ConnectionWrapper:
 # ---------------------------------------------------------------------------
 
 def get_connection() -> _ConnectionWrapper:
-    """Obtiene una conexión del pool global."""
+    """Obtiene una conexión del pool global. Reintenta hasta 3 veces si el pool está agotado."""
     global _pool
+    if _TESTING:
+        raise RuntimeError(
+            "get_connection() called in TESTING mode — mock the repository instead of using the real DB."
+        )
     if _pool is None:
-        # Fallback de seguridad (lazy init si no se llamó en main.py)
         init_db_pool()
-    
-    try:
-        conn = _pool.getconn()
-        # Aseguramos autocommit False para control de transacciones en repos
-        conn.autocommit = False
-        return _ConnectionWrapper(conn)
-    except Exception:
-        logger.exception("No se pudo obtener una conexión del pool")
-        raise
+
+    import time as _time
+    last_exc: Exception = RuntimeError("pool unavailable")
+    pool = _pool  # local ref satisfies type checker (not None after init_db_pool)
+    assert pool is not None, "pool should be initialized"
+
+    for attempt in range(3):
+        try:
+            conn = pool.getconn()
+            conn.autocommit = False
+            # Descartar conexiones stale (cerradas por el servidor tras idle timeout)
+            if conn.closed:
+                pool.putconn(conn, close=True)
+                raise psycopg2.OperationalError("stale connection discarded")
+            return _ConnectionWrapper(conn)
+        except psycopg2.OperationalError as exc:
+            # Solo reintentamos errores de CONEXIÓN (pool agotado, idle timeout, network).
+            # Nunca reintentamos IntegrityError, ProgrammingError, etc. — esos son errores
+            # de datos que una segunda ejecución repetiría con el mismo resultado.
+            last_exc = exc
+            if attempt < 2:
+                _time.sleep(0.1 * (attempt + 1))
+                logger.warning("get_connection retry %d/3: %s", attempt + 1, exc)
+        except Exception:
+            # Cualquier otro error (constraint, sintaxis, etc.) — no reintentar, relanzar.
+            raise
+
+    logger.error("No se pudo obtener una conexión del pool tras 3 intentos: %s", last_exc)
+    raise last_exc
 
 def release_connection(wrapper: _ConnectionWrapper):
     """Devuelve la conexión al pool. Idempotente — double-release es no-op."""

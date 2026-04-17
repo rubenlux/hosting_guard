@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
 from app.api.security import verify_token, require_support_write
+from app.api.rate_limit import limiter
+from app.api.saturation_guard import docker_capacity, docker_op
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.user_repository import UserRepository
 from app.infra.audit.health_repository import HealthRepository
@@ -22,6 +24,9 @@ from app.core.debug_context_builder import build_debug_context
 from app.core.health_engine import calculate_health_score
 from app.core.alert_engine import check_alerts
 from app.infra.docker_client import run_docker_command_async
+from app.infra.container_locks import container_lock
+
+logger = logging.getLogger(__name__)
 
 _user_repo = UserRepository()
 hosting_repo = HostingRepository()
@@ -111,12 +116,58 @@ PLANS = {
 }
 
 
+async def _verify_container_state(container_name: str, expected: str = "running", retries: int = 3, delay: float = 1.5) -> str:
+    """Poll docker inspect until the container reaches `expected` state or retries are exhausted.
+
+    Returns the final state string (e.g. 'running', 'exited', 'unknown').
+    Logs a warning when the container doesn't reach the expected state.
+    """
+    for _ in range(retries):
+        await asyncio.sleep(delay)
+        code, out, _ = await run_docker_command_async(
+            ["inspect", "--format", "{{.State.Status}}", container_name],
+            timeout=5,
+        )
+        if code == 0:
+            state = out.strip()
+            if state == expected:
+                return state
+    logger.warning(
+        "post-docker verification: container %s did not reach '%s' after %d retries (last=%s)",
+        container_name, expected, retries, state if code == 0 else "inspect_failed",
+    )
+    return state if code == 0 else "unknown"
+
+
+def _enforce_plan_container_limit(user_id: int, plan_name: str) -> None:
+    """Raises 403 if the user has reached their plan's container quota.
+
+    Counts only non-deleted hostings so that deleted sites free up their slot.
+    Admins are exempt.
+    """
+    plan = PLANS.get(plan_name)
+    if not plan:
+        return  # invalid plan is caught separately
+    max_sites = plan.get("max_sites")
+    if max_sites is None:
+        return  # unlimited (agencia)
+    active = hosting_repo.count_active_hostings(user_id)
+    if active >= max_sites:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Límite de proyectos alcanzado para el plan '{plan_name}'. "
+                   f"Máximo: {max_sites}. Tienes {active} activo(s). "
+                   "Elimina un sitio existente o actualiza tu plan.",
+        )
+
+
 class CreateHostingRequest(BaseModel):
     name: str
     plan: str
 
 
 @router.post("/create-hosting")
+@limiter.limit("3/minute")
 async def create_hosting(data: CreateHostingRequest, request: Request, user: dict = Depends(verify_token)):
     try:
         # Block unverified emails — prevents free-trial abuse with disposable addresses
@@ -159,14 +210,8 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
                     detail="Solo se permite un alojamiento en plan free por dirección IP. Por favor, actualiza tu plan."
                 )
 
-        max_sites = plan.get("max_sites")
-        if max_sites is not None:
-            user_hostings = hosting_repo.get_user_hostings(user_id)
-            if len(user_hostings) >= max_sites:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}."
-                )
+        if user.get("role") != "admin" and user_id is not None:
+            _enforce_plan_container_limit(int(user_id), data.plan)
 
         image = "nginx:alpine"
 
@@ -241,33 +286,56 @@ async def delete_hosting(hosting_id: int, user: dict = Depends(require_support_w
     return {"status": "deleted", "hosting_id": hosting_id}
 
 @router.post("/hostings/{hosting_id}/restart")
-async def restart_hosting(hosting_id: int, user: dict = Depends(verify_token)):
+@limiter.limit("3/minute")
+async def restart_hosting(hosting_id: int, request: Request, user: dict = Depends(verify_token), _cap: None = Depends(docker_capacity)):
     user_id = user.get("user_id")
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
-    await run_docker_command_async(["restart", hosting["container_name"]], timeout=20)
-    return {"status": "restarting"}
+    name = hosting["container_name"]
+    lock = await container_lock(name)
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="Operación en progreso para este hosting. Intenta en unos segundos.")
+    async with lock:
+        async with docker_op():
+            await run_docker_command_async(["restart", name], timeout=20)
+            final_state = await _verify_container_state(name, expected="running")
+    return {"status": "restarting", "container_state": final_state}
 
 
 @router.post("/hostings/{hosting_id}/stop")
-async def stop_hosting(hosting_id: int, user: dict = Depends(verify_token)):
+@limiter.limit("5/minute")
+async def stop_hosting(hosting_id: int, request: Request, user: dict = Depends(verify_token), _cap: None = Depends(docker_capacity)):
     user_id = user.get("user_id")
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
-    await run_docker_command_async(["stop", hosting["container_name"]], timeout=20)
+    name = hosting["container_name"]
+    lock = await container_lock(name)
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="Operación en progreso para este hosting. Intenta en unos segundos.")
+    async with lock:
+        async with docker_op():
+            await run_docker_command_async(["stop", name], timeout=20)
     return {"status": "stopped"}
 
 
 @router.post("/hostings/{hosting_id}/start")
-async def start_hosting(hosting_id: int, user: dict = Depends(verify_token)):
+@limiter.limit("5/minute")
+async def start_hosting(hosting_id: int, request: Request, user: dict = Depends(verify_token), _cap: None = Depends(docker_capacity)):
     user_id = user.get("user_id")
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
-    await run_docker_command_async(["start", hosting["container_name"]], timeout=20)
-    return {"status": "starting"}
+    name = hosting["container_name"]
+    lock = await container_lock(name)
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="Operación en progreso para este hosting. Intenta en unos segundos.")
+    async with lock:
+        async with docker_op():
+            await run_docker_command_async(["start", name], timeout=20)
+            final_state = await _verify_container_state(name, expected="running")
+    return {"status": "starting", "container_state": final_state}
 
 from app.services.hosting.logs_service import get_hosting_logs
 
@@ -317,14 +385,8 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
                     detail="Solo se permite un alojamiento en plan free por dirección IP. Por favor, actualiza tu plan."
                 )
 
-        max_sites = plan.get("max_sites")
-        if max_sites is not None:
-            user_hostings = hosting_repo.get_user_hostings(user_id)
-            if len(user_hostings) >= max_sites:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}."
-                )
+        if user.get("role") != "admin" and user_id is not None:
+            _enforce_plan_container_limit(int(user_id), data.plan)
 
         # FIX #9: la contraseña se genera y se pasa a ambos contenedores correctamente
         # (el patrón de nombres garantiza que delete_hosting pueda limpiar db_container)
@@ -406,6 +468,7 @@ class GitDeployRequest(BaseModel):
 
 
 @router.post("/deploy-from-github")
+@limiter.limit("3/hour")
 async def deploy_from_github(data: GitDeployRequest, request: Request, user: dict = Depends(verify_token)):
     try:
         # FIX #4: validar URL antes de usarla en subprocess
@@ -443,14 +506,8 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     detail="Solo se permite un alojamiento en plan free por dirección IP. Por favor, actualiza tu plan."
                 )
 
-        max_sites = plan.get("max_sites")
-        if max_sites is not None:
-            user_hostings = hosting_repo.get_user_hostings(user_id)
-            if len(user_hostings) >= max_sites:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Límite de proyectos alcanzado para el plan {data.plan}. Máximo permitido: {max_sites}."
-                )
+        if user.get("role") != "admin" and user_id is not None:
+            _enforce_plan_container_limit(int(user_id), data.plan)
 
         loop = asyncio.get_running_loop()
 
@@ -552,7 +609,8 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
 
 
 @router.post("/hostings/{hosting_id}/redeploy")
-async def redeploy_from_github(hosting_id: int, user: dict = Depends(verify_token)):
+@limiter.limit("3/hour")
+async def redeploy_from_github(hosting_id: int, request: Request, user: dict = Depends(verify_token)):
     """Hace git pull y reinicia el contenedor."""
     user_id = user.get("user_id")
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
@@ -590,8 +648,10 @@ async def redeploy_from_github(hosting_id: int, user: dict = Depends(verify_toke
     }
 
 @router.post("/hostings/{hosting_id}/upload-zip")
+@limiter.limit("5/hour")
 async def upload_zip(
     hosting_id: int,
+    request: Request,
     file: UploadFile = File(...),
     user: dict = Depends(verify_token)
 ):
@@ -738,7 +798,9 @@ dedicated_orchestrator_events_route = router.get("/orchestrator/events")(get_orc
 
 from app.services.hosting.diagnose_service import diagnose_hosting
 
-router.post("/hosting/{hosting_id}/diagnose")(diagnose_hosting)
+router.post("/hosting/{hosting_id}/diagnose")(
+    limiter.limit("6/minute")(diagnose_hosting)
+)
 
 
 @router.get("/hosting/{hosting_id}/ai-history")
@@ -823,7 +885,8 @@ class ApplyFixRequest(BaseModel):
 
 
 @router.post("/fix/apply")
-async def apply_fix(data: ApplyFixRequest, user: dict = Depends(verify_token)):
+@limiter.limit("5/minute")
+async def apply_fix(data: ApplyFixRequest, request: Request, user: dict = Depends(verify_token)):
     """
     Execute an approved FixProposal.
     Requires approved=True — this is the human gate that must be satisfied
