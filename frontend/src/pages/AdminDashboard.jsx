@@ -455,32 +455,34 @@ export default function AdminDashboard() {
                 <div className="bg-[#111] rounded-xl border border-white/5 p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Capacidad del Nodo</div>
-                    {nodeMetrics?.available && (
+                    {nodeMetrics?.available && (nodeMetrics.cpu_pct != null || nodeMetrics.ram_pct != null) && (
                       <span className="text-[9px] font-mono text-emerald-500/60 uppercase tracking-widest">Prometheus</span>
                     )}
                   </div>
                   {(() => {
-                    // Prefer real Prometheus data; fall back to capacity_forecast from psutil
+                    // Per-value fallback: use Prometheus value when non-null, else capacity_forecast
+                    const prom = nodeMetrics?.available ? nodeMetrics : null;
+                    const fc   = systemHealth?.capacity_forecast;
                     const rows = [
                       {
                         label: 'CPU',
                         icon: <Cpu className="w-3 h-3" />,
-                        pct: nodeMetrics?.available ? nodeMetrics.cpu_pct : systemHealth?.capacity_forecast?.cpu?.usage,
+                        pct: prom?.cpu_pct ?? fc?.cpu?.usage,
                       },
                       {
                         label: 'RAM',
                         icon: <MemoryStick className="w-3 h-3" />,
-                        pct: nodeMetrics?.available ? nodeMetrics.ram_pct : systemHealth?.capacity_forecast?.ram?.usage,
+                        pct: prom?.ram_pct ?? fc?.ram?.usage,
                       },
                       {
                         label: 'Disco',
                         icon: <HardDrive className="w-3 h-3" />,
-                        pct: nodeMetrics?.available ? nodeMetrics.disk_pct : systemHealth?.capacity_forecast?.disk?.usage,
+                        pct: prom?.disk_pct ?? fc?.disk?.usage,
                       },
                       {
                         label: 'Cont.',
                         icon: <Gauge className="w-3 h-3" />,
-                        pct: systemHealth?.capacity_forecast?.containers?.usage,
+                        pct: fc?.containers?.usage,
                       },
                     ];
                     const hasData = rows.some(r => r.pct != null);
