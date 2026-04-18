@@ -94,7 +94,7 @@ export default function StatusCommandBar({ hostings = [], healthData = {}, advis
     const warns     = advisories.filter(a => a.severity === 'warning').length;
 
     const unresolved = (alerts ?? []).filter(
-      a => !a.resolved && a.level === 'critical',
+      a => !a.resolved && (a.level === 'critical' || a.level === 'error'),
     ).length;
 
     const allOk = criticals === 0 && warns === 0;

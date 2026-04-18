@@ -292,6 +292,8 @@ _INDEXES = [
         amount          REAL NOT NULL,
         created_at      TEXT NOT NULL
     )""",
+    # Soft-delete timestamp — preserves audit trail while marking resources as cleaned up
+    "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS deleted_at TEXT",
 ]
 
 def ensure_monthly_partitions(cursor):

@@ -99,6 +99,38 @@ async def get_system_health():
     # --- Docker ops in-flight ---
     inflight = _get_inflight()
 
+    # --- Docker latency means (from in-process histogram) ---
+    docker_latency: Dict = {}
+    try:
+        from app.observability.metrics import DOCKER_OP_DURATION
+        sums: Dict[str, float]  = {}
+        counts: Dict[str, float] = {}
+        for metric in DOCKER_OP_DURATION.collect():
+            for sample in metric.samples:
+                op = sample.labels.get("operation", "unknown")
+                if sample.name.endswith("_sum"):
+                    sums[op] = sample.value
+                elif sample.name.endswith("_count"):
+                    counts[op] = sample.value
+        for op in sums:
+            cnt = counts.get(op, 0)
+            docker_latency[op] = {
+                "mean_seconds": round(sums[op] / cnt, 3) if cnt > 0 else None,
+                "total_ops": int(cnt),
+            }
+    except Exception:
+        pass
+
+    # --- Capacity forecast (optional, never blocks the response) ---
+    capacity_forecast = None
+    from app.api.config import ENABLE_CAPACITY_FORECAST
+    if ENABLE_CAPACITY_FORECAST:
+        try:
+            from app.services.capacity_planner import evaluate_capacity_forecast
+            capacity_forecast = evaluate_capacity_forecast()
+        except Exception:
+            pass
+
     return {
         "containers": {
             "by_status": status_counts,
@@ -108,9 +140,11 @@ async def get_system_health():
             "inflight": inflight,
             "max": MAX_DOCKER_OPS_INFLIGHT,
             "utilization_pct": round(inflight / MAX_DOCKER_OPS_INFLIGHT * 100, 1),
+            "latency_by_operation": docker_latency,
         },
         "redis": {"connected": redis_ok},
         "db_pool": db_pool_info,
+        "capacity_forecast": capacity_forecast,
     }
 
 

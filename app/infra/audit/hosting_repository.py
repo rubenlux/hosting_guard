@@ -5,7 +5,7 @@ from app.infra.db import get_connection, release_connection, SQL_MINUTES_SINCE_C
 
 logger = logging.getLogger(__name__)
 
-VALID_STATUSES = {"active", "stopped", "expired", "error", "starting", "expiring"}
+VALID_STATUSES = {"active", "stopped", "expired", "error", "starting", "expiring", "deleted", "zombie"}
 
 class HostingRepository:
     """Implementación PostgreSQL limpia para Hostings."""
@@ -52,6 +52,74 @@ class HostingRepository:
             )
             row = cursor.fetchone()
             return int(row["cnt"]) if row else 0
+        finally:
+            release_connection(conn)
+
+    def count_active_free_users(self) -> int:
+        """Count distinct users who have at least one non-deleted free hosting.
+
+        Used to enforce the global cap (MAX_FREE_USERS) before creating a new free site.
+        """
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT COUNT(DISTINCT user_id) AS cnt
+                   FROM hostings
+                   WHERE plan = 'free' AND status != 'deleted'"""
+            )
+            row = cursor.fetchone()
+            return int(row["cnt"]) if row else 0
+        finally:
+            release_connection(conn)
+
+    def had_free_hosting_recently(self, user_id: int, days: int = 30) -> bool:
+        """Return True if this user created any free hosting in the last `days` days.
+
+        Prevents abuse by users who delete and recreate to reset the 14-day trial.
+        """
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT 1 FROM hostings
+                   WHERE user_id = %s
+                     AND plan = 'free'
+                     AND created_at::timestamptz > NOW() - make_interval(days => %s)
+                   LIMIT 1""",
+                (user_id, days),
+            )
+            return cursor.fetchone() is not None
+        finally:
+            release_connection(conn)
+
+    def get_expired_hostings(self, batch_size: int = 50, offset: int = 0) -> List[Dict]:
+        """Return free hostings stuck in 'expired' state — awaiting resource cleanup."""
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM hostings WHERE status = 'expired' LIMIT %s OFFSET %s",
+                (batch_size, offset),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            release_connection(conn)
+
+    def mark_deleted(self, hosting_id: int) -> bool:
+        """Soft-delete a hosting: set status='deleted' and record deleted_at timestamp.
+
+        Never removes the row — audit trail is preserved.
+        """
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE hostings SET status = 'deleted', deleted_at = %s WHERE hosting_id = %s",
+                (datetime.now(timezone.utc).isoformat(), hosting_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
         finally:
             release_connection(conn)
 

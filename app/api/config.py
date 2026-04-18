@@ -8,6 +8,9 @@ APP_ENV = os.getenv("APP_ENV", "development").lower()
 # Flag para enriquecimiento con IA
 ENABLE_AI_ADVISORY = os.getenv("ENABLE_AI_ADVISORY", "false").lower() == "true"
 
+# Flag para Capacity Forecast en /health/system
+ENABLE_CAPACITY_FORECAST = os.getenv("ENABLE_CAPACITY_FORECAST", "true").lower() == "true"
+
 # Flag para ejecución de acciones (Dry-run / Execute)
 # PRECAUCIÓN: En producción debe estar en false hasta validar el flujo humano completo.
 ENABLE_ACTION_EXECUTION = os.getenv("ENABLE_ACTION_EXECUTION", "false").lower() == "true"

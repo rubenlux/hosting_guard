@@ -161,6 +161,33 @@ def _enforce_plan_container_limit(user_id: int, plan_name: str) -> None:
         )
 
 
+MAX_FREE_USERS = 10  # Global cap — keep infra costs bounded
+
+
+def _enforce_free_plan_policy(user_id: int, plan_name: str) -> None:
+    """Raise 503/403 for free-plan requests that breach global or per-user limits.
+
+    Called before any create endpoint that accepts plan='free'.
+    Admins bypass all checks.
+    """
+    if plan_name != "free":
+        return
+    from app.observability.metrics import FREE_PLAN_REJECTIONS
+    if hosting_repo.count_active_free_users() >= MAX_FREE_USERS:
+        FREE_PLAN_REJECTIONS.labels(reason="global_cap").inc()
+        raise HTTPException(
+            status_code=503,
+            detail="Free tier capacity reached. Please upgrade to continue.",
+        )
+    if hosting_repo.had_free_hosting_recently(user_id):
+        FREE_PLAN_REJECTIONS.labels(reason="recent_history").inc()
+        raise HTTPException(
+            status_code=403,
+            detail="Ya tuviste un sitio en plan free en los últimos 30 días. "
+                   "Actualiza tu plan para crear uno nuevo.",
+        )
+
+
 class CreateHostingRequest(BaseModel):
     name: str
     plan: str
@@ -211,6 +238,7 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
                 )
 
         if user.get("role") != "admin" and user_id is not None:
+            _enforce_free_plan_policy(int(user_id), data.plan)
             _enforce_plan_container_limit(int(user_id), data.plan)
 
         image = "nginx:alpine"
@@ -297,8 +325,14 @@ async def restart_hosting(hosting_id: int, request: Request, user: dict = Depend
     if lock.locked():
         raise HTTPException(status_code=409, detail="Operación en progreso para este hosting. Intenta en unos segundos.")
     async with lock:
-        async with docker_op():
-            await run_docker_command_async(["restart", name], timeout=20)
+        async with docker_op("restart"):
+            code, _, stderr = await run_docker_command_async(["restart", name], timeout=20)
+            if code != 0:
+                logger.error(
+                    "docker_op_failed",
+                    extra={"operation": "restart", "container": name,
+                           "returncode": code, "stderr": stderr},
+                )
             final_state = await _verify_container_state(name, expected="running")
     return {"status": "restarting", "container_state": final_state}
 
@@ -315,8 +349,14 @@ async def stop_hosting(hosting_id: int, request: Request, user: dict = Depends(v
     if lock.locked():
         raise HTTPException(status_code=409, detail="Operación en progreso para este hosting. Intenta en unos segundos.")
     async with lock:
-        async with docker_op():
-            await run_docker_command_async(["stop", name], timeout=20)
+        async with docker_op("stop"):
+            code, _, stderr = await run_docker_command_async(["stop", name], timeout=20)
+            if code != 0:
+                logger.error(
+                    "docker_op_failed",
+                    extra={"operation": "stop", "container": name,
+                           "returncode": code, "stderr": stderr},
+                )
     return {"status": "stopped"}
 
 
@@ -332,8 +372,14 @@ async def start_hosting(hosting_id: int, request: Request, user: dict = Depends(
     if lock.locked():
         raise HTTPException(status_code=409, detail="Operación en progreso para este hosting. Intenta en unos segundos.")
     async with lock:
-        async with docker_op():
-            await run_docker_command_async(["start", name], timeout=20)
+        async with docker_op("start"):
+            code, _, stderr = await run_docker_command_async(["start", name], timeout=20)
+            if code != 0:
+                logger.error(
+                    "docker_op_failed",
+                    extra={"operation": "start", "container": name,
+                           "returncode": code, "stderr": stderr},
+                )
             final_state = await _verify_container_state(name, expected="running")
     return {"status": "starting", "container_state": final_state}
 
@@ -386,6 +432,7 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
                 )
 
         if user.get("role") != "admin" and user_id is not None:
+            _enforce_free_plan_policy(int(user_id), data.plan)
             _enforce_plan_container_limit(int(user_id), data.plan)
 
         # FIX #9: la contraseña se genera y se pasa a ambos contenedores correctamente
@@ -507,6 +554,7 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 )
 
         if user.get("role") != "admin" and user_id is not None:
+            _enforce_free_plan_policy(int(user_id), data.plan)
             _enforce_plan_container_limit(int(user_id), data.plan)
 
         loop = asyncio.get_running_loop()

@@ -235,6 +235,11 @@ export const getAdminFinanceSummary = async () => {
     return response.data;
 };
 
+export const getSystemHealth = async () => {
+    const response = await api.get('/health/system');
+    return response.data;
+};
+
 export const adminExtendPlan = async (userId, days) => {
     const response = await api.post(`/admin/users/${userId}/plan/extend`, { days });
     return response.data;

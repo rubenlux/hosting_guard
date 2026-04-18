@@ -13,6 +13,7 @@ from app.services.traffic_collector import collect_traffic
 from app.services.health_checker import check_all_hostings
 from app.services.reconciler import reconcile_containers
 from app.services.scheduler import schedule_job
+from app.api.config import ENABLE_CAPACITY_FORECAST
 
 logger = logging.getLogger("hosting_guard_audit")
 
@@ -32,7 +33,19 @@ async def lifespan(app):
         schedule_job(collect_traffic,                interval=300)     # 5 minutes
         schedule_job(check_all_hostings,             interval=300)     # 5 minutes
         schedule_job(reconcile_containers,           interval=300)     # 5 minutes
-        logger.info("lifespan: 4 background jobs scheduled")
+
+        if ENABLE_CAPACITY_FORECAST:
+            def _run_capacity_forecast():
+                try:
+                    from app.services.capacity_planner import evaluate_capacity_forecast
+                    evaluate_capacity_forecast()
+                except Exception as exc:
+                    logger.warning("capacity_forecast job failed: %s", exc)
+
+            schedule_job(_run_capacity_forecast, interval=600)        # 10 minutes
+            logger.info("lifespan: 5 background jobs scheduled (capacity forecast enabled)")
+        else:
+            logger.info("lifespan: 4 background jobs scheduled")
     else:
         logger.info("lifespan: RUN_ORCHESTRATOR=false — background tasks disabled (orchestrator container active)")
 

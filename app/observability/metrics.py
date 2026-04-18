@@ -53,3 +53,48 @@ HTTP_REQUESTS_IN_FLIGHT = Counter(
     "HTTP 4xx/5xx responses total",
     ["method", "path", "status_code"],
 )
+
+# ---------------------------------------------------------------------------
+# Docker infrastructure metrics
+# ---------------------------------------------------------------------------
+_DOCKER_BUCKETS = (0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, float("inf"))
+
+DOCKER_OPS_TOTAL = Counter(
+    "docker_ops_total",
+    "Total Docker operations by type and result",
+    ["operation", "result"],
+)
+
+DOCKER_OP_DURATION = Histogram(
+    "docker_op_duration_seconds",
+    "Duration of Docker operations",
+    ["operation"],
+    buckets=_DOCKER_BUCKETS,
+)
+
+# Replaces the old (redundant) docker_errors_total; adds error_type for actionable debugging
+DOCKER_OP_ERRORS = Counter(
+    "docker_op_errors_total",
+    "Docker operation exceptions by type — timeout / daemon_unreachable / permission / unknown",
+    ["operation", "error_type"],
+)
+
+# ---------------------------------------------------------------------------
+# Business / lifecycle metrics
+# ---------------------------------------------------------------------------
+
+FREE_PLAN_REJECTIONS = Counter(
+    "free_plan_rejections_total",
+    "Free-plan create requests rejected by policy",
+    ["reason"],   # global_cap | recent_history
+)
+
+CONTAINERS_DELETED_TOTAL = Counter(
+    "containers_deleted_total",
+    "Containers soft-deleted by the expiration cleanup job",
+)
+
+CLEANUP_RUNS_TOTAL = Counter(
+    "cleanup_runs_total",
+    "Expiration cleanup job execution cycles",
+)

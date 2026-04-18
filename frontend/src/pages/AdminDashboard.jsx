@@ -14,6 +14,7 @@ import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
   getAdminPixelEvents, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
+  getSystemHealth,
   startSupportSession, getSupportSessions, revokeSupportSession,
   listStaff, createStaff, updateStaff, deactivateStaff, resetStaffPassword,
   adminRestartHosting, adminStopHosting, adminStartHosting,
@@ -22,6 +23,7 @@ import {
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import StaffAnalytics from '../components/StaffAnalytics';
+import StatusCommandBar from '../components/dashboard/StatusCommandBar';
 
 /* ─── helpers ─────────────────────────────────────────────── */
 function groupBy(arr, key) {
@@ -171,6 +173,7 @@ export default function AdminDashboard() {
   const [pixelEvents, setPixelEvents]       = useState([]);
   const [orcEvents, setOrcEvents]           = useState([]);
   const [finance, setFinance]               = useState(null);
+  const [systemHealth, setSystemHealth]     = useState(null);
   const [loading, setLoading]           = useState(true);
   const [tab, setTab]                   = useState('users');
   const [pixelFilter, setPixelFilter]   = useState('all');
@@ -185,6 +188,7 @@ export default function AdminDashboard() {
       getAdminPixelEvents(500, 0),
       getAdminOrchestratorEvents(200),
       getAdminFinanceSummary(),
+      getSystemHealth(),
     ]);
     if (results[0].status === 'fulfilled') setUsers(results[0].value);
     if (results[1].status === 'fulfilled') setHostings(results[1].value);
@@ -193,6 +197,7 @@ export default function AdminDashboard() {
     if (results[4].status === 'fulfilled') setPixelEvents(results[4].value);
     if (results[5].status === 'fulfilled') setOrcEvents(results[5].value);
     if (results[6].status === 'fulfilled') setFinance(results[6].value);
+    if (results[7].status === 'fulfilled') setSystemHealth(results[7].value);
     setLoading(false);
   };
 
@@ -274,10 +279,19 @@ export default function AdminDashboard() {
   const ALERT_STYLE = { error: 'border-red-500/30 bg-red-500/5', warn: 'border-amber-500/30 bg-amber-500/5', info: 'border-blue-500/30 bg-blue-500/5' };
   const ALERT_DOT   = { error: 'bg-red-400', warn: 'bg-amber-400', info: 'bg-blue-400' };
 
-  /* ── metrics map ── */
+  /* ── metrics map (keyed by container_name for HostingsTable) ── */
   const metricsMap = useMemo(() => {
     const m = {};
     hostingMetrics.forEach(h => { m[h.container_name] = h; });
+    return m;
+  }, [hostingMetrics]);
+
+  /* ── health data keyed by hosting_id (for StatusCommandBar) ── */
+  const healthDataById = useMemo(() => {
+    const m = {};
+    hostingMetrics.forEach(h => {
+      if (h.hosting_id != null) m[h.hosting_id] = h;
+    });
     return m;
   }, [hostingMetrics]);
 
@@ -363,6 +377,14 @@ export default function AdminDashboard() {
           </div>
         </header>
 
+        {/* Status command bar */}
+        <StatusCommandBar
+          hostings={hostings}
+          healthData={healthDataById}
+          advisories={[]}
+          alerts={alerts}
+        />
+
         {/* Scrollable content + alerts sidebar */}
         <div className="flex-1 overflow-hidden flex">
           <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5">
@@ -370,10 +392,43 @@ export default function AdminDashboard() {
             {/* ══ OVERVIEW ══ */}
             {section === 'overview' && (<>
               <div className="grid grid-cols-4 gap-4">
-                <StatCard label="Users"          val={users.length}                       sub={`+${users.filter(u => (new Date() - new Date(u.created_at)) < 7*864e5).length} esta semana`} color="#00aaff" icon={<Users className="w-4 h-4" />} loading={loading} />
-                <StatCard label="Total Hostings" val={hostings.length}                    sub={`${hostings.filter(h => h.status === 'active').length} activos`}   color="#00ff88" icon={<Globe className="w-4 h-4" />} loading={loading} />
-                <StatCard label="Active Pixels"  val={pixelOverview?.total_sites ?? '—'} sub={`${pixelOverview?.today_events ?? 0} eventos hoy`}                 color="#ffaa00" icon={<Zap className="w-4 h-4" />} loading={loading} />
-                <StatCard label="Pixel Events"   val={pixelOverview?.total_events ?? '—'}sub="total acumulado"                                                   color="#aa00ff" icon={<BarChart3 className="w-4 h-4" />} loading={loading} />
+                <StatCard
+                  label="Users"
+                  val={users.length}
+                  sub={`${users.filter(u => u.plan !== 'free').length} pagos · ${users.filter(u => u.plan === 'free').length} free`}
+                  color="#00aaff"
+                  icon={<Users className="w-4 h-4" />}
+                  loading={loading}
+                />
+                <StatCard
+                  label="Hostings"
+                  val={hostings.length}
+                  sub={`${hostings.filter(h => h.status === 'active').length} activos · ${hostings.filter(h => ['error','zombie'].includes(h.status)).length} con error`}
+                  color="#00ff88"
+                  icon={<Globe className="w-4 h-4" />}
+                  loading={loading}
+                />
+                <StatCard
+                  label="Docker Load"
+                  val={systemHealth ? `${systemHealth.docker_ops?.utilization_pct ?? 0}%` : '—'}
+                  sub={`${systemHealth?.docker_ops?.inflight ?? 0}/${systemHealth?.docker_ops?.max ?? 20} ops en vuelo`}
+                  color={
+                    !systemHealth ? '#6b7280'
+                    : (systemHealth.docker_ops?.utilization_pct ?? 0) >= 70 ? '#ef4444'
+                    : (systemHealth.docker_ops?.utilization_pct ?? 0) >= 40 ? '#ffaa00'
+                    : '#00ff88'
+                  }
+                  icon={<Activity className="w-4 h-4" />}
+                  loading={loading}
+                />
+                <StatCard
+                  label="Error Rate"
+                  val={`${hostings.length ? Math.round((hostings.filter(h => h.status === 'error').length / hostings.length) * 100) : 0}%`}
+                  sub={`${hostings.filter(h => h.status === 'error').length} en error · ${hostings.filter(h => h.status === 'zombie').length} zombie`}
+                  color={hostings.filter(h => h.status === 'error').length > 0 ? '#ef4444' : '#00ff88'}
+                  icon={<ShieldAlert className="w-4 h-4" />}
+                  loading={loading}
+                />
               </div>
               <div className="flex gap-1 border-b border-white/5">
                 {[{ id:'users', label:`Users (${users.length})` }, { id:'hostings', label:`Hostings (${hostings.length})` }, { id:'pixel', label:`Pixel (${pixelEvents.length})` }].map(t => (

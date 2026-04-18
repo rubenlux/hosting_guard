@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.infra.audit.hosting_repository import HostingRepository
+from app.observability.metrics import CONTAINERS_DELETED_TOTAL, CLEANUP_RUNS_TOTAL
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,67 @@ def _expire_single(hosting):
         err_msg = result.stderr.decode('utf-8', errors='replace').strip()
         logger.error(f"Rollback: {container} no pudo detenerse. Error: {err_msg}")
         return hosting, False
+
+
+def _cleanup_expired_hostings() -> int:
+    """Phase 2 of lifecycle management.
+
+    For every hosting already in 'expired' state:
+      1. docker rm (idempotent — errors ignored if container doesn't exist)
+      2. soft-delete in DB (status='deleted', deleted_at=now)
+      3. log cleanup event for audit trail
+
+    Returns the number of hostings successfully cleaned up.
+    """
+    repo = HostingRepository()
+    cleaned = 0
+    batch_size = 50
+    offset = 0
+
+    while True:
+        hostings = repo.get_expired_hostings(batch_size=batch_size, offset=offset)
+        if not hostings:
+            break
+
+        for hosting in hostings:
+            hosting_id = hosting["hosting_id"]
+            container  = hosting["container_name"]
+            try:
+                result = subprocess.run(
+                    ["docker", "rm", "-f", container],
+                    capture_output=True,
+                    timeout=10,
+                )
+                # docker rm -f exits 0 (removed) or 1 (doesn't exist) — both are fine
+                if result.returncode not in (0, 1):
+                    stderr = result.stderr.decode("utf-8", errors="replace").strip()
+                    logger.warning(
+                        "cleanup: docker rm exited %d for %s. Proceeding with soft-delete. Error: %s",
+                        result.returncode, container, stderr,
+                    )
+
+                repo.mark_deleted(hosting_id)
+                CONTAINERS_DELETED_TOTAL.inc()
+                repo.log_orchestrator_event(
+                    container_name=container,
+                    user_id=hosting["user_id"],
+                    event_type="FREE_PLAN_CLEANUP",
+                    message="Recursos del plan gratuito eliminados automáticamente tras expiración.",
+                )
+                logger.info(
+                    '{"event": "free_plan_cleanup", "hosting_id": %d, "user_id": %d, "action": "deleted_resources"}',
+                    hosting_id, hosting["user_id"],
+                )
+                cleaned += 1
+            except Exception as exc:
+                logger.error(
+                    "cleanup: error processing hosting_id=%d container=%s: %s",
+                    hosting_id, container, exc, exc_info=True,
+                )
+
+        offset += batch_size
+
+    return cleaned
 
 
 def check_and_expire_free_hostings():
@@ -186,8 +248,17 @@ def check_and_expire_free_hostings():
         
         offset += batch_size
 
+    # Phase 2: clean up previously-expired hostings (docker rm + soft-delete)
+    CLEANUP_RUNS_TOTAL.inc()
+    try:
+        cleaned_count = _cleanup_expired_hostings()
+    except Exception as e:
+        logger.error("Error en _cleanup_expired_hostings: %s", e, exc_info=True)
+        cleaned_count = 0
+
     # Métricas y observabilidad
     logger.info(
         f"Job completado en {time.time() - start_time:.2f}s — "
-        f"expirados: {expired_count}, advertencias: {warned_count}, errores: {error_count}"
+        f"expirados: {expired_count}, limpiados: {cleaned_count}, "
+        f"advertencias: {warned_count}, errores: {error_count}"
     )

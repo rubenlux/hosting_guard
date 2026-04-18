@@ -23,6 +23,7 @@ Context manager for wrapping the actual Docker call (increments/decrements):
 """
 import asyncio
 import logging
+import time as _time
 from contextlib import asynccontextmanager
 
 from fastapi import HTTPException
@@ -100,11 +101,39 @@ async def docker_capacity() -> None:
         )
 
 
+def _classify_docker_exc(exc: Exception) -> str:
+    """Map an exception to a stable error_type label for DOCKER_OP_ERRORS."""
+    import asyncio as _asyncio
+    if isinstance(exc, (_asyncio.TimeoutError, TimeoutError)):
+        return "timeout"
+    name = type(exc).__name__.lower()
+    if "connection" in name or "connect" in name or "broken" in name:
+        return "daemon_unreachable"
+    if "permission" in name or "denied" in name:
+        return "permission_error"
+    return "unknown"
+
+
 @asynccontextmanager
-async def docker_op():
+async def docker_op(operation: str = "unknown"):
     """Async context manager. Wraps a Docker call, tracking it in the inflight counter."""
+    from app.observability.metrics import DOCKER_OPS_TOTAL, DOCKER_OP_DURATION, DOCKER_OP_ERRORS
     _incr_inflight()
+    _start = _time.monotonic()
+    _ok = False
     try:
         yield
+        _ok = True
+    except Exception as exc:
+        error_type = _classify_docker_exc(exc)
+        DOCKER_OP_ERRORS.labels(operation=operation, error_type=error_type).inc()
+        logger.error(
+            "docker_op_failed",
+            extra={"operation": operation, "error_type": error_type, "exc": str(exc)},
+        )
+        raise
     finally:
+        elapsed = _time.monotonic() - _start
+        DOCKER_OPS_TOTAL.labels(operation=operation, result="success" if _ok else "error").inc()
+        DOCKER_OP_DURATION.labels(operation=operation).observe(elapsed)
         _decr_inflight()
