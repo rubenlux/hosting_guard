@@ -475,47 +475,75 @@ export default function AdminDashboard() {
                     // Per-value fallback: use Prometheus value when non-null, else capacity_forecast
                     const prom = nodeMetrics?.available ? nodeMetrics : null;
                     const fc   = systemHealth?.capacity_forecast;
+                    const diskGrowth = prom?.disk_growth_pct_per_day;
+                    const diskDaysLeft = prom?.disk_days_left;
                     const rows = [
                       {
                         label: 'CPU',
                         icon: <Cpu className="w-3 h-3" />,
                         pct: prom?.cpu_pct ?? fc?.cpu?.usage,
+                        extra: null,
                       },
                       {
                         label: 'RAM',
                         icon: <MemoryStick className="w-3 h-3" />,
                         pct: prom?.ram_pct ?? fc?.ram?.usage,
+                        extra: null,
                       },
                       {
                         label: 'Disco',
                         icon: <HardDrive className="w-3 h-3" />,
                         pct: prom?.disk_pct ?? fc?.disk?.usage,
+                        extra: diskGrowth != null ? {
+                          growth: diskGrowth,
+                          daysLeft: diskDaysLeft,
+                        } : null,
                       },
                       {
                         label: 'Cont.',
                         icon: <Gauge className="w-3 h-3" />,
                         pct: fc?.containers?.usage,
+                        extra: null,
                       },
                     ];
                     const hasData = rows.some(r => r.pct != null);
                     if (!hasData) return <div className="text-[10px] text-gray-600 italic">Métricas no disponibles</div>;
                     return (
                       <div className="flex flex-col gap-2.5">
-                        {rows.map(({ label, icon, pct }) => {
+                        {rows.map(({ label, icon, pct, extra }) => {
                           const color = pct == null ? '#4b5563' : pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
+                          const growthColor = extra?.growth > 0.5 ? '#f59e0b' : '#6b7280';
                           return (
-                            <div key={label} className="flex items-center gap-2">
-                              <span style={{ color }} className="opacity-70">{icon}</span>
-                              <span className="text-[10px] text-gray-400 w-8 shrink-0">{label}</span>
-                              <div className="flex-1 h-1.5 bg-white/5 rounded overflow-hidden">
-                                <div className="h-full rounded transition-all" style={{
-                                  width: pct != null ? `${Math.min(pct, 100)}%` : '0%',
-                                  background: color,
-                                }} />
+                            <div key={label}>
+                              <div className="flex items-center gap-2">
+                                <span style={{ color }} className="opacity-70">{icon}</span>
+                                <span className="text-[10px] text-gray-400 w-8 shrink-0">{label}</span>
+                                <div className="flex-1 h-1.5 bg-white/5 rounded overflow-hidden">
+                                  <div className="h-full rounded transition-all" style={{
+                                    width: pct != null ? `${Math.min(pct, 100)}%` : '0%',
+                                    background: color,
+                                  }} />
+                                </div>
+                                <span className="text-[10px] font-mono w-12 text-right" style={{ color }}>
+                                  {pct != null ? `${Math.round(pct)}%` : 'N/A'}
+                                </span>
                               </div>
-                              <span className="text-[10px] font-mono w-12 text-right" style={{ color }}>
-                                {pct != null ? `${Math.round(pct)}%` : 'N/A'}
-                              </span>
+                              {extra && (
+                                <div className="flex items-center gap-2 ml-5 mt-0.5">
+                                  <span className="text-[9px] font-mono" style={{ color: growthColor }}>
+                                    {extra.growth > 0
+                                      ? `+${extra.growth.toFixed(2)}%/día`
+                                      : `${extra.growth.toFixed(2)}%/día`}
+                                  </span>
+                                  {extra.daysLeft != null && (
+                                    <span className="text-[9px] font-mono text-gray-600">
+                                      · ~{extra.daysLeft < 30
+                                          ? `${extra.daysLeft}d`
+                                          : `${Math.round(extra.daysLeft / 30)}m`} restantes
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           );
                         })}

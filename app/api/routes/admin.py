@@ -334,6 +334,8 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
         ),
         "disk_avail_bytes": 'node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}',
         "disk_total_bytes": 'node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}',
+        # deriv: bytes/sec rate of available space — negative means filling up
+        "disk_deriv": 'deriv(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}[6h])',
     }
 
     result = {"source": "prometheus", "available": False}
@@ -355,19 +357,29 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
         if cpu is None and ram is None and disk is None:
             return result
 
-        # Days to disk exhaustion via predict_linear
+        # Disk growth rate and days to exhaustion
         days_left = None
+        disk_growth_pct_per_day = None
         avail_predicted = _query(QUERIES["disk_avail_predicted"])
         avail_now       = _query(QUERIES["disk_avail_bytes"])
         total           = _query(QUERIES["disk_total_bytes"])
-        if avail_predicted is not None and avail_now is not None and total and total > 0:
-            if avail_predicted <= 0:
-                # Will exhaust within 14 days — calculate exact days
-                # growth_rate bytes/sec = (avail_now - avail_predicted) / (14 * 86400)
-                growth_rate = (avail_now - avail_predicted) / (14 * 86400)
-                if growth_rate > 0:
-                    days_left = round(avail_now / growth_rate / 86400, 1)
-            # else: more than 14 days left — no urgency
+        disk_deriv      = _query(QUERIES["disk_deriv"])  # bytes/sec (negative = filling up)
+
+        if total and total > 0:
+            if disk_deriv is not None:
+                # Convert bytes/sec to %/day  (negative deriv = growing usage)
+                disk_growth_pct_per_day = round(-disk_deriv * 86400 / total * 100, 2)
+
+            if avail_predicted is not None and avail_now is not None:
+                if avail_predicted <= 0:
+                    growth_rate = (avail_now - avail_predicted) / (14 * 86400)
+                    if growth_rate > 0:
+                        days_left = round(avail_now / growth_rate / 86400, 1)
+                elif disk_deriv is not None and disk_deriv < 0:
+                    # Disk is filling but won't exhaust in 14d — still compute days
+                    fill_rate = -disk_deriv  # bytes/sec being consumed
+                    if fill_rate > 0:
+                        days_left = round(avail_now / fill_rate / 86400, 1)
 
         # Determine per-resource status
         def _status(pct):
@@ -394,7 +406,8 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
             "cpu_pct":            round(cpu,  1) if cpu  is not None else None,
             "ram_pct":            round(ram,  1) if ram  is not None else None,
             "disk_pct":           round(disk, 1) if disk is not None else None,
-            "disk_days_left":     days_left,
+            "disk_days_left":          days_left,
+            "disk_growth_pct_per_day": disk_growth_pct_per_day,
             "status":             overall,
             "recommendation":     recommendations[overall],
             "cpu_status":         _status(cpu),
