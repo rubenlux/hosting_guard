@@ -9,48 +9,8 @@ router = APIRouter(prefix="/health", tags=["Health"])
 health_repo = HealthRepository()
 hosting_repo = HostingRepository()
 
-@router.get("/{hosting_id}")
-async def get_hosting_health(hosting_id: int, user: dict = Depends(verify_token)):
-    """Obtiene el score de salud actual de un hosting."""
-    user_id = user.get("user_id")
-    hosting = hosting_repo.get_hosting(hosting_id, user_id)
-    if not hosting:
-        raise HTTPException(status_code=404, detail="Hosting not found")
-    
-    health = health_repo.get_latest_health(hosting_id)
-    if not health:
-        # Valores por defecto si no hay historial aún
-        return {
-            "score": 100, 
-            "status": "excellent", 
-            "color": "green", 
-            "trend": "stable",
-            "cpu": 0,
-            "ram": 0,
-            "error_count": 0,
-            "warning_count": 0,
-            "alert": None
-        }
-    
-    # Calcular tendencia simple comparando con el anterior
-    history = health_repo.get_health_history(hosting_id, limit=2)
-    trend = "stable"
-    if len(history) >= 2:
-        prev_score = history[0]["score"]
-        curr_score = history[1]["score"]
-        if curr_score > prev_score:
-            trend = "improving"
-        elif curr_score < prev_score:
-            trend = "degrading"
-            
-    return {
-        **health,
-        "trend": trend,
-        "alert": {
-            "type": health["alert_type"],
-            "message": health["alert_message"]
-        } if health.get("alert_type") else None
-    }
+# IMPORTANT: static routes (/system, /{id}/history) must be registered BEFORE
+# the dynamic /{hosting_id} route — FastAPI matches in declaration order.
 
 @router.get("/system", dependencies=[Depends(require_role("admin"))])
 async def get_system_health():
@@ -61,7 +21,6 @@ async def get_system_health():
     and in-flight Docker operations. Use this to decide whether the node
     is approaching saturation before scaling or alerting.
     """
-    from app.infra.redis_client import get_redis
     from app.api.saturation_guard import _get_inflight, MAX_DOCKER_OPS_INFLIGHT
 
     # --- Container counts by status ---
@@ -76,6 +35,7 @@ async def get_system_health():
 
     # --- Redis (with lazy-reconnect attempt) ---
     from app.infra.redis_client import get_redis, invalidate_redis
+    import os as _os
     redis_client = get_redis()
     redis_ok = False
     if redis_client:
@@ -83,9 +43,8 @@ async def get_system_health():
             redis_client.ping()
             redis_ok = True
         except Exception:
-            invalidate_redis()  # force reconnect on next call
-    elif _REDIS_URL := __import__("os").getenv("REDIS_URL"):
-        # URL is set but client is None — attempt reconnect now
+            invalidate_redis()
+    elif _os.getenv("REDIS_URL"):
         invalidate_redis()
         redis_client = get_redis()
         if redis_client:
@@ -127,7 +86,7 @@ async def get_system_health():
     docker_latency: Dict = {}
     try:
         from app.observability.metrics import DOCKER_OP_DURATION
-        sums: Dict[str, float]  = {}
+        sums: Dict[str, float] = {}
         counts: Dict[str, float] = {}
         for metric in DOCKER_OP_DURATION.collect():
             for sample in metric.samples:
@@ -145,7 +104,7 @@ async def get_system_health():
     except Exception:
         pass
 
-    # --- Capacity forecast (optional, never blocks the response) ---
+    # --- Capacity forecast ---
     capacity_forecast = None
     from app.api.config import ENABLE_CAPACITY_FORECAST
     if ENABLE_CAPACITY_FORECAST:
@@ -244,5 +203,47 @@ async def get_hosting_health_history(hosting_id: int, limit: int = 24, user: dic
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
-    
+
     return health_repo.get_health_history(hosting_id, limit=limit)
+
+
+@router.get("/{hosting_id}")
+async def get_hosting_health(hosting_id: int, user: dict = Depends(verify_token)):
+    """Obtiene el score de salud actual de un hosting."""
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    health = health_repo.get_latest_health(hosting_id)
+    if not health:
+        return {
+            "score": 100,
+            "status": "excellent",
+            "color": "green",
+            "trend": "stable",
+            "cpu": 0,
+            "ram": 0,
+            "error_count": 0,
+            "warning_count": 0,
+            "alert": None
+        }
+
+    history = health_repo.get_health_history(hosting_id, limit=2)
+    trend = "stable"
+    if len(history) >= 2:
+        prev_score = history[0]["score"]
+        curr_score = history[1]["score"]
+        if curr_score > prev_score:
+            trend = "improving"
+        elif curr_score < prev_score:
+            trend = "degrading"
+
+    return {
+        **health,
+        "trend": trend,
+        "alert": {
+            "type": health["alert_type"],
+            "message": health["alert_message"]
+        } if health.get("alert_type") else None
+    }
