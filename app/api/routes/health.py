@@ -1,13 +1,18 @@
 # app/api/routes/health.py
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict
 from app.api.security import verify_token, require_role
+
+logger = logging.getLogger(__name__)
 from app.infra.audit.health_repository import HealthRepository
 from app.infra.audit.hosting_repository import HostingRepository
+from app.infra.audit.system_alert_repository import SystemAlertRepository
 
 router = APIRouter(prefix="/health", tags=["Health"])
 health_repo = HealthRepository()
 hosting_repo = HostingRepository()
+system_alert_repo = SystemAlertRepository()
 
 # IMPORTANT: static routes (/system, /{id}/history) must be registered BEFORE
 # the dynamic /{hosting_id} route — FastAPI matches in declaration order.
@@ -114,61 +119,61 @@ async def get_system_health():
         except Exception:
             pass
 
-    # --- Smart system alerts ---
+    # --- Prometheus-persisted alerts (authoritative) ---
     system_alerts = []
+    _prometheus_components: set = set()
+    try:
+        for row in system_alert_repo.get_active_alerts():
+            system_alerts.append({
+                "level": row.get("severity", "warning"),
+                "component": row.get("component", "system"),
+                "message": row.get("message", row.get("alert_name", "")),
+                "alert_name": row.get("alert_name"),
+                "fired_at": row.get("fired_at"),
+                "source": "prometheus",
+            })
+            _prometheus_components.add(row.get("component", "system"))
+    except Exception as _exc:
+        logger.warning("get_active_alerts failed: %s", _exc)
+
+    # --- Local heuristic alerts (supplement Prometheus for infra not yet scraped) ---
     if not redis_ok:
         system_alerts.append({
             "level": "warning",
             "component": "redis",
             "message": "Redis desconectado — rate limiting y locks en modo in-memory",
+            "source": "local",
         })
     if not db_pool_info:
         system_alerts.append({
             "level": "critical",
             "component": "db_pool",
             "message": "Pool de base de datos no disponible",
+            "source": "local",
         })
     elif db_pool_info.get("active_connections") is not None:
         maxconn = db_pool_info.get("maxconn", 60)
         pct = db_pool_info["active_connections"] / maxconn * 100 if maxconn else 0
-        if pct >= 90:
+        if pct >= 90 and "database" not in _prometheus_components:
             system_alerts.append({
                 "level": "critical",
                 "component": "db_pool",
                 "message": f"DB pool al {round(pct)}% — {db_pool_info['active_connections']}/{maxconn} conexiones activas",
+                "source": "local",
             })
-        elif pct >= 70:
+        elif pct >= 70 and "database" not in _prometheus_components:
             system_alerts.append({
                 "level": "warning",
                 "component": "db_pool",
                 "message": f"DB pool al {round(pct)}% — {db_pool_info['active_connections']}/{maxconn} conexiones activas",
-            })
-    if capacity_forecast:
-        for resource in ("cpu", "ram", "disk"):
-            f = capacity_forecast.get(resource, {})
-            if f.get("status") == "critical":
-                system_alerts.append({
-                    "level": "critical",
-                    "component": resource,
-                    "message": f"{resource.upper()} crítico: {f.get('hours_left')}h restantes",
-                })
-            elif f.get("status") == "warning":
-                system_alerts.append({
-                    "level": "warning",
-                    "component": resource,
-                    "message": f"{resource.upper()} advertencia: {f.get('hours_left')}h restantes",
-                })
-        if capacity_forecast.get("containers", {}).get("status") == "critical":
-            system_alerts.append({
-                "level": "critical",
-                "component": "containers",
-                "message": f"Slots de contenedores críticos: {capacity_forecast['containers'].get('current')}/{capacity_forecast['containers'].get('max')}",
+                "source": "local",
             })
     if (inflight / MAX_DOCKER_OPS_INFLIGHT * 100) >= 80:
         system_alerts.append({
             "level": "warning",
             "component": "docker",
             "message": f"Docker saturado: {inflight}/{MAX_DOCKER_OPS_INFLIGHT} ops en vuelo",
+            "source": "local",
         })
 
     overall_status = (

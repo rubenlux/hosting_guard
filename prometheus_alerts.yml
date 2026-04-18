@@ -68,6 +68,69 @@ groups:
             this will cause request queuing and latency spikes. Consider increasing maxconn
             or reducing query duration.
 
+  - name: node_capacity
+    rules:
+
+      - alert: NodeCPUWarning
+        expr: 100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 70
+        for: 5m
+        labels:
+          severity: warning
+          component: cpu
+        annotations:
+          summary: "CPU usage above 70% on {{ $labels.instance }}"
+          description: "Node CPU has been above 70% for 5 minutes. Value: {{ $value | humanize }}%"
+
+      - alert: NodeCPUCritical
+        expr: 100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 5m
+        labels:
+          severity: critical
+          component: cpu
+        annotations:
+          summary: "CPU CRITICAL — {{ $value | humanize }}% on {{ $labels.instance }}"
+          description: "Node CPU has been above 90% for 5 minutes. Immediate action required."
+
+      - alert: NodeRAMWarning
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 70
+        for: 5m
+        labels:
+          severity: warning
+          component: ram
+        annotations:
+          summary: "RAM usage above 70% on {{ $labels.instance }}"
+          description: "Node RAM usage: {{ $value | humanize }}%"
+
+      - alert: NodeRAMCritical
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          component: ram
+        annotations:
+          summary: "RAM CRITICAL — {{ $value | humanize }}% on {{ $labels.instance }}"
+          description: "Node RAM has been above 90% for 5 minutes. Risk of OOM kills."
+
+      - alert: NodeDiskWarning
+        expr: (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}) * 100 > 75
+        for: 5m
+        labels:
+          severity: warning
+          component: disk
+        annotations:
+          summary: "Disk usage above 75% on {{ $labels.instance }}"
+          description: "Root filesystem usage: {{ $value | humanize }}%"
+
+      - alert: NodeDiskCritical
+        expr: (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          component: disk
+        annotations:
+          summary: "Disk CRITICAL — {{ $value | humanize }}% on {{ $labels.instance }}"
+          description: "Root filesystem almost full. Remove unused Docker images or expand volume."
+
   - name: hosting_guard_infrastructure
     rules:
 

@@ -294,6 +294,18 @@ _INDEXES = [
     )""",
     # Soft-delete timestamp — preserves audit trail while marking resources as cleaned up
     "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS deleted_at TEXT",
+    # System alert events — persisted by the Prometheus alert poller
+    """CREATE TABLE IF NOT EXISTS system_alert_events (
+        id          SERIAL PRIMARY KEY,
+        alert_name  TEXT NOT NULL,
+        severity    TEXT NOT NULL,
+        component   TEXT NOT NULL,
+        message     TEXT NOT NULL,
+        labels      TEXT,
+        fired_at    TEXT NOT NULL,
+        resolved_at TEXT
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_system_alert_active ON system_alert_events (alert_name, (resolved_at IS NULL)) WHERE resolved_at IS NULL",
 ]
 
 def ensure_monthly_partitions(cursor):
