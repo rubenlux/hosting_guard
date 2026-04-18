@@ -315,6 +315,46 @@ async def admin_terminate_hosting(
     }
 
 
+@router.get("/metrics/node")
+def get_node_metrics(_: dict = Depends(require_role("admin"))):
+    """Real node metrics queried from Prometheus (node_exporter data)."""
+    import os
+    import requests as _req
+
+    PROM = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
+
+    QUERIES = {
+        "cpu_pct":  '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100)',
+        "ram_pct":  "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100",
+        "disk_pct": '(1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}) * 100',
+    }
+
+    result = {"source": "prometheus", "available": False}
+
+    try:
+        values = {}
+        for key, query in QUERIES.items():
+            resp = _req.get(f"{PROM}/api/v1/query", params={"query": query}, timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+            series = data.get("data", {}).get("result", [])
+            if series:
+                values[key] = round(float(series[0]["value"][1]), 1)
+            else:
+                values[key] = None
+
+        result.update({
+            "available": True,
+            "cpu_pct":   values.get("cpu_pct"),
+            "ram_pct":   values.get("ram_pct"),
+            "disk_pct":  values.get("disk_pct"),
+        })
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    return result
+
+
 @router.get("/metrics/capacity")
 def get_capacity_metrics(_: dict = Depends(require_role("admin"))):
     """Unified capacity snapshot for the SystemStatusBanner."""

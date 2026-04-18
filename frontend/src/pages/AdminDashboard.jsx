@@ -15,7 +15,7 @@ import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
   getAdminPixelEvents, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
-  getSystemHealth, getAdminOpsSummary, getCapacityMetrics,
+  getSystemHealth, getAdminOpsSummary, getCapacityMetrics, getNodeMetrics,
   startSupportSession, getSupportSessions, revokeSupportSession,
   listStaff, createStaff, updateStaff, deactivateStaff, resetStaffPassword,
   adminRestartHosting, adminStopHosting, adminStartHosting,
@@ -178,6 +178,7 @@ export default function AdminDashboard() {
   const [systemHealth, setSystemHealth]     = useState(null);
   const [opsSummary, setOpsSummary]         = useState(null);
   const [capacityMetrics, setCapacityMetrics] = useState(null);
+  const [nodeMetrics, setNodeMetrics]         = useState(null);
   const [loading, setLoading]           = useState(true);
   const [tab, setTab]                   = useState('users');
   const [pixelFilter, setPixelFilter]   = useState('all');
@@ -195,6 +196,7 @@ export default function AdminDashboard() {
       getSystemHealth(),
       getAdminOpsSummary(),
       getCapacityMetrics(),
+      getNodeMetrics(),
     ]);
     if (results[0].status === 'fulfilled') setUsers(results[0].value);
     if (results[1].status === 'fulfilled') setHostings(results[1].value);
@@ -206,6 +208,7 @@ export default function AdminDashboard() {
     if (results[7].status === 'fulfilled') setSystemHealth(results[7].value);
     if (results[8].status === 'fulfilled') setOpsSummary(results[8].value);
     if (results[9].status === 'fulfilled') setCapacityMetrics(results[9].value);
+    if (results[10].status === 'fulfilled') setNodeMetrics(results[10].value);
     setLoading(false);
   };
 
@@ -450,40 +453,61 @@ export default function AdminDashboard() {
               <div className="grid grid-cols-3 gap-4">
                 {/* Capacity forecast */}
                 <div className="bg-[#111] rounded-xl border border-white/5 p-4">
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Capacidad del Nodo</div>
-                  {systemHealth?.capacity_forecast ? (
-                    <div className="flex flex-col gap-2.5">
-                      {[
-                        { key: 'cpu',        label: 'CPU',   icon: <Cpu className="w-3 h-3" /> },
-                        { key: 'ram',        label: 'RAM',   icon: <MemoryStick className="w-3 h-3" /> },
-                        { key: 'disk',       label: 'Disco', icon: <HardDrive className="w-3 h-3" /> },
-                        { key: 'containers', label: 'Cont.', icon: <Gauge className="w-3 h-3" /> },
-                      ].map(({ key, label, icon }) => {
-                        const f = systemHealth.capacity_forecast[key];
-                        const statusColor = !f || f.status === 'ok' ? '#00ff88' : f.status === 'warning' ? '#ffaa00' : '#ef4444';
-                        const hoursLeft = f?.hours_left;
-                        const usagePct = f?.usage ?? f?.usage_pct ?? null;
-                        return (
-                          <div key={key} className="flex items-center gap-2">
-                            <span style={{ color: statusColor }} className="opacity-70">{icon}</span>
-                            <span className="text-[10px] text-gray-400 w-8 shrink-0">{label}</span>
-                            <div className="flex-1 h-1.5 bg-white/5 rounded overflow-hidden">
-                              <div className="h-full rounded transition-all" style={{
-                                width: usagePct != null ? `${Math.min(usagePct, 100)}%` : '0%',
-                                background: statusColor,
-                              }} />
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Capacidad del Nodo</div>
+                    {nodeMetrics?.available && (
+                      <span className="text-[9px] font-mono text-emerald-500/60 uppercase tracking-widest">Prometheus</span>
+                    )}
+                  </div>
+                  {(() => {
+                    // Prefer real Prometheus data; fall back to capacity_forecast from psutil
+                    const rows = [
+                      {
+                        label: 'CPU',
+                        icon: <Cpu className="w-3 h-3" />,
+                        pct: nodeMetrics?.available ? nodeMetrics.cpu_pct : systemHealth?.capacity_forecast?.cpu?.usage,
+                      },
+                      {
+                        label: 'RAM',
+                        icon: <MemoryStick className="w-3 h-3" />,
+                        pct: nodeMetrics?.available ? nodeMetrics.ram_pct : systemHealth?.capacity_forecast?.ram?.usage,
+                      },
+                      {
+                        label: 'Disco',
+                        icon: <HardDrive className="w-3 h-3" />,
+                        pct: nodeMetrics?.available ? nodeMetrics.disk_pct : systemHealth?.capacity_forecast?.disk?.usage,
+                      },
+                      {
+                        label: 'Cont.',
+                        icon: <Gauge className="w-3 h-3" />,
+                        pct: systemHealth?.capacity_forecast?.containers?.usage,
+                      },
+                    ];
+                    const hasData = rows.some(r => r.pct != null);
+                    if (!hasData) return <div className="text-[10px] text-gray-600 italic">Métricas no disponibles</div>;
+                    return (
+                      <div className="flex flex-col gap-2.5">
+                        {rows.map(({ label, icon, pct }) => {
+                          const color = pct == null ? '#4b5563' : pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
+                          return (
+                            <div key={label} className="flex items-center gap-2">
+                              <span style={{ color }} className="opacity-70">{icon}</span>
+                              <span className="text-[10px] text-gray-400 w-8 shrink-0">{label}</span>
+                              <div className="flex-1 h-1.5 bg-white/5 rounded overflow-hidden">
+                                <div className="h-full rounded transition-all" style={{
+                                  width: pct != null ? `${Math.min(pct, 100)}%` : '0%',
+                                  background: color,
+                                }} />
+                              </div>
+                              <span className="text-[10px] font-mono w-12 text-right" style={{ color }}>
+                                {pct != null ? `${Math.round(pct)}%` : 'N/A'}
+                              </span>
                             </div>
-                            <span className="text-[10px] font-mono w-20 text-right" style={{ color: statusColor }}>
-                              {usagePct != null ? `${Math.round(usagePct)}%` : 'N/A'}
-                              {hoursLeft != null && hoursLeft < 72 ? ` · ${Math.round(hoursLeft)}h` : ''}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="text-[10px] text-gray-600 italic">Métricas no disponibles</div>
-                  )}
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Docker ops detail */}
