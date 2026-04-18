@@ -306,6 +306,22 @@ _INDEXES = [
         resolved_at TEXT
     )""",
     "CREATE UNIQUE INDEX IF NOT EXISTS uix_system_alert_active ON system_alert_events (alert_name, (resolved_at IS NULL)) WHERE resolved_at IS NULL",
+    # WordPress backup import jobs — tracks pipeline state, logs, and domain info
+    """CREATE TABLE IF NOT EXISTS import_jobs (
+        job_id          SERIAL PRIMARY KEY,
+        hosting_id      INTEGER NOT NULL REFERENCES hostings(hosting_id),
+        user_id         INTEGER NOT NULL REFERENCES users(user_id),
+        status          TEXT NOT NULL DEFAULT 'uploading',
+        backup_type     TEXT,
+        original_domain TEXT,
+        new_domain      TEXT,
+        logs            TEXT NOT NULL DEFAULT '',
+        error           TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_import_jobs_user ON import_jobs (user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_import_jobs_hosting ON import_jobs (hosting_id)",
 ]
 
 def ensure_monthly_partitions(cursor):

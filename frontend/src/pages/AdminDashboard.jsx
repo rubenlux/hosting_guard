@@ -27,6 +27,7 @@ import { useAuth } from '../hooks/useAuth';
 import StaffAnalytics from '../components/StaffAnalytics';
 import StatusCommandBar from '../components/dashboard/StatusCommandBar';
 import SystemStatusBanner from '../components/dashboard/SystemStatusBanner';
+import ImportSiteModal from '../components/dashboard/ImportSiteModal';
 
 /* ─── helpers ─────────────────────────────────────────────── */
 function groupBy(arr, key) {
@@ -1672,6 +1673,7 @@ function HostingsTable({ hostings, loading, metricsMap, onReload }) {
   const [actioning, setActioning] = useState(null);   // hosting_id being acted on
   const [logsModal, setLogsModal] = useState(null);   // { hosting, logs }
   const [terminateModal, setTerminate] = useState(null); // hosting
+  const [importModal, setImportModal] = useState(null);  // hosting
 
   const act = async (hosting, fn, label) => {
     if (!window.confirm(`¿${label} el hosting "${hosting.name}" (${hosting.container_name})?`)) return;
@@ -1737,6 +1739,17 @@ function HostingsTable({ hostings, loading, metricsMap, onReload }) {
                     <td className="px-4 py-3 text-gray-500 font-mono text-[10px]">{h.subdomain}</td>
                     <td className="sticky right-0 bg-[#111] group-hover:bg-[#161616] px-4 py-3 border-l border-white/5 transition-colors">
                       <div className="flex items-center gap-1.5">
+                        {/* Import backup — only for WordPress containers */}
+                        {h.container_name?.includes('_wp_') && (
+                          <button
+                            onClick={() => setImportModal(h)}
+                            disabled={busy}
+                            title="Importar backup"
+                            className="p-1.5 rounded hover:bg-blue-500/10 text-gray-600 hover:text-blue-400 transition-colors disabled:opacity-40"
+                          >
+                            <PlusCircle className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         {/* Logs */}
                         <button
                           onClick={() => viewLogs(h)}
@@ -1820,6 +1833,15 @@ function HostingsTable({ hostings, loading, metricsMap, onReload }) {
             onReload?.();
           }}
           onCancel={() => setTerminate(null)}
+        />
+      )}
+
+      {/* Import backup modal */}
+      {importModal && (
+        <ImportSiteModal
+          hosting={importModal}
+          onClose={() => setImportModal(null)}
+          onComplete={() => { setImportModal(null); onReload?.(); }}
         />
       )}
     </>

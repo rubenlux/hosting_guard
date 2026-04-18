@@ -270,6 +270,28 @@ export const getUnitEconomics = async () => {
     return response.data;
 };
 
+export const startImport = async (hostingId, file) => {
+    const form = new FormData();
+    form.append('hosting_id', hostingId);
+    form.append('file', file);
+    const response = await api.post('/hosting/import', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+};
+
+export const getImportStatus = async (jobId) => {
+    const response = await api.get(`/hosting/import/${jobId}`);
+    return response.data;
+};
+
+export const listImportJobs = async (hostingId) => {
+    const response = await api.get('/hosting/import', { params: { hosting_id: hostingId } });
+    return response.data;
+};
+
+export const getImportLogsUrl = (jobId) => `${API_URL}/hosting/import/${jobId}/logs`;
+
 export const adminExtendPlan = async (userId, days) => {
     const response = await api.post(`/admin/users/${userId}/plan/extend`, { days });
     return response.data;
