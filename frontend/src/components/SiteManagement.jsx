@@ -1,20 +1,21 @@
 import React from 'react';
-import { 
-  Globe, Play, Square, RotateCcw, AlertTriangle, 
+import {
+  Globe, Play, Square, RotateCcw, AlertTriangle,
   Trash2, FileText, Bot, Upload, FolderOpen, RefreshCw,
-  Cpu, Database
+  Cpu, Database, HardDriveDownload,
 } from 'lucide-react';
 
-const SiteManagement = ({ 
-  hostings, 
-  loading, 
-  onRefresh, 
+const SiteManagement = ({
+  hostings,
+  loading,
+  onRefresh,
   onAction,
   onOpenLogs,
   onDelete,
   onUploadZip,
   onOpenFiles,
   onDiagnose,
+  onImportBackup,
   healthData = {}
 }) => {
 
@@ -128,9 +129,20 @@ const SiteManagement = ({
                   </button>
                 )}
                 
+                {/* Import backup — WordPress only */}
+                {h.container_name?.includes('_wp_') && (
+                  <button
+                    onClick={() => onImportBackup?.(h)}
+                    className="w-9 h-9 flex items-center justify-center rounded-lg bg-white/5 hover:bg-blue-500/20 hover:text-blue-400 transition-colors"
+                    title="Importar backup"
+                  >
+                    <HardDriveDownload size={15} />
+                  </button>
+                )}
+
                 <div className="w-[1px] h-6 bg-white/10 mx-1"></div>
-                
-                <button 
+
+                <button
                   onClick={() => onDiagnose?.(h.hosting_id)}
                   className="px-3 h-9 flex items-center gap-2 rounded-lg bg-ia/10 text-ia hover:bg-ia hover:text-[#000] font-bold text-[11px] transition-all"
                 >

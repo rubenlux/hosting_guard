@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Globe, Cpu, Database, RefreshCw, Upload, FolderOpen,
-  Square, RotateCcw, FileText, Play, Trash2, Loader,
+  Square, RotateCcw, FileText, Play, Trash2, Loader, HardDriveDownload,
 } from 'lucide-react';
 
 /**
@@ -37,6 +37,7 @@ export default function HostingList({
   onDelete,
   onUploadZip,
   onOpenFiles,
+  onImportBackup,
 }) {
   return (
     <div className="card-dash">
@@ -127,6 +128,15 @@ export default function HostingList({
                             className="w-8 h-8 rounded-lg bg-white/5 text-gray-400 hover:bg-blue-500/10 hover:text-blue-400 flex items-center justify-center transition-all border border-transparent hover:border-blue-500/20"
                           >
                             <FolderOpen className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {h.container_name?.includes('_wp_') && (
+                          <button
+                            onClick={() => onImportBackup?.(h)}
+                            title="Importar backup WordPress"
+                            className="w-8 h-8 rounded-lg bg-white/5 text-gray-400 hover:bg-blue-500/10 hover:text-blue-400 flex items-center justify-center transition-all border border-transparent hover:border-blue-500/20"
+                          >
+                            <HardDriveDownload className="w-3.5 h-3.5" />
                           </button>
                         )}
                         <button

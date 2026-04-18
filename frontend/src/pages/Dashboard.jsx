@@ -31,6 +31,7 @@ import SupportChat          from '../components/SupportChat';
 import SupportTicketList    from '../components/SupportTicketList';
 import SiteManagement       from '../components/SiteManagement';
 import AIAdvisoryPage       from './AIAdvisory';
+import ImportSiteModal      from '../components/dashboard/ImportSiteModal';
 const BusinessOverview = lazy(() => import('../components/dashboard/BusinessOverview'));
 
 const Dashboard = () => {
@@ -94,6 +95,7 @@ const Dashboard = () => {
   const [showLogs,              setShowLogs]              = useState(false);
   const [showUpload,            setShowUpload]            = useState(false);
   const [selectedUploadHosting, setSelectedUploadHosting] = useState(null);
+  const [importModal,           setImportModal]           = useState(null);
   const [showFiles,             setShowFiles]             = useState(false);
   const [selectedFilesHosting,  setSelectedFilesHosting]  = useState(null);
   const [isSidebarCollapsed,    setIsSidebarCollapsed]    = useState(false);
@@ -332,6 +334,7 @@ const Dashboard = () => {
                 onDelete={handleDelete}
                 onUploadZip={(h) => { setSelectedUploadHosting(h); setShowUpload(true); }}
                 onOpenFiles={(h) => { setSelectedFilesHosting(h); setShowFiles(true); }}
+                onImportBackup={(h) => setImportModal(h)}
                 onDiagnose={handleDiagnose}
               />
             ) : (
@@ -395,6 +398,7 @@ const Dashboard = () => {
                       onDelete={handleDelete}
                       onUploadZip={(h) => { setSelectedUploadHosting(h); setShowUpload(true); }}
                       onOpenFiles={(h) => { setSelectedFilesHosting(h); setShowFiles(true); }}
+                      onImportBackup={(h) => setImportModal(h)}
                     />
                     <ActivityFeed events={events} onRefresh={refresh} />
                   </div>
@@ -535,6 +539,14 @@ const Dashboard = () => {
           onClose={() => { setShowUpload(false); setSelectedUploadHosting(null); }}
           hosting={selectedUploadHosting}
         />
+
+        {importModal && (
+          <ImportSiteModal
+            hosting={importModal}
+            onClose={() => setImportModal(null)}
+            onComplete={() => { setImportModal(null); refresh(); }}
+          />
+        )}
 
         {showFiles && selectedFilesHosting && (
           <MonacoFileEditor
