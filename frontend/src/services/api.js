@@ -265,6 +265,11 @@ export const getJobsSummary = async () => {
     return response.data;
 };
 
+export const getUnitEconomics = async () => {
+    const response = await api.get('/admin/metrics/unit-economics');
+    return response.data;
+};
+
 export const adminExtendPlan = async (userId, days) => {
     const response = await api.post(`/admin/users/${userId}/plan/extend`, { days });
     return response.data;

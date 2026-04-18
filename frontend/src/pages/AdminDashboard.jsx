@@ -16,7 +16,7 @@ import {
   getAdminPixelEvents, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
   getSystemHealth, getAdminOpsSummary, getCapacityMetrics, getNodeMetrics,
-  getTenantResourceUsage, getJobsSummary,
+  getTenantResourceUsage, getJobsSummary, getUnitEconomics,
   startSupportSession, getSupportSessions, revokeSupportSession,
   listStaff, createStaff, updateStaff, deactivateStaff, resetStaffPassword,
   adminRestartHosting, adminStopHosting, adminStartHosting,
@@ -182,6 +182,7 @@ export default function AdminDashboard() {
   const [nodeMetrics, setNodeMetrics]         = useState(null);
   const [tenantUsage, setTenantUsage]         = useState(null);
   const [jobsSummary, setJobsSummary]         = useState(null);
+  const [unitEconomics, setUnitEconomics]     = useState(null);
   const [loading, setLoading]           = useState(true);
   const [tab, setTab]                   = useState('users');
   const [pixelFilter, setPixelFilter]   = useState('all');
@@ -202,6 +203,7 @@ export default function AdminDashboard() {
       getNodeMetrics(),
       getTenantResourceUsage(),
       getJobsSummary(),
+      getUnitEconomics(),
     ]);
     if (results[0].status === 'fulfilled') setUsers(results[0].value);
     if (results[1].status === 'fulfilled') setHostings(results[1].value);
@@ -216,6 +218,7 @@ export default function AdminDashboard() {
     if (results[10].status === 'fulfilled') setNodeMetrics(results[10].value);
     if (results[11].status === 'fulfilled') setTenantUsage(results[11].value);
     if (results[12].status === 'fulfilled') setJobsSummary(results[12].value);
+    if (results[13].status === 'fulfilled') setUnitEconomics(results[13].value);
     setLoading(false);
   };
 
@@ -766,7 +769,7 @@ export default function AdminDashboard() {
                     </div>
                   ) : (
                     <div className="py-6 text-center">
-                      <div className="text-[10px] text-gray-600 mb-1">Sin actividad de recursos en los últimos 7 días</div>
+                      <div className="text-[10px] text-gray-600 mb-1">Aún no hay suficiente tráfico para calcular consumo por tenant</div>
                       <div className="text-[9px] text-gray-700">Los datos aparecen cuando el orchestrator registra eventos de CPU/RAM</div>
                     </div>
                   )}
@@ -785,38 +788,123 @@ export default function AdminDashboard() {
                       </div>
                     )}
                     {[
-                      { key: 'reconcile',    label: 'Reconciler',       staleMinutes: 10  },
-                      { key: 'expire',       label: 'Expiration Job',   staleMinutes: 780 },
-                      { key: 'health_check', label: 'Health Checker',   staleMinutes: 10  },
-                      { key: 'traffic',      label: 'Traffic Collector',staleMinutes: 10  },
-                    ].map(({ key, label, staleMinutes }) => {
+                      { key: 'reconcile',    label: 'Reconciler'        },
+                      { key: 'expire',       label: 'Expiration Job'    },
+                      { key: 'health_check', label: 'Health Checker'    },
+                      { key: 'traffic',      label: 'Traffic Collector' },
+                    ].map(({ key, label }) => {
                       const job = jobsSummary?.jobs?.[key];
-                      const active = job?.count_24h > 0;
+                      const status = job?.status ?? 'never_run';
+                      const dotColor = status === 'ok' ? '#22c55e' : status === 'stale' ? '#f59e0b' : '#4b5563';
                       const lastRunMs = job?.last_run ? new Date(job.last_run).getTime() : null;
                       const minsAgo = lastRunMs ? Math.floor((Date.now() - lastRunMs) / 60000) : null;
-                      const stale = lastRunMs != null && minsAgo > staleMinutes;
-                      const statusColor = !active ? '#4b5563' : stale ? '#f59e0b' : '#22c55e';
+                      const timeLabel = status === 'never_run'
+                        ? 'Nunca ejecutado'
+                        : minsAgo == null ? null
+                        : minsAgo < 60 ? `Hace ${minsAgo}m`
+                        : `Hace ${Math.floor(minsAgo / 60)}h`;
                       return (
                         <div key={key} className="flex items-center justify-between text-[10px]">
                           <span className="text-gray-500">{label}</span>
                           <div className="flex items-center gap-2">
                             <div className="text-right">
-                              <div className="font-mono" style={{ color: active ? '#d1d5db' : '#4b5563' }}>
+                              <div className="font-mono text-gray-400">
                                 {job ? `${job.count_24h} runs` : '—'}
                               </div>
-                              {minsAgo != null && (
-                                <div className="text-[9px] font-mono" style={{ color: stale ? '#f59e0b' : '#4b5563' }}>
-                                  {minsAgo < 60 ? `${minsAgo}m atrás` : `${Math.floor(minsAgo / 60)}h atrás`}
+                              {timeLabel && (
+                                <div className="text-[9px] font-mono" style={{ color: status === 'stale' ? '#f59e0b' : status === 'never_run' ? '#4b5563' : '#6b7280' }}>
+                                  {timeLabel}
                                 </div>
                               )}
                             </div>
-                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusColor }} />
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />
                           </div>
                         </div>
                       );
                     })}
                   </div>
                 </div>
+              </div>
+
+              {/* Row 5: Unit Economics */}
+              <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
+                  <div>
+                    <span className="text-[11px] font-semibold text-white">Unit Economics</span>
+                    <span className="ml-2 text-[9px] text-gray-600">costo vs revenue por tenant</span>
+                  </div>
+                  {unitEconomics?.summary && (
+                    <div className="flex items-center gap-4 text-[10px]">
+                      {[
+                        { label: 'Revenue', val: `$${unitEconomics.summary.total_revenue}`, color: '#00aaff' },
+                        { label: 'Costo',   val: `$${unitEconomics.summary.total_infra_cost}`, color: '#f59e0b' },
+                        { label: 'Profit',  val: `$${unitEconomics.summary.total_profit}`,
+                          color: unitEconomics.summary.total_profit >= 0 ? '#22c55e' : '#ef4444' },
+                        { label: 'Margen',
+                          val: unitEconomics.summary.avg_margin_pct != null ? `${unitEconomics.summary.avg_margin_pct}%` : '—',
+                          color: (unitEconomics.summary.avg_margin_pct ?? 0) >= 30 ? '#22c55e'
+                               : (unitEconomics.summary.avg_margin_pct ?? 0) >= 0 ? '#f59e0b' : '#ef4444' },
+                      ].map(({ label, val, color }) => (
+                        <div key={label} className="text-center">
+                          <div className="text-[9px] text-gray-600 uppercase tracking-wider">{label}</div>
+                          <div className="font-mono font-bold text-[11px]" style={{ color }}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {unitEconomics?.tenants?.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[10px]">
+                      <thead>
+                        <tr className="border-b border-white/5">
+                          {['Usuario', 'Plan', 'CPU', 'RAM', 'Revenue', 'Costo', 'Profit', 'Margen'].map(h => (
+                            <th key={h} className="px-4 py-2 text-left text-[9px] text-gray-600 uppercase tracking-wider font-medium">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {unitEconomics.tenants.map((t, i) => {
+                          const rowBg = t.status === 'loss'
+                            ? 'bg-red-500/5 border-b border-red-500/10'
+                            : t.status === 'break_even'
+                            ? 'bg-amber-500/5 border-b border-amber-500/10'
+                            : 'border-b border-white/3';
+                          const profitColor = t.profit > 0 ? '#22c55e' : t.profit < 0 ? '#ef4444' : '#f59e0b';
+                          const marginColor = (t.margin_pct ?? 0) >= 30 ? '#22c55e' : (t.margin_pct ?? 0) >= 0 ? '#f59e0b' : '#ef4444';
+                          return (
+                            <tr key={i} className={rowBg}>
+                              <td className="px-4 py-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-white/80 truncate max-w-[120px]">{t.email}</span>
+                                  {t.upgrade_candidate && (
+                                    <span className="text-[8px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-400 font-bold shrink-0">UPGRADE</span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-4 py-2">
+                                <span className={`text-[8px] px-1.5 py-0.5 rounded font-bold uppercase ${PLAN_STYLE[t.plan] ?? 'bg-white/5 text-gray-400'}`}>{t.plan}</span>
+                              </td>
+                              <td className="px-4 py-2 font-mono text-gray-400">{t.avg_cpu_pct}%</td>
+                              <td className="px-4 py-2 font-mono text-gray-400">{t.avg_mem_pct}%</td>
+                              <td className="px-4 py-2 font-mono text-[#00aaff]">${t.revenue}</td>
+                              <td className="px-4 py-2 font-mono text-amber-400">${t.infra_cost}</td>
+                              <td className="px-4 py-2 font-mono font-bold" style={{ color: profitColor }}>${t.profit}</td>
+                              <td className="px-4 py-2 font-mono font-bold" style={{ color: marginColor }}>
+                                {t.margin_pct != null ? `${t.margin_pct}%` : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="px-5 py-8 text-center text-[10px] text-gray-600">
+                    Sin containers activos para calcular unit economics
+                  </div>
+                )}
               </div>
 
               {/* Tabs: Users / Hostings / Pixel */}

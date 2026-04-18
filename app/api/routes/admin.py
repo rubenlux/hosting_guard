@@ -339,8 +339,8 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
         "ram_avail_predicted": "predict_linear(node_memory_MemAvailable_bytes[6h], 86400*14)",
         "ram_avail_bytes":     "node_memory_MemAvailable_bytes",
         "ram_total_bytes":     "node_memory_MemTotal_bytes",
-        # CPU forecast: predict idle ratio in 14 days, convert to usage %
-        "cpu_idle_predicted":  "predict_linear(avg(rate(node_cpu_seconds_total{mode='idle'}[2m]))[6h:], 86400*14)",
+        # CPU forecast: avg_over_time smooths short spikes before predict_linear
+        "cpu_idle_predicted":  "predict_linear(avg_over_time(avg(rate(node_cpu_seconds_total{mode='idle'}[5m]))[6h:5m]), 86400*14)",
         # Docker p95 latency
         "docker_p95": "histogram_quantile(0.95, rate(hosting_guard_docker_op_duration_seconds_bucket[5m]))",
     }
@@ -388,14 +388,13 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
                     if fill_rate > 0:
                         days_left = round(avail_now / fill_rate / 86400, 1)
 
-        # CPU forecast: days until CPU saturates (>90%)
+        # CPU forecast: smoothed with avg_over_time to suppress short spikes
         cpu_days_left = None
         cpu_idle_predicted = _query(QUERIES["cpu_idle_predicted"])
         if cpu is not None and cpu_idle_predicted is not None:
-            # idle_predicted is a ratio (0-1); CPU usage = (1 - idle) * 100
-            cpu_future = (1 - cpu_idle_predicted) * 100
-            if cpu_future >= 90 and cpu is not None:
-                # Linear interpolation: days until we hit 90%
+            # idle_predicted is a ratio (0-1) from smoothed avg_over_time; CPU usage = (1 - idle) * 100
+            cpu_future = (1 - max(0.0, min(1.0, cpu_idle_predicted))) * 100
+            if cpu_future >= 90:
                 delta_per_day = (cpu_future - cpu) / 14
                 if delta_per_day > 0:
                     cpu_days_left = round((90 - cpu) / delta_per_day, 1)
@@ -522,29 +521,52 @@ def get_tenant_resource_usage(_: dict = Depends(require_role("admin"))):
         release_connection(conn)
 
 
+_JOB_STALE_MINUTES = {
+    "reconcile":   10,
+    "expire":      780,   # 13h
+    "health_check": 10,
+    "traffic":     10,
+}
+
 @router.get("/jobs/summary")
 def get_jobs_summary(_: dict = Depends(require_role("admin"))):
-    """Last run times and counts for background jobs (reconciler, expiration, health checker)."""
+    """Last run times, run counts, and explicit status for background jobs."""
     from app.infra.db import get_connection, release_connection
+    import os, requests as _req
     conn = get_connection()
     try:
         cursor = conn.cursor()
         jobs = {}
+        now = datetime.now(timezone.utc)
         for event_type in ("reconcile", "expire", "health_check", "traffic"):
+            # Count in last 24h and get the most recent run ever
             cursor.execute("""
-                SELECT COUNT(*) AS cnt, MAX(created_at) AS last_run
+                SELECT COUNT(*) AS cnt_24h,
+                       MAX(created_at) AS last_run
                 FROM orchestrator_events
                 WHERE event_type ILIKE %s
-                  AND created_at::timestamptz > NOW() - INTERVAL '24 hours'
             """, (f"%{event_type}%",))
             row = cursor.fetchone()
+            cnt_24h = int(row["cnt_24h"]) if row else 0
+            last_run = row["last_run"] if row else None
+
+            # Determine status
+            if last_run is None:
+                status = "never_run"
+            else:
+                if last_run.tzinfo is None:
+                    last_run = last_run.replace(tzinfo=timezone.utc)
+                mins_ago = (now - last_run).total_seconds() / 60
+                stale_after = _JOB_STALE_MINUTES.get(event_type, 30)
+                status = "stale" if mins_ago > stale_after else "ok"
+
             jobs[event_type] = {
-                "count_24h": int(row["cnt"]) if row else 0,
-                "last_run":  row["last_run"] if row else None,
+                "count_24h":          cnt_24h,
+                "last_run":           last_run.isoformat() if last_run else None,
+                "status":             status,
             }
 
         # Prometheus: db_errors_total
-        import os, requests as _req
         PROM = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
         db_errors = None
         try:
@@ -553,7 +575,7 @@ def get_jobs_summary(_: dict = Depends(require_role("admin"))):
                             timeout=4)
             series = resp.json().get("data", {}).get("result", [])
             if series:
-                db_errors = round(float(series[0]["value"][1]) * 3600, 2)  # errors/hour
+                db_errors = round(float(series[0]["value"][1]) * 3600, 2)
         except Exception:
             pass
 
@@ -562,6 +584,185 @@ def get_jobs_summary(_: dict = Depends(require_role("admin"))):
         return {"jobs": {}, "error": str(exc)}
     finally:
         release_connection(conn)
+
+
+@router.get("/metrics/unit-economics")
+def get_unit_economics(_: dict = Depends(require_role("admin"))):
+    """
+    Per-tenant unit economics: infra cost vs revenue.
+
+    Costs are proportional allocations of the monthly server bill,
+    weighted by each tenant's CPU / RAM / Disk share.
+    Revenue is the tenant's recorded balance (or plan price if set).
+    """
+    import os, requests as _req
+    from app.infra.db import get_connection, release_connection
+
+    SERVER_COST_MONTHLY = float(os.getenv("SERVER_COST_MONTHLY", "20.0"))
+    # Total node capacity (configurable or auto-detected from Prometheus)
+    PROM = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
+
+    def _prom(q):
+        try:
+            r = _req.get(f"{PROM}/api/v1/query", params={"query": q}, timeout=5)
+            s = r.json().get("data", {}).get("result", [])
+            return float(s[0]["value"][1]) if s else None
+        except Exception:
+            return None
+
+    # Node totals from Prometheus
+    total_ram_bytes  = _prom("node_memory_MemTotal_bytes") or 0
+    total_disk_bytes = _prom('node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}') or 0
+    cpu_cores        = _prom("count(node_cpu_seconds_total{mode='idle'})") or float(os.getenv("NODE_CPU_CORES", "2"))
+    total_ram_mb     = total_ram_bytes / 1024 / 1024 if total_ram_bytes else float(os.getenv("NODE_RAM_MB", "4096"))
+    total_disk_mb    = total_disk_bytes / 1024 / 1024 if total_disk_bytes else float(os.getenv("NODE_DISK_MB", "80000"))
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+
+        # Get active hostings joined with user data
+        cursor.execute("""
+            SELECT
+                h.hosting_id,
+                h.container_name,
+                h.plan,
+                h.user_id,
+                u.email,
+                u.balance,
+                o.avg_cpu,
+                o.avg_mem
+            FROM hostings h
+            JOIN users u ON u.user_id = h.user_id
+            LEFT JOIN (
+                SELECT container_name,
+                       AVG(cpu_pct) AS avg_cpu,
+                       AVG(mem_pct) AS avg_mem
+                FROM orchestrator_events
+                WHERE cpu_pct IS NOT NULL
+                  AND created_at::timestamptz > NOW() - INTERVAL '24 hours'
+                GROUP BY container_name
+            ) o ON o.container_name = h.container_name
+            WHERE h.status = 'active'
+        """)
+        rows = cursor.fetchall()
+    except Exception as exc:
+        return {"error": str(exc), "tenants": []}
+    finally:
+        release_connection(conn)
+
+    # Plan monthly revenue estimates (override with real payments when available)
+    PLAN_REVENUE = {
+        "free":     0.0,
+        "personal": 9.0,
+        "negocio":  19.0,
+        "agencia":  39.0,
+    }
+
+    tenants = []
+    total_cpu_used = total_ram_used = total_disk_used = 0.0
+
+    for r in rows:
+        avg_cpu = r["avg_cpu"] or 0.0
+        avg_mem = r["avg_mem"] or 0.0  # % of container RAM allocation
+
+        # Approximate per-container resource usage in absolute units
+        cpu_used  = (avg_cpu / 100) * cpu_cores          # fractional cores
+        ram_used  = (avg_mem / 100) * (total_ram_mb / max(len(rows), 1))   # MB (fair-share estimate)
+        disk_used = 500.0  # default 500MB per container (no per-container disk metric yet)
+
+        total_cpu_used  += cpu_used
+        total_ram_used  += ram_used
+        total_disk_used += disk_used
+
+        tenants.append({
+            "container_name": r["container_name"],
+            "user_id":        r["user_id"],
+            "email":          r["email"],
+            "plan":           r["plan"] or "free",
+            "balance":        round(r["balance"] or 0, 2),
+            "avg_cpu_pct":    round(avg_cpu, 1),
+            "avg_mem_pct":    round(avg_mem, 1),
+            "_cpu_used":      cpu_used,
+            "_ram_used":      ram_used,
+            "_disk_used":     disk_used,
+        })
+
+    # Second pass: allocate costs proportionally across all active tenants
+    total_allocated_cpu  = max(total_cpu_used, 0.001)
+    total_allocated_ram  = max(total_ram_used, 0.001)
+    total_allocated_disk = max(total_disk_used, 0.001)
+
+    # Cost weight: 50% CPU, 35% RAM, 15% Disk
+    CPU_W, RAM_W, DISK_W = 0.50, 0.35, 0.15
+
+    result_tenants = []
+    agg_revenue = agg_cost = 0.0
+
+    for t in tenants:
+        plan = t["plan"]
+        revenue = PLAN_REVENUE.get(plan, 0.0)
+
+        cpu_cost  = (t["_cpu_used"]  / total_allocated_cpu)  * SERVER_COST_MONTHLY * CPU_W
+        ram_cost  = (t["_ram_used"]  / total_allocated_ram)  * SERVER_COST_MONTHLY * RAM_W
+        disk_cost = (t["_disk_used"] / total_allocated_disk) * SERVER_COST_MONTHLY * DISK_W
+        infra_cost = round(cpu_cost + ram_cost + disk_cost, 2)
+
+        profit = round(revenue - infra_cost, 2)
+        margin_pct = round(profit / revenue * 100, 1) if revenue > 0 else None
+
+        if revenue == 0:
+            status = "loss"
+        elif profit < 0:
+            status = "loss"
+        elif profit < revenue * 0.1:
+            status = "break_even"
+        else:
+            status = "profitable"
+
+        upgrade_candidate = plan == "free" and (t["avg_cpu_pct"] > 40 or t["avg_mem_pct"] > 50)
+
+        agg_revenue += revenue
+        agg_cost    += infra_cost
+
+        result_tenants.append({
+            "container_name":    t["container_name"],
+            "user_id":           t["user_id"],
+            "email":             t["email"],
+            "plan":              plan,
+            "balance":           t["balance"],
+            "avg_cpu_pct":       t["avg_cpu_pct"],
+            "avg_mem_pct":       t["avg_mem_pct"],
+            "revenue":           round(revenue, 2),
+            "infra_cost":        infra_cost,
+            "profit":            profit,
+            "margin_pct":        margin_pct,
+            "status":            status,
+            "upgrade_candidate": upgrade_candidate,
+        })
+
+    # Sort by profit ascending (worst first)
+    result_tenants.sort(key=lambda x: x["profit"])
+
+    total_profit = round(agg_revenue - agg_cost, 2)
+    avg_margin = round(total_profit / agg_revenue * 100, 1) if agg_revenue > 0 else None
+
+    return {
+        "tenants": result_tenants,
+        "summary": {
+            "server_cost_monthly": SERVER_COST_MONTHLY,
+            "total_revenue":       round(agg_revenue, 2),
+            "total_infra_cost":    round(agg_cost, 2),
+            "total_profit":        total_profit,
+            "avg_margin_pct":      avg_margin,
+            "active_containers":   len(result_tenants),
+        },
+        "node": {
+            "cpu_cores":    cpu_cores,
+            "total_ram_mb": round(total_ram_mb),
+            "total_disk_mb": round(total_disk_mb),
+        },
+    }
 
 
 @router.get("/metrics/capacity")
