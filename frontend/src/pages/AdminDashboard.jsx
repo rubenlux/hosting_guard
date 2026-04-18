@@ -9,12 +9,13 @@ import {
   ToggleLeft, ToggleRight, ChevronDown, Pencil, Trash2,
   Terminal, RotateCcw, Play, Square, KeyRound,
   Crown, Infinity, CalendarClock, ShieldOff, TrendingUp as Upgrade, X,
+  Database, Cpu, MemoryStick, HardDrive, Trash, Gauge, Wifi, WifiOff,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
   getAdminPixelEvents, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
-  getSystemHealth,
+  getSystemHealth, getAdminOpsSummary,
   startSupportSession, getSupportSessions, revokeSupportSession,
   listStaff, createStaff, updateStaff, deactivateStaff, resetStaffPassword,
   adminRestartHosting, adminStopHosting, adminStartHosting,
@@ -174,6 +175,7 @@ export default function AdminDashboard() {
   const [orcEvents, setOrcEvents]           = useState([]);
   const [finance, setFinance]               = useState(null);
   const [systemHealth, setSystemHealth]     = useState(null);
+  const [opsSummary, setOpsSummary]         = useState(null);
   const [loading, setLoading]           = useState(true);
   const [tab, setTab]                   = useState('users');
   const [pixelFilter, setPixelFilter]   = useState('all');
@@ -189,6 +191,7 @@ export default function AdminDashboard() {
       getAdminOrchestratorEvents(200),
       getAdminFinanceSummary(),
       getSystemHealth(),
+      getAdminOpsSummary(),
     ]);
     if (results[0].status === 'fulfilled') setUsers(results[0].value);
     if (results[1].status === 'fulfilled') setHostings(results[1].value);
@@ -198,6 +201,7 @@ export default function AdminDashboard() {
     if (results[5].status === 'fulfilled') setOrcEvents(results[5].value);
     if (results[6].status === 'fulfilled') setFinance(results[6].value);
     if (results[7].status === 'fulfilled') setSystemHealth(results[7].value);
+    if (results[8].status === 'fulfilled') setOpsSummary(results[8].value);
     setLoading(false);
   };
 
@@ -391,18 +395,20 @@ export default function AdminDashboard() {
 
             {/* ══ OVERVIEW ══ */}
             {section === 'overview' && (<>
+
+              {/* Row 1: Core KPIs */}
               <div className="grid grid-cols-4 gap-4">
                 <StatCard
                   label="Users"
                   val={users.length}
-                  sub={`${users.filter(u => u.plan !== 'free').length} pagos · ${users.filter(u => u.plan === 'free').length} free`}
+                  sub={`${opsSummary?.business?.paid_users ?? users.filter(u => u.plan !== 'free').length} pagos · ${opsSummary?.business?.free_users ?? users.filter(u => u.plan === 'free').length} free`}
                   color="#00aaff"
                   icon={<Users className="w-4 h-4" />}
                   loading={loading}
                 />
                 <StatCard
                   label="Hostings"
-                  val={hostings.length}
+                  val={hostings.filter(h => h.status !== 'deleted').length}
                   sub={`${hostings.filter(h => h.status === 'active').length} activos · ${hostings.filter(h => ['error','zombie'].includes(h.status)).length} con error`}
                   color="#00ff88"
                   icon={<Globe className="w-4 h-4" />}
@@ -430,6 +436,179 @@ export default function AdminDashboard() {
                   loading={loading}
                 />
               </div>
+
+              {/* Row 2: System capacity + Docker ops + DB/Redis */}
+              <div className="grid grid-cols-3 gap-4">
+                {/* Capacity forecast */}
+                <div className="bg-[#111] rounded-xl border border-white/5 p-4">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Capacidad del Nodo</div>
+                  {systemHealth?.capacity_forecast ? (
+                    <div className="flex flex-col gap-2.5">
+                      {[
+                        { key: 'cpu',        label: 'CPU',   icon: <Cpu className="w-3 h-3" /> },
+                        { key: 'ram',        label: 'RAM',   icon: <MemoryStick className="w-3 h-3" /> },
+                        { key: 'disk',       label: 'Disco', icon: <HardDrive className="w-3 h-3" /> },
+                        { key: 'containers', label: 'Cont.', icon: <Gauge className="w-3 h-3" /> },
+                      ].map(({ key, label, icon }) => {
+                        const f = systemHealth.capacity_forecast[key];
+                        const statusColor = !f || f.status === 'ok' ? '#00ff88' : f.status === 'warning' ? '#ffaa00' : '#ef4444';
+                        const hoursLeft = f?.hours_left;
+                        return (
+                          <div key={key} className="flex items-center gap-2">
+                            <span style={{ color: statusColor }} className="opacity-70">{icon}</span>
+                            <span className="text-[10px] text-gray-400 w-8 shrink-0">{label}</span>
+                            <div className="flex-1 h-1.5 bg-white/5 rounded overflow-hidden">
+                              <div className="h-full rounded" style={{
+                                width: f?.usage_now != null ? `${Math.min(f.usage_now, 100)}%` : '0%',
+                                background: statusColor,
+                              }} />
+                            </div>
+                            <span className="text-[10px] font-mono w-14 text-right" style={{ color: statusColor }}>
+                              {hoursLeft == null ? 'N/A' : hoursLeft < 48 ? `${Math.round(hoursLeft)}h` : 'OK'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-gray-600 italic">Node exporter no conectado</div>
+                  )}
+                </div>
+
+                {/* Docker ops detail */}
+                <div className="bg-[#111] rounded-xl border border-white/5 p-4">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Docker Operations</div>
+                  {systemHealth?.docker_ops?.latency_by_operation && Object.keys(systemHealth.docker_ops.latency_by_operation).length > 0 ? (
+                    <div className="flex flex-col gap-2">
+                      {Object.entries(systemHealth.docker_ops.latency_by_operation).map(([op, data]) => (
+                        <div key={op} className="flex items-center gap-2 text-[10px]">
+                          <span className="text-gray-500 w-20 truncate font-mono">{op}</span>
+                          <span className="text-gray-300 font-mono ml-auto">{data.mean_seconds != null ? `${data.mean_seconds}s` : '—'}</span>
+                          <span className="text-gray-600 font-mono w-12 text-right">{data.total_ops} ops</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex justify-between text-[10px]">
+                        <span className="text-gray-500">En vuelo</span>
+                        <span className="font-mono text-white">{systemHealth?.docker_ops?.inflight ?? 0} / {systemHealth?.docker_ops?.max ?? 20}</span>
+                      </div>
+                      <div className="flex justify-between text-[10px]">
+                        <span className="text-gray-500">Utilización</span>
+                        <span className="font-mono" style={{ color: (systemHealth?.docker_ops?.utilization_pct ?? 0) >= 70 ? '#ef4444' : '#00ff88' }}>
+                          {systemHealth?.docker_ops?.utilization_pct ?? 0}%
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-600 italic mt-1">Sin ops registradas aún</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* DB pool + Redis */}
+                <div className="bg-[#111] rounded-xl border border-white/5 p-4">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Infra Interna</div>
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <div className="flex justify-between text-[10px] mb-1">
+                        <span className="text-gray-500 flex items-center gap-1"><Database className="w-3 h-3" /> DB Pool</span>
+                        <span className="font-mono text-gray-300">
+                          {systemHealth?.db_pool?.maxconn ? `${systemHealth.db_pool.minconn}–${systemHealth.db_pool.maxconn} conn` : 'N/A'}
+                        </span>
+                      </div>
+                      {systemHealth?.db_pool?.maxconn && (
+                        <div className="h-1.5 bg-white/5 rounded overflow-hidden">
+                          <div className="h-full bg-[#00aaff] rounded" style={{ width: `${(systemHealth.db_pool.minconn / systemHealth.db_pool.maxconn) * 100}%` }} />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-gray-500 flex items-center gap-1">
+                        {systemHealth?.redis?.connected ? <Wifi className="w-3 h-3 text-emerald-400" /> : <WifiOff className="w-3 h-3 text-red-400" />}
+                        Redis
+                      </span>
+                      <span className={`font-mono ${systemHealth?.redis?.connected ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {systemHealth?.redis?.connected ? 'Conectado' : 'Desconectado'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-gray-500">Containers totales</span>
+                      <span className="font-mono text-gray-300">{systemHealth?.containers?.total ?? '—'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 3: Free Tier + Business */}
+              <div className="grid grid-cols-2 gap-4">
+                {/* Free tier / cleanup */}
+                <div className="bg-[#111] rounded-xl border border-white/5 p-4">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Free Tier & Cleanup</div>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      {
+                        label: 'Cupo usado',
+                        val: opsSummary ? `${opsSummary.free_tier.active_users}/${opsSummary.free_tier.cap}` : '—',
+                        sub: `${opsSummary?.free_tier?.cap_pct ?? 0}% ocupado`,
+                        color: (opsSummary?.free_tier?.cap_pct ?? 0) >= 80 ? '#ef4444' : (opsSummary?.free_tier?.cap_pct ?? 0) >= 60 ? '#ffaa00' : '#00ff88',
+                      },
+                      {
+                        label: 'Eliminados hoy',
+                        val: opsSummary?.free_tier?.deleted_today ?? '—',
+                        sub: 'últimas 24h',
+                        color: '#00ff88',
+                      },
+                      {
+                        label: 'Zombies',
+                        val: opsSummary?.free_tier?.zombies ?? '—',
+                        sub: `${opsSummary?.free_tier?.expired_ready ?? 0} exp. pendientes`,
+                        color: (opsSummary?.free_tier?.zombies ?? 0) > 0 ? '#ffaa00' : '#00ff88',
+                      },
+                    ].map((s, i) => (
+                      <div key={i} className="flex flex-col gap-1">
+                        <span className="text-[9px] text-gray-600 uppercase tracking-wider">{s.label}</span>
+                        <span className="text-xl font-bold font-mono" style={{ color: s.color }}>{s.val}</span>
+                        <span className="text-[9px] text-gray-600">{s.sub}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Business KPIs */}
+                <div className="bg-[#111] rounded-xl border border-white/5 p-4">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Negocio</div>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      {
+                        label: 'Conversión',
+                        val: opsSummary ? `${opsSummary.business.conversion_pct}%` : '—',
+                        sub: `${opsSummary?.business?.paid_users ?? 0} de ${opsSummary?.business?.total_users ?? 0} usuarios`,
+                        color: (opsSummary?.business?.conversion_pct ?? 0) >= 50 ? '#00ff88' : (opsSummary?.business?.conversion_pct ?? 0) >= 20 ? '#ffaa00' : '#ef4444',
+                      },
+                      {
+                        label: 'Saldo total',
+                        val: opsSummary ? `$${opsSummary.business.total_balance}` : '—',
+                        sub: 'balance acumulado',
+                        color: '#00aaff',
+                      },
+                      {
+                        label: 'Free / Pagos',
+                        val: opsSummary ? `${opsSummary.business.free_users} / ${opsSummary.business.paid_users}` : '—',
+                        sub: 'distribución actual',
+                        color: '#aa00ff',
+                      },
+                    ].map((s, i) => (
+                      <div key={i} className="flex flex-col gap-1">
+                        <span className="text-[9px] text-gray-600 uppercase tracking-wider">{s.label}</span>
+                        <span className="text-xl font-bold font-mono" style={{ color: s.color }}>{s.val}</span>
+                        <span className="text-[9px] text-gray-600">{s.sub}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Tabs: Users / Hostings / Pixel */}
               <div className="flex gap-1 border-b border-white/5">
                 {[{ id:'users', label:`Users (${users.length})` }, { id:'hostings', label:`Hostings (${hostings.length})` }, { id:'pixel', label:`Pixel (${pixelEvents.length})` }].map(t => (
                   <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 text-[11px] font-medium border-b-2 -mb-px transition-all ${tab===t.id ? 'border-[#00ff88] text-[#00ff88]' : 'border-transparent text-gray-500 hover:text-white'}`}>{t.label}</button>

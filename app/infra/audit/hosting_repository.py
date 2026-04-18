@@ -106,6 +106,28 @@ class HostingRepository:
         finally:
             release_connection(conn)
 
+    def count_deleted_today(self) -> int:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) AS cnt FROM hostings WHERE status = 'deleted' AND deleted_at::timestamptz > NOW() - INTERVAL '24 hours'"
+            )
+            row = cursor.fetchone()
+            return int(row["cnt"]) if row else 0
+        finally:
+            release_connection(conn)
+
+    def count_by_status(self, status: str) -> int:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) AS cnt FROM hostings WHERE status = %s", (status,))
+            row = cursor.fetchone()
+            return int(row["cnt"]) if row else 0
+        finally:
+            release_connection(conn)
+
     def mark_deleted(self, hosting_id: int) -> bool:
         """Soft-delete a hosting: set status='deleted' and record deleted_at timestamp.
 

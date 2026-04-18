@@ -315,6 +315,44 @@ async def admin_terminate_hosting(
     }
 
 
+@router.get("/ops-summary")
+def get_ops_summary(_: dict = Depends(require_role("admin"))):
+    """Operational snapshot: free tier, cleanup stats, and business KPIs."""
+    from app.api.routes.hosting import MAX_FREE_USERS
+
+    users = _user_repo.get_all_users()
+    free_users  = [u for u in users if u.get("plan") == "free"]
+    paid_users  = [u for u in users if u.get("plan") not in ("free", None)]
+
+    try:
+        free_active  = _hosting_repo.count_active_free_users()
+        deleted_today = _hosting_repo.count_deleted_today()
+        zombie_count  = _hosting_repo.count_by_status("zombie")
+        expired_count = _hosting_repo.count_by_status("expired")
+    except Exception:
+        free_active = deleted_today = zombie_count = expired_count = 0
+
+    total_balance = sum(u.get("balance", 0) or 0 for u in users)
+
+    return {
+        "free_tier": {
+            "active_users":  free_active,
+            "cap":           MAX_FREE_USERS,
+            "cap_pct":       round(free_active / MAX_FREE_USERS * 100, 1),
+            "expired_ready": expired_count,
+            "deleted_today": deleted_today,
+            "zombies":       zombie_count,
+        },
+        "business": {
+            "total_users":  len(users),
+            "paid_users":   len(paid_users),
+            "free_users":   len(free_users),
+            "conversion_pct": round(len(paid_users) / len(users) * 100, 1) if users else 0,
+            "total_balance": round(total_balance, 2),
+        },
+    }
+
+
 @router.get("/finance/summary")
 def get_finance_summary(_: dict = Depends(require_role("admin"))):
     """Resumen financiero: saldos, distribución de planes."""
