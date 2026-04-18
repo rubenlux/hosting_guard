@@ -463,8 +463,8 @@ def get_tenant_resource_usage(_: dict = Depends(require_role("admin"))):
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        # Average cpu/mem over last 10 events per container
-        cursor.execute("""
+        # Average cpu/mem — try 24h first, fall back to 7d if empty
+        _TENANT_QUERY = """
             SELECT
                 o.container_name,
                 o.user_id,
@@ -478,12 +478,18 @@ def get_tenant_resource_usage(_: dict = Depends(require_role("admin"))):
             JOIN users u ON u.user_id = o.user_id
             LEFT JOIN hostings h ON h.container_name = o.container_name
             WHERE o.cpu_pct IS NOT NULL
-              AND o.created_at::timestamptz > NOW() - INTERVAL '24 hours'
+              AND o.created_at::timestamptz > NOW() - INTERVAL %s
             GROUP BY o.container_name, o.user_id, u.email, h.plan, u.balance
             ORDER BY avg_cpu DESC
             LIMIT 10
-        """)
+        """
+        cursor.execute(_TENANT_QUERY, ("24 hours",))
         rows = cursor.fetchall()
+        window = "24h"
+        if not rows:
+            cursor.execute(_TENANT_QUERY, ("7 days",))
+            rows = cursor.fetchall()
+            window = "7d"
         COST_PER_CONTAINER_MONTHLY = float(os.getenv("COST_PER_CONTAINER_MONTHLY", "5.0"))
         tenants = []
         for r in rows:
@@ -509,7 +515,7 @@ def get_tenant_resource_usage(_: dict = Depends(require_role("admin"))):
                 "monthly_cost_usd":    monthly_cost,
                 "at_loss":             at_loss,
             })
-        return {"tenants": tenants, "window": "24h", "cost_per_container_usd": COST_PER_CONTAINER_MONTHLY}
+        return {"tenants": tenants, "window": window, "cost_per_container_usd": COST_PER_CONTAINER_MONTHLY}
     except Exception as exc:
         return {"tenants": [], "error": str(exc)}
     finally:

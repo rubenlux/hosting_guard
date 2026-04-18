@@ -726,7 +726,7 @@ export default function AdminDashboard() {
                 <div className="bg-[#111] rounded-xl border border-white/5 p-4">
                   <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">
                     Top Tenants por Recursos
-                    <span className="ml-2 text-gray-700 normal-case">últimas 24h</span>
+                    <span className="ml-2 text-gray-700 normal-case">últimas {tenantUsage?.window ?? '24h'}</span>
                   </div>
                   {tenantUsage?.tenants?.length > 0 ? (
                     <div className="flex flex-col gap-2">
@@ -765,7 +765,10 @@ export default function AdminDashboard() {
                       })}
                     </div>
                   ) : (
-                    <div className="text-[10px] text-gray-600 italic">Sin eventos de recursos en las últimas 24h</div>
+                    <div className="py-6 text-center">
+                      <div className="text-[10px] text-gray-600 mb-1">Sin actividad de recursos en los últimos 7 días</div>
+                      <div className="text-[9px] text-gray-700">Los datos aparecen cuando el orchestrator registra eventos de CPU/RAM</div>
+                    </div>
                   )}
                 </div>
 
@@ -782,28 +785,32 @@ export default function AdminDashboard() {
                       </div>
                     )}
                     {[
-                      { key: 'reconcile',    label: 'Reconciler',      icon: '⚙' },
-                      { key: 'expire',       label: 'Expiration Job',  icon: '⏱' },
-                      { key: 'health_check', label: 'Health Checker',  icon: '💓' },
-                      { key: 'traffic',      label: 'Traffic Collector',icon: '📊' },
-                    ].map(({ key, label, icon }) => {
+                      { key: 'reconcile',    label: 'Reconciler',       staleMinutes: 10  },
+                      { key: 'expire',       label: 'Expiration Job',   staleMinutes: 780 },
+                      { key: 'health_check', label: 'Health Checker',   staleMinutes: 10  },
+                      { key: 'traffic',      label: 'Traffic Collector',staleMinutes: 10  },
+                    ].map(({ key, label, staleMinutes }) => {
                       const job = jobsSummary?.jobs?.[key];
                       const active = job?.count_24h > 0;
+                      const lastRunMs = job?.last_run ? new Date(job.last_run).getTime() : null;
+                      const minsAgo = lastRunMs ? Math.floor((Date.now() - lastRunMs) / 60000) : null;
+                      const stale = lastRunMs != null && minsAgo > staleMinutes;
+                      const statusColor = !active ? '#4b5563' : stale ? '#f59e0b' : '#22c55e';
                       return (
                         <div key={key} className="flex items-center justify-between text-[10px]">
-                          <span className="text-gray-500 flex items-center gap-1.5">
-                            <span>{icon}</span>{label}
-                          </span>
+                          <span className="text-gray-500">{label}</span>
                           <div className="flex items-center gap-2">
                             <div className="text-right">
-                              <div className={`font-mono ${active ? 'text-gray-300' : 'text-gray-600'}`}>
+                              <div className="font-mono" style={{ color: active ? '#d1d5db' : '#4b5563' }}>
                                 {job ? `${job.count_24h} runs` : '—'}
                               </div>
-                              {job?.last_run && (
-                                <div className="text-[9px] text-gray-600 font-mono">{fmtDate(job.last_run)}</div>
+                              {minsAgo != null && (
+                                <div className="text-[9px] font-mono" style={{ color: stale ? '#f59e0b' : '#4b5563' }}>
+                                  {minsAgo < 60 ? `${minsAgo}m atrás` : `${Math.floor(minsAgo / 60)}h atrás`}
+                                </div>
                               )}
                             </div>
-                            <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-emerald-500' : 'bg-gray-700'}`} />
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusColor }} />
                           </div>
                         </div>
                       );
@@ -1085,6 +1092,64 @@ export default function AdminDashboard() {
                 </div>
               );
             })()}
+
+            {/* Predictive Forecast — always visible when Prometheus data available */}
+            {nodeMetrics?.available && (
+              <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+                <div className="px-4 py-3 border-b border-white/5">
+                  <span className="text-[11px] font-semibold text-white">Forecast</span>
+                  <span className="ml-2 text-[9px] text-gray-600 font-mono">predict_linear</span>
+                </div>
+                <div className="p-3 flex flex-col gap-2.5">
+                  {[
+                    {
+                      label: 'Disco',
+                      pct: nodeMetrics.disk_pct,
+                      growth: nodeMetrics.disk_growth_pct_per_day,
+                      days: nodeMetrics.disk_days_left,
+                    },
+                    {
+                      label: 'RAM',
+                      pct: nodeMetrics.ram_pct,
+                      growth: null,
+                      days: nodeMetrics.ram_days_left,
+                    },
+                    {
+                      label: 'CPU',
+                      pct: nodeMetrics.cpu_pct,
+                      growth: null,
+                      days: nodeMetrics.cpu_days_left,
+                    },
+                  ].map(({ label, pct, growth, days }) => {
+                    const urgent = days != null && days < 14;
+                    const warn   = days != null && days < 60;
+                    const color  = urgent ? '#ef4444' : warn ? '#f59e0b' : '#22c55e';
+                    return (
+                      <div key={label} className={`p-2 rounded-lg ${urgent ? 'bg-red-500/8 border border-red-500/15' : warn ? 'bg-amber-500/8 border border-amber-500/15' : 'bg-white/3 border border-white/5'}`}>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[10px] text-gray-400 font-medium">{label}</span>
+                          <span className="text-[10px] font-mono" style={{ color }}>{pct != null ? `${Math.round(pct)}%` : '—'}</span>
+                        </div>
+                        {growth != null && (
+                          <div className="text-[9px] font-mono text-gray-500">
+                            {growth > 0 ? `+${growth.toFixed(2)}` : growth.toFixed(2)}%/día
+                          </div>
+                        )}
+                        <div className="text-[9px] font-mono" style={{ color: days != null ? color : '#4b5563' }}>
+                          {days != null
+                            ? days < 30
+                              ? `~${days}d hasta 90%`
+                              : days < 365
+                                ? `~${Math.round(days / 30)}m hasta 90%`
+                                : `>1 año — ok`
+                            : 'sin proyección'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Hosting-level alerts (from orchestrator) */}
             <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
