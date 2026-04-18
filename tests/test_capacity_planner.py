@@ -118,7 +118,7 @@ def test_evaluate_all_placeholders_returns_ok():
     assert result["ram"]["status"]        == "ok"
     assert result["disk"]["status"]       == "ok"
     assert result["containers"]["status"] == "ok"
-    assert result["recommendation"]       is None
+    assert result["recommendation"] == "ok"
 
 
 def test_evaluate_recommendation_critical_when_cpu_critical():
@@ -131,7 +131,7 @@ def test_evaluate_recommendation_critical_when_cpu_critical():
         result = evaluate_capacity_forecast()
 
     assert result["cpu"]["status"] == "critical"
-    assert result["recommendation"] == "Upgrade node required within 48h"
+    assert result["recommendation"] == "scale_now"
 
 
 def test_evaluate_recommendation_warning_when_ram_warning():
@@ -144,7 +144,7 @@ def test_evaluate_recommendation_warning_when_ram_warning():
         result = evaluate_capacity_forecast()
 
     assert result["ram"]["status"] == "warning"
-    assert result["recommendation"] == "Monitor closely — scaling likely needed"
+    assert result["recommendation"] == "monitor"
 
 
 def test_evaluate_containers_reflect_current_count():
@@ -173,7 +173,7 @@ def test_evaluate_critical_overrides_warning():
             stack.enter_context(p)
         result = evaluate_capacity_forecast()
 
-    assert result["recommendation"] == "Upgrade node required within 48h"
+    assert result["recommendation"] == "scale_now"
 
 
 def test_evaluate_never_raises_on_repo_failure():
@@ -190,4 +190,4 @@ def test_evaluate_never_raises_on_repo_failure():
 
     # containers falls back to count=0 on exception
     assert result["containers"]["current"] == 0
-    assert result["recommendation"] is None
+    assert result["recommendation"] == "ok"
