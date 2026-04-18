@@ -92,7 +92,7 @@ class SupportSessionRepository:
             cursor.execute(
                 "SELECT s.*, u_target.email AS target_email FROM support_sessions s "
                 "LEFT JOIN users u_target ON s.target_user_id = u_target.user_id "
-                "WHERE s.revoked_at IS NULL AND s.expires_at > %s ORDER BY s.created_at DESC",
+                "WHERE s.revoked_at IS NULL AND s.expires_at::timestamptz > %s ORDER BY s.created_at DESC",
                 (now,),
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -187,7 +187,7 @@ class SupportSessionRepository:
                           u_target.email AS target_email FROM support_sessions s 
                    LEFT JOIN users u_target ON s.target_user_id = u_target.user_id 
                    WHERE s.admin_id = %s AND s.initiated_by = 'staff' 
-                   AND s.created_at >= %s 
+                   AND s.created_at::timestamptz >= %s 
                    ORDER BY s.created_at DESC LIMIT %s""",
                 (staff_id, since, limit),
             )
@@ -231,8 +231,8 @@ class SupportSessionRepository:
                           COALESCE(SUM(CASE WHEN result = 'resolved' THEN 1 ELSE 0 END), 0) AS resolved,
                           COALESCE(SUM(CASE WHEN result = 'unresolved' THEN 1 ELSE 0 END), 0) AS unresolved,
                           COALESCE(SUM(CASE WHEN result = 'escalated' THEN 1 ELSE 0 END), 0) AS escalated,
-                          COALESCE(SUM(CASE WHEN ended_at IS NULL AND expires_at > %s THEN 1 ELSE 0 END), 0) AS active
-                   FROM support_sessions WHERE created_at >= %s""",
+                          COALESCE(SUM(CASE WHEN ended_at IS NULL AND expires_at::timestamptz > %s THEN 1 ELSE 0 END), 0) AS active
+                   FROM support_sessions WHERE created_at::timestamptz >= %s""",
                 (now, since),
             )
             row = cursor.fetchone()

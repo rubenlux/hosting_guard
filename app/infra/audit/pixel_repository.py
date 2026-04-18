@@ -110,7 +110,7 @@ class PixelRepository:
                 """
                 SELECT
                     COUNT(*) AS total_events,
-                    COUNT(*) FILTER (WHERE created_at >= %s) AS today_events,
+                    COUNT(*) FILTER (WHERE created_at::timestamptz >= %s) AS today_events,
                     COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL) AS unique_sessions,
                     AVG((properties->>'time_on_page')::float)
                         FILTER (WHERE event_type = 'page_exit' AND (properties->>'time_on_page') IS NOT NULL) AS avg_time,
@@ -126,7 +126,7 @@ class PixelRepository:
                         / NULLIF(COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL), 0),
                     2) AS avg_events_per_session
                 FROM pixel_events
-                WHERE site_id = %s AND created_at >= %s
+                WHERE site_id = %s AND created_at::timestamptz >= %s
                 """,
                 (today, site_id, since)
             )
@@ -150,7 +150,7 @@ class PixelRepository:
                 FROM (
                     SELECT session_id, COUNT(*) FILTER (WHERE event_type = 'page_view') AS pv_count
                     FROM pixel_events
-                    WHERE site_id = %s AND session_id IS NOT NULL AND created_at >= %s
+                    WHERE site_id = %s AND session_id IS NOT NULL AND created_at::timestamptz >= %s
                     GROUP BY session_id
                 ) AS s
                 """,
@@ -162,7 +162,7 @@ class PixelRepository:
             cursor.execute(
                 """
                 SELECT url, COUNT(*) AS views FROM pixel_events
-                WHERE site_id = %s AND event_type = 'page_view' AND created_at >= %s
+                WHERE site_id = %s AND event_type = 'page_view' AND created_at::timestamptz >= %s
                 GROUP BY url ORDER BY views DESC LIMIT 10
                 """,
                 (site_id, since)
@@ -173,7 +173,7 @@ class PixelRepository:
             cursor.execute(
                 """
                 SELECT device, COUNT(*) AS count FROM pixel_events
-                WHERE site_id = %s AND created_at >= %s AND device IS NOT NULL
+                WHERE site_id = %s AND created_at::timestamptz >= %s AND device IS NOT NULL
                 GROUP BY device ORDER BY count DESC
                 """,
                 (site_id, since)
@@ -184,7 +184,7 @@ class PixelRepository:
             cursor.execute(
                 """
                 SELECT country, COUNT(*) AS count FROM pixel_events
-                WHERE site_id = %s AND created_at >= %s AND country IS NOT NULL
+                WHERE site_id = %s AND created_at::timestamptz >= %s AND country IS NOT NULL
                 GROUP BY country ORDER BY count DESC LIMIT 10
                 """,
                 (site_id, since)
@@ -198,7 +198,7 @@ class PixelRepository:
                     date_trunc('day', created_at)::date AS day,
                     COUNT(*) AS events
                 FROM pixel_events
-                WHERE site_id = %s AND event_type = 'page_view' AND created_at >= %s
+                WHERE site_id = %s AND event_type = 'page_view' AND created_at::timestamptz >= %s
                 GROUP BY day ORDER BY day
                 """,
                 (site_id, since)
@@ -398,7 +398,7 @@ class PixelRepository:
                             COUNT(*) FILTER (WHERE event_type = 'page_view') AS page_views,
                             COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL) AS sessions
                         FROM pixel_events
-                        WHERE site_id = %s AND created_at >= %s
+                        WHERE site_id = %s AND created_at::timestamptz >= %s
                         GROUP BY 1
                     )
                     SELECT
@@ -428,7 +428,7 @@ class PixelRepository:
                             COUNT(*) FILTER (WHERE event_type = 'page_view') AS page_views,
                             COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL) AS sessions
                         FROM pixel_events
-                        WHERE site_id = %s AND created_at >= %s
+                        WHERE site_id = %s AND created_at::timestamptz >= %s
                         GROUP BY 1
                     )
                     SELECT
@@ -465,14 +465,14 @@ class PixelRepository:
                        COUNT(DISTINCT session_id)
                            FILTER (WHERE session_id IS NOT NULL AND visitor_id IS NULL) AS active_anon
                    FROM pixel_events
-                   WHERE site_id = %s AND created_at >= %s""",
+                   WHERE site_id = %s AND created_at::timestamptz >= %s""",
                 (site_id, now - timedelta(minutes=5))
             )
             active_row = cursor.fetchone()
 
             cursor.execute(
                 """SELECT COUNT(*) AS cnt FROM pixel_events
-                   WHERE site_id = %s AND created_at >= %s""",
+                   WHERE site_id = %s AND created_at::timestamptz >= %s""",
                 (site_id, now - timedelta(seconds=60))
             )
             ev60_row = cursor.fetchone()
@@ -511,7 +511,7 @@ class PixelRepository:
                        SELECT DISTINCT ON (session_id) session_id, url
                        FROM pixel_events
                        WHERE site_id = %s AND event_type = 'page_view'
-                         AND session_id IS NOT NULL AND created_at >= %s
+                         AND session_id IS NOT NULL AND created_at::timestamptz >= %s
                        ORDER BY session_id, created_at ASC
                    ) first GROUP BY url ORDER BY entries DESC LIMIT 5""",
                 (site_id, since)
@@ -523,7 +523,7 @@ class PixelRepository:
                        SELECT DISTINCT ON (session_id) session_id, url
                        FROM pixel_events
                        WHERE site_id = %s AND event_type = 'page_view'
-                         AND session_id IS NOT NULL AND created_at >= %s
+                         AND session_id IS NOT NULL AND created_at::timestamptz >= %s
                        ORDER BY session_id, created_at DESC
                    ) last GROUP BY url ORDER BY exits DESC LIMIT 5""",
                 (site_id, since)
@@ -538,7 +538,7 @@ class PixelRepository:
                        SELECT session_id,
                               COUNT(*) FILTER (WHERE event_type = 'page_view') AS pv_count
                        FROM pixel_events
-                       WHERE site_id = %s AND session_id IS NOT NULL AND created_at >= %s
+                       WHERE site_id = %s AND session_id IS NOT NULL AND created_at::timestamptz >= %s
                        GROUP BY session_id
                    ) s""",
                 (site_id, since)
@@ -566,7 +566,7 @@ class PixelRepository:
             cursor.execute(
                 """
                 SELECT device, COUNT(*) AS count FROM pixel_events
-                WHERE site_id = %s AND created_at >= %s AND device IS NOT NULL
+                WHERE site_id = %s AND created_at::timestamptz >= %s AND device IS NOT NULL
                 GROUP BY device ORDER BY count DESC
                 """,
                 (site_id, since)
@@ -584,7 +584,7 @@ class PixelRepository:
             cursor.execute(
                 """
                 SELECT country, COUNT(*) AS count FROM pixel_events
-                WHERE site_id = %s AND created_at >= %s AND country IS NOT NULL
+                WHERE site_id = %s AND created_at::timestamptz >= %s AND country IS NOT NULL
                 GROUP BY country ORDER BY count DESC LIMIT 10
                 """,
                 (site_id, since)
@@ -602,7 +602,7 @@ class PixelRepository:
             cursor.execute(
                 """
                 SELECT url, COUNT(*) AS views FROM pixel_events
-                WHERE site_id = %s AND event_type = 'page_view' AND created_at >= %s
+                WHERE site_id = %s AND event_type = 'page_view' AND created_at::timestamptz >= %s
                 GROUP BY url ORDER BY views DESC LIMIT 10
                 """,
                 (site_id, since)
@@ -635,7 +635,7 @@ class PixelRepository:
             cursor.execute(
                 """
                 SELECT
-                    COUNT(*) FILTER (WHERE created_at >= %s)                       AS today_events,
+                    COUNT(*) FILTER (WHERE created_at::timestamptz >= %s)                       AS today_events,
                     COUNT(DISTINCT session_id)
                         FILTER (WHERE session_id IS NOT NULL)                      AS unique_sessions,
                     COUNT(DISTINCT visitor_id)
@@ -646,7 +646,7 @@ class PixelRepository:
                                 AND session_id IS NOT NULL
                                 AND visitor_id IS NULL)                            AS active_sessions_fallback
                 FROM pixel_events
-                WHERE site_id = %s AND created_at >= %s
+                WHERE site_id = %s AND created_at::timestamptz >= %s
                 """,
                 (today, site_id, since)
             )
@@ -662,7 +662,7 @@ class PixelRepository:
                     SELECT session_id,
                            COUNT(*) FILTER (WHERE event_type = 'page_view') AS pv_count
                     FROM pixel_events
-                    WHERE site_id = %s AND session_id IS NOT NULL AND created_at >= %s
+                    WHERE site_id = %s AND session_id IS NOT NULL AND created_at::timestamptz >= %s
                     GROUP BY session_id
                 ) s
                 """,
@@ -680,7 +680,7 @@ class PixelRepository:
                     SELECT date_trunc('day', created_at)::date AS day,
                            COUNT(*) FILTER (WHERE event_type = 'page_view') AS page_views
                     FROM pixel_events
-                    WHERE site_id = %s AND created_at >= %s
+                    WHERE site_id = %s AND created_at::timestamptz >= %s
                     GROUP BY 1
                 )
                 SELECT COALESCE(d.page_views, 0) AS page_views
@@ -708,7 +708,7 @@ class PixelRepository:
                 WITH base AS MATERIALIZED (
                     SELECT event_type, url, device, country
                     FROM pixel_events
-                    WHERE site_id = %s AND created_at >= %s
+                    WHERE site_id = %s AND created_at::timestamptz >= %s
                 )
                 SELECT
                     (
@@ -849,7 +849,7 @@ class PixelRepository:
 
             # Fallback: table is not partitioned or all data is within retention window
             cursor.execute(
-                "DELETE FROM pixel_events WHERE created_at < %s",
+                "DELETE FROM pixel_events WHERE created_at::timestamptz < %s",
                 (cutoff,)
             )
             deleted = cursor.rowcount

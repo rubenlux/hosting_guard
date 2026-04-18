@@ -10,7 +10,7 @@ class SupportCacheRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            query = "SELECT * FROM support_chat_cache WHERE category = %s AND sub_intent = %s AND expires_at > %s"
+            query = "SELECT * FROM support_chat_cache WHERE category = %s AND sub_intent = %s AND expires_at::timestamptz > %s"
             params = [category, sub_intent, now]
             if hosting_id:
                 query += " AND (hosting_id IS NULL OR hosting_id = %s)"
