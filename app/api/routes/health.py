@@ -74,25 +74,49 @@ async def get_system_health():
     except Exception as exc:
         status_counts = {"error": str(exc)}
 
-    # --- Redis ---
-    redis = get_redis()
+    # --- Redis (with lazy-reconnect attempt) ---
+    from app.infra.redis_client import get_redis, invalidate_redis
+    redis_client = get_redis()
     redis_ok = False
-    if redis:
+    if redis_client:
         try:
-            redis.ping()
+            redis_client.ping()
             redis_ok = True
         except Exception:
-            pass
+            invalidate_redis()  # force reconnect on next call
+    elif _REDIS_URL := __import__("os").getenv("REDIS_URL"):
+        # URL is set but client is None — attempt reconnect now
+        invalidate_redis()
+        redis_client = get_redis()
+        if redis_client:
+            try:
+                redis_client.ping()
+                redis_ok = True
+            except Exception:
+                pass
 
-    # --- DB pool ---
+    # --- DB pool + active connections ---
     db_pool_info: Dict = {}
     try:
-        from app.infra.db import _pool
+        from app.infra.db import _pool, get_connection, release_connection
         if _pool is not None:
             db_pool_info = {
                 "minconn": _pool.minconn,
                 "maxconn": _pool.maxconn,
             }
+            try:
+                conn = get_connection()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT count(*) AS cnt FROM pg_stat_activity WHERE datname = current_database()"
+                    )
+                    row = cursor.fetchone()
+                    db_pool_info["active_connections"] = int(row["cnt"]) if row else None
+                finally:
+                    release_connection(conn)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -131,7 +155,72 @@ async def get_system_health():
         except Exception:
             pass
 
+    # --- Smart system alerts ---
+    system_alerts = []
+    if not redis_ok:
+        system_alerts.append({
+            "level": "warning",
+            "component": "redis",
+            "message": "Redis desconectado — rate limiting y locks en modo in-memory",
+        })
+    if not db_pool_info:
+        system_alerts.append({
+            "level": "critical",
+            "component": "db_pool",
+            "message": "Pool de base de datos no disponible",
+        })
+    elif db_pool_info.get("active_connections") is not None:
+        maxconn = db_pool_info.get("maxconn", 60)
+        pct = db_pool_info["active_connections"] / maxconn * 100 if maxconn else 0
+        if pct >= 90:
+            system_alerts.append({
+                "level": "critical",
+                "component": "db_pool",
+                "message": f"DB pool al {round(pct)}% — {db_pool_info['active_connections']}/{maxconn} conexiones activas",
+            })
+        elif pct >= 70:
+            system_alerts.append({
+                "level": "warning",
+                "component": "db_pool",
+                "message": f"DB pool al {round(pct)}% — {db_pool_info['active_connections']}/{maxconn} conexiones activas",
+            })
+    if capacity_forecast:
+        for resource in ("cpu", "ram", "disk"):
+            f = capacity_forecast.get(resource, {})
+            if f.get("status") == "critical":
+                system_alerts.append({
+                    "level": "critical",
+                    "component": resource,
+                    "message": f"{resource.upper()} crítico: {f.get('hours_left')}h restantes",
+                })
+            elif f.get("status") == "warning":
+                system_alerts.append({
+                    "level": "warning",
+                    "component": resource,
+                    "message": f"{resource.upper()} advertencia: {f.get('hours_left')}h restantes",
+                })
+        if capacity_forecast.get("containers", {}).get("status") == "critical":
+            system_alerts.append({
+                "level": "critical",
+                "component": "containers",
+                "message": f"Slots de contenedores críticos: {capacity_forecast['containers'].get('current')}/{capacity_forecast['containers'].get('max')}",
+            })
+    if (inflight / MAX_DOCKER_OPS_INFLIGHT * 100) >= 80:
+        system_alerts.append({
+            "level": "warning",
+            "component": "docker",
+            "message": f"Docker saturado: {inflight}/{MAX_DOCKER_OPS_INFLIGHT} ops en vuelo",
+        })
+
+    overall_status = (
+        "critical" if any(a["level"] == "critical" for a in system_alerts)
+        else "warning" if system_alerts
+        else "healthy"
+    )
+
     return {
+        "status": overall_status,
+        "alerts": system_alerts,
         "containers": {
             "by_status": status_counts,
             "total": sum(status_counts.values()) if isinstance(status_counts, dict) and "error" not in status_counts else None,

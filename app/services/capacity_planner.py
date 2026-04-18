@@ -40,22 +40,43 @@ MAX_CONTAINERS: int = int(os.getenv("MAX_CONTAINERS", "50"))
 # Swap these out when node_exporter / psutil metrics become available.
 
 def _get_cpu_pct() -> Optional[float]:
-    return None  # HOOK: node_exporter cpu_usage_percent
+    try:
+        import psutil
+        return psutil.cpu_percent(interval=0.1)
+    except Exception:
+        return None
+
 
 def _get_ram_pct() -> Optional[float]:
-    return None  # HOOK: node_exporter ram_usage_percent
+    try:
+        import psutil
+        return psutil.virtual_memory().percent
+    except Exception:
+        return None
+
 
 def _get_disk_pct() -> Optional[float]:
-    return None  # HOOK: node_exporter disk_usage_percent
+    try:
+        import psutil
+        # Prefer /app/data (mapped to host volume) over container overlay /
+        for path in ("/app/data", "/"):
+            try:
+                return psutil.disk_usage(path).percent
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
+
 
 def _get_cpu_pct_24h_ago() -> Optional[float]:
-    return None  # HOOK: Prometheus query predict_linear(rate, 24h)
+    return None  # HOOK: Prometheus predict_linear(rate, 24h)
 
 def _get_ram_pct_24h_ago() -> Optional[float]:
-    return None  # HOOK: Prometheus query predict_linear(rate, 24h)
+    return None  # HOOK: Prometheus predict_linear(rate, 24h)
 
 def _get_disk_pct_24h_ago() -> Optional[float]:
-    return None  # HOOK: Prometheus query predict_linear(rate, 24h)
+    return None  # HOOK: Prometheus predict_linear(rate, 24h)
 
 
 # ── Core forecast logic ───────────────────────────────────────────────────────

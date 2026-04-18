@@ -453,25 +453,27 @@ export default function AdminDashboard() {
                         const f = systemHealth.capacity_forecast[key];
                         const statusColor = !f || f.status === 'ok' ? '#00ff88' : f.status === 'warning' ? '#ffaa00' : '#ef4444';
                         const hoursLeft = f?.hours_left;
+                        const usagePct = f?.usage ?? f?.usage_pct ?? null;
                         return (
                           <div key={key} className="flex items-center gap-2">
                             <span style={{ color: statusColor }} className="opacity-70">{icon}</span>
                             <span className="text-[10px] text-gray-400 w-8 shrink-0">{label}</span>
                             <div className="flex-1 h-1.5 bg-white/5 rounded overflow-hidden">
-                              <div className="h-full rounded" style={{
-                                width: f?.usage_now != null ? `${Math.min(f.usage_now, 100)}%` : '0%',
+                              <div className="h-full rounded transition-all" style={{
+                                width: usagePct != null ? `${Math.min(usagePct, 100)}%` : '0%',
                                 background: statusColor,
                               }} />
                             </div>
-                            <span className="text-[10px] font-mono w-14 text-right" style={{ color: statusColor }}>
-                              {hoursLeft == null ? 'N/A' : hoursLeft < 48 ? `${Math.round(hoursLeft)}h` : 'OK'}
+                            <span className="text-[10px] font-mono w-20 text-right" style={{ color: statusColor }}>
+                              {usagePct != null ? `${Math.round(usagePct)}%` : 'N/A'}
+                              {hoursLeft != null && hoursLeft < 72 ? ` · ${Math.round(hoursLeft)}h` : ''}
                             </span>
                           </div>
                         );
                       })}
                     </div>
                   ) : (
-                    <div className="text-[10px] text-gray-600 italic">Node exporter no conectado</div>
+                    <div className="text-[10px] text-gray-600 italic">Métricas no disponibles</div>
                   )}
                 </div>
 
@@ -513,12 +515,23 @@ export default function AdminDashboard() {
                       <div className="flex justify-between text-[10px] mb-1">
                         <span className="text-gray-500 flex items-center gap-1"><Database className="w-3 h-3" /> DB Pool</span>
                         <span className="font-mono text-gray-300">
-                          {systemHealth?.db_pool?.maxconn ? `${systemHealth.db_pool.minconn}–${systemHealth.db_pool.maxconn} conn` : 'N/A'}
+                          {systemHealth?.db_pool?.maxconn
+                            ? systemHealth.db_pool.active_connections != null
+                              ? `${systemHealth.db_pool.active_connections}/${systemHealth.db_pool.maxconn} activas`
+                              : `max ${systemHealth.db_pool.maxconn}`
+                            : 'N/A'}
                         </span>
                       </div>
                       {systemHealth?.db_pool?.maxconn && (
                         <div className="h-1.5 bg-white/5 rounded overflow-hidden">
-                          <div className="h-full bg-[#00aaff] rounded" style={{ width: `${(systemHealth.db_pool.minconn / systemHealth.db_pool.maxconn) * 100}%` }} />
+                          <div className="h-full rounded transition-all" style={{
+                            width: systemHealth.db_pool.active_connections != null
+                              ? `${Math.min((systemHealth.db_pool.active_connections / systemHealth.db_pool.maxconn) * 100, 100)}%`
+                              : '5%',
+                            background: systemHealth.db_pool.active_connections / systemHealth.db_pool.maxconn > 0.8 ? '#ef4444'
+                              : systemHealth.db_pool.active_connections / systemHealth.db_pool.maxconn > 0.6 ? '#ffaa00'
+                              : '#00aaff',
+                          }} />
                         </div>
                       )}
                     </div>
@@ -841,16 +854,58 @@ export default function AdminDashboard() {
 
           {/* ── Right alerts sidebar ── */}
           <div className="w-60 shrink-0 border-l border-white/5 flex flex-col gap-4 p-4 overflow-y-auto bg-[#0d0d0d]">
+
+            {/* System alerts (real — from /health/system) */}
+            {(() => {
+              const sysAlerts = systemHealth?.alerts ?? [];
+              const overallStatus = systemHealth?.status ?? 'unknown';
+              return (
+                <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+                    <span className="text-[11px] font-semibold text-white">Sistema</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono ${
+                      overallStatus === 'healthy' ? 'bg-emerald-500/20 text-emerald-400'
+                      : overallStatus === 'warning' ? 'bg-amber-500/20 text-amber-400'
+                      : overallStatus === 'critical' ? 'bg-red-500/20 text-red-400'
+                      : 'bg-white/5 text-gray-500'
+                    }`}>{overallStatus}</span>
+                  </div>
+                  <div className="p-3 flex flex-col gap-2">
+                    {sysAlerts.length === 0 && !loading ? (
+                      <div className="py-4 text-center text-[10px] text-gray-600">
+                        <CheckCircle2 className="w-4 h-4 mx-auto mb-1.5 text-emerald-700" />
+                        Todos los componentes operativos
+                      </div>
+                    ) : sysAlerts.map((a, i) => (
+                      <div key={i} className={`p-2.5 rounded-lg text-[10px] ${
+                        a.level === 'critical' ? 'bg-red-500/10 border border-red-500/20'
+                        : 'bg-amber-500/10 border border-amber-500/20'
+                      }`}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${a.level === 'critical' ? 'bg-red-400' : 'bg-amber-400'}`} />
+                          <span className="font-medium text-[10px] uppercase tracking-wide" style={{ color: a.level === 'critical' ? '#f87171' : '#fbbf24' }}>
+                            {a.component}
+                          </span>
+                        </div>
+                        <p className="text-gray-400 leading-relaxed text-[9px]">{a.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Hosting-level alerts (from orchestrator) */}
             <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
               <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
-                <span className="text-[11px] font-semibold text-white">Recent Alerts</span>
+                <span className="text-[11px] font-semibold text-white">Alertas</span>
                 {alerts.length > 0 && <span className="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full">{alerts.length}</span>}
               </div>
-              <div className="p-3 flex flex-col gap-2 max-h-64 overflow-y-auto">
+              <div className="p-3 flex flex-col gap-2 max-h-48 overflow-y-auto">
                 {alerts.length === 0 ? (
-                  <div className="py-5 text-center text-[10px] text-gray-600">
-                    <CheckCircle2 className="w-5 h-5 mx-auto mb-2 text-emerald-700" />
-                    Sistema saludable
+                  <div className="py-4 text-center text-[10px] text-gray-600">
+                    <CheckCircle2 className="w-4 h-4 mx-auto mb-1.5 text-emerald-700" />
+                    Sin alertas activas
                   </div>
                 ) : alerts.map((a, i) => (
                   <div key={i} className={`p-3 rounded-lg border text-[10px] ${ALERT_STYLE[a.level]}`}>
