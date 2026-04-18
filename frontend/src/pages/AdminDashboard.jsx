@@ -15,7 +15,7 @@ import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
   getAdminPixelEvents, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
-  getSystemHealth, getAdminOpsSummary,
+  getSystemHealth, getAdminOpsSummary, getCapacityMetrics,
   startSupportSession, getSupportSessions, revokeSupportSession,
   listStaff, createStaff, updateStaff, deactivateStaff, resetStaffPassword,
   adminRestartHosting, adminStopHosting, adminStartHosting,
@@ -25,6 +25,7 @@ import {
 import { useAuth } from '../hooks/useAuth';
 import StaffAnalytics from '../components/StaffAnalytics';
 import StatusCommandBar from '../components/dashboard/StatusCommandBar';
+import SystemStatusBanner from '../components/dashboard/SystemStatusBanner';
 
 /* ─── helpers ─────────────────────────────────────────────── */
 function groupBy(arr, key) {
@@ -176,6 +177,7 @@ export default function AdminDashboard() {
   const [finance, setFinance]               = useState(null);
   const [systemHealth, setSystemHealth]     = useState(null);
   const [opsSummary, setOpsSummary]         = useState(null);
+  const [capacityMetrics, setCapacityMetrics] = useState(null);
   const [loading, setLoading]           = useState(true);
   const [tab, setTab]                   = useState('users');
   const [pixelFilter, setPixelFilter]   = useState('all');
@@ -192,6 +194,7 @@ export default function AdminDashboard() {
       getAdminFinanceSummary(),
       getSystemHealth(),
       getAdminOpsSummary(),
+      getCapacityMetrics(),
     ]);
     if (results[0].status === 'fulfilled') setUsers(results[0].value);
     if (results[1].status === 'fulfilled') setHostings(results[1].value);
@@ -202,6 +205,7 @@ export default function AdminDashboard() {
     if (results[6].status === 'fulfilled') setFinance(results[6].value);
     if (results[7].status === 'fulfilled') setSystemHealth(results[7].value);
     if (results[8].status === 'fulfilled') setOpsSummary(results[8].value);
+    if (results[9].status === 'fulfilled') setCapacityMetrics(results[9].value);
     setLoading(false);
   };
 
@@ -388,6 +392,11 @@ export default function AdminDashboard() {
           advisories={[]}
           alerts={alerts}
         />
+
+        {/* Capacity status banner — visible when warning or critical */}
+        {capacityMetrics && capacityMetrics.status !== 'ok' && (
+          <SystemStatusBanner capacity={capacityMetrics} />
+        )}
 
         {/* Scrollable content + alerts sidebar */}
         <div className="flex-1 overflow-hidden flex">

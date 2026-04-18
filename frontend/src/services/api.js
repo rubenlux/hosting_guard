@@ -245,6 +245,11 @@ export const getAdminOpsSummary = async () => {
     return response.data;
 };
 
+export const getCapacityMetrics = async () => {
+    const response = await api.get('/admin/metrics/capacity');
+    return response.data;
+};
+
 export const adminExtendPlan = async (userId, days) => {
     const response = await api.post(`/admin/users/${userId}/plan/extend`, { days });
     return response.data;

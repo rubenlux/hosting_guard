@@ -315,6 +315,31 @@ async def admin_terminate_hosting(
     }
 
 
+@router.get("/metrics/capacity")
+def get_capacity_metrics(_: dict = Depends(require_role("admin"))):
+    """Unified capacity snapshot for the SystemStatusBanner."""
+    try:
+        from app.services.capacity_planner import evaluate_capacity_forecast
+        f = evaluate_capacity_forecast()
+    except Exception:
+        return {"status": "unknown", "capacity_score": None, "recommendation": "ok"}
+
+    return {
+        "status":             f.get("overall_status", "ok"),
+        "capacity_score":     f.get("capacity_score"),
+        "cpu_pct":            f["cpu"].get("usage"),
+        "ram_pct":            f["ram"].get("usage"),
+        "disk_pct":           f["disk"].get("usage"),
+        "containers": {
+            "used":     f["containers"].get("current"),
+            "capacity": f["containers"].get("max"),
+            "pct":      f["containers"].get("usage"),
+        },
+        "days_to_exhaustion": f.get("days_to_exhaustion"),
+        "recommendation":     f.get("recommendation", "ok"),
+    }
+
+
 @router.get("/ops-summary")
 def get_ops_summary(_: dict = Depends(require_role("admin"))):
     """Operational snapshot: free tier, cleanup stats, and business KPIs."""

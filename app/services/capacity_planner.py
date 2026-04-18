@@ -167,6 +167,29 @@ def evaluate_capacity_forecast() -> dict:
 
     overall = "critical" if "critical" in statuses else ("warning" if "warning" in statuses else "ok")
 
+    # Unified capacity score: worst resource determines the score
+    usage_values = [
+        r["usage"] for r in (cpu, ram, disk)
+        if r.get("usage") is not None
+    ]
+    if containers.get("usage") is not None:
+        usage_values.append(containers["usage"])
+    capacity_score = round(max(usage_values), 1) if usage_values else None
+
+    # Days to exhaustion: minimum hours_left across all resources
+    hours_left_values = [
+        r["hours_left"] for r in (cpu, ram, disk, containers)
+        if r.get("hours_left") is not None and r["hours_left"] > 0
+    ]
+    days_to_exhaustion = round(min(hours_left_values) / 24, 1) if hours_left_values else None
+
+    if overall == "critical":
+        recommendation = "scale_now"
+    elif overall == "warning":
+        recommendation = "monitor"
+    else:
+        recommendation = "ok"
+
     logger.info(
         "capacity_forecast",
         extra={
@@ -174,14 +197,18 @@ def evaluate_capacity_forecast() -> dict:
             "ram_hours_left":        ram["hours_left"],
             "disk_hours_left":       disk["hours_left"],
             "containers_hours_left": containers["hours_left"],
+            "capacity_score":        capacity_score,
             "status":                overall,
         },
     )
 
     return {
-        "cpu":            cpu,
-        "ram":            ram,
-        "disk":           disk,
-        "containers":     containers,
-        "recommendation": recommendation,
+        "cpu":                 cpu,
+        "ram":                 ram,
+        "disk":                disk,
+        "containers":          containers,
+        "capacity_score":      capacity_score,
+        "overall_status":      overall,
+        "days_to_exhaustion":  days_to_exhaustion,
+        "recommendation":      recommendation,
     }
