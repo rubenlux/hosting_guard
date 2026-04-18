@@ -16,6 +16,7 @@ import {
   getAdminPixelEvents, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
   getSystemHealth, getAdminOpsSummary, getCapacityMetrics, getNodeMetrics,
+  getTenantResourceUsage, getJobsSummary,
   startSupportSession, getSupportSessions, revokeSupportSession,
   listStaff, createStaff, updateStaff, deactivateStaff, resetStaffPassword,
   adminRestartHosting, adminStopHosting, adminStartHosting,
@@ -179,6 +180,8 @@ export default function AdminDashboard() {
   const [opsSummary, setOpsSummary]         = useState(null);
   const [capacityMetrics, setCapacityMetrics] = useState(null);
   const [nodeMetrics, setNodeMetrics]         = useState(null);
+  const [tenantUsage, setTenantUsage]         = useState(null);
+  const [jobsSummary, setJobsSummary]         = useState(null);
   const [loading, setLoading]           = useState(true);
   const [tab, setTab]                   = useState('users');
   const [pixelFilter, setPixelFilter]   = useState('all');
@@ -197,6 +200,8 @@ export default function AdminDashboard() {
       getAdminOpsSummary(),
       getCapacityMetrics(),
       getNodeMetrics(),
+      getTenantResourceUsage(),
+      getJobsSummary(),
     ]);
     if (results[0].status === 'fulfilled') setUsers(results[0].value);
     if (results[1].status === 'fulfilled') setHostings(results[1].value);
@@ -209,6 +214,8 @@ export default function AdminDashboard() {
     if (results[8].status === 'fulfilled') setOpsSummary(results[8].value);
     if (results[9].status === 'fulfilled') setCapacityMetrics(results[9].value);
     if (results[10].status === 'fulfilled') setNodeMetrics(results[10].value);
+    if (results[11].status === 'fulfilled') setTenantUsage(results[11].value);
+    if (results[12].status === 'fulfilled') setJobsSummary(results[12].value);
     setLoading(false);
   };
 
@@ -482,13 +489,13 @@ export default function AdminDashboard() {
                         label: 'CPU',
                         icon: <Cpu className="w-3 h-3" />,
                         pct: prom?.cpu_pct ?? fc?.cpu?.usage,
-                        extra: null,
+                        extra: prom?.cpu_days_left != null ? { daysLeft: prom.cpu_days_left } : null,
                       },
                       {
                         label: 'RAM',
                         icon: <MemoryStick className="w-3 h-3" />,
                         pct: prom?.ram_pct ?? fc?.ram?.usage,
-                        extra: null,
+                        extra: prom?.ram_days_left != null ? { daysLeft: prom.ram_days_left } : null,
                       },
                       {
                         label: 'Disco',
@@ -530,14 +537,16 @@ export default function AdminDashboard() {
                               </div>
                               {extra && (
                                 <div className="flex items-center gap-2 ml-5 mt-0.5">
-                                  <span className="text-[9px] font-mono" style={{ color: growthColor }}>
-                                    {extra.growth > 0
-                                      ? `+${extra.growth.toFixed(2)}%/día`
-                                      : `${extra.growth.toFixed(2)}%/día`}
-                                  </span>
+                                  {extra.growth != null && (
+                                    <span className="text-[9px] font-mono" style={{ color: growthColor }}>
+                                      {extra.growth > 0
+                                        ? `+${extra.growth.toFixed(2)}%/día`
+                                        : `${extra.growth.toFixed(2)}%/día`}
+                                    </span>
+                                  )}
                                   {extra.daysLeft != null && (
-                                    <span className="text-[9px] font-mono text-gray-600">
-                                      · ~{extra.daysLeft < 30
+                                    <span className={`text-[9px] font-mono ${extra.daysLeft < 7 ? 'text-red-500' : extra.daysLeft < 30 ? 'text-amber-500' : 'text-gray-600'}`}>
+                                      {extra.growth != null ? '· ' : ''}~{extra.daysLeft < 30
                                           ? `${extra.daysLeft}d`
                                           : `${Math.round(extra.daysLeft / 30)}m`} restantes
                                     </span>
@@ -555,31 +564,39 @@ export default function AdminDashboard() {
                 {/* Docker ops detail */}
                 <div className="bg-[#111] rounded-xl border border-white/5 p-4">
                   <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Docker Operations</div>
-                  {systemHealth?.docker_ops?.latency_by_operation && Object.keys(systemHealth.docker_ops.latency_by_operation).length > 0 ? (
-                    <div className="flex flex-col gap-2">
-                      {Object.entries(systemHealth.docker_ops.latency_by_operation).map(([op, data]) => (
-                        <div key={op} className="flex items-center gap-2 text-[10px]">
-                          <span className="text-gray-500 w-20 truncate font-mono">{op}</span>
-                          <span className="text-gray-300 font-mono ml-auto">{data.mean_seconds != null ? `${data.mean_seconds}s` : '—'}</span>
-                          <span className="text-gray-600 font-mono w-12 text-right">{data.total_ops} ops</span>
-                        </div>
-                      ))}
+                  <div className="flex flex-col gap-2">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-gray-500">En vuelo</span>
+                      <span className="font-mono text-white">{systemHealth?.docker_ops?.inflight ?? 0} / {systemHealth?.docker_ops?.max ?? 20}</span>
                     </div>
-                  ) : (
-                    <div className="flex flex-col gap-2">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-gray-500">Utilización</span>
+                      <span className="font-mono" style={{ color: (systemHealth?.docker_ops?.utilization_pct ?? 0) >= 70 ? '#ef4444' : '#00ff88' }}>
+                        {systemHealth?.docker_ops?.utilization_pct ?? 0}%
+                      </span>
+                    </div>
+                    {nodeMetrics?.docker_p95_seconds != null && (
                       <div className="flex justify-between text-[10px]">
-                        <span className="text-gray-500">En vuelo</span>
-                        <span className="font-mono text-white">{systemHealth?.docker_ops?.inflight ?? 0} / {systemHealth?.docker_ops?.max ?? 20}</span>
-                      </div>
-                      <div className="flex justify-between text-[10px]">
-                        <span className="text-gray-500">Utilización</span>
-                        <span className="font-mono" style={{ color: (systemHealth?.docker_ops?.utilization_pct ?? 0) >= 70 ? '#ef4444' : '#00ff88' }}>
-                          {systemHealth?.docker_ops?.utilization_pct ?? 0}%
+                        <span className="text-gray-500">p95 Latencia</span>
+                        <span className={`font-mono font-bold ${nodeMetrics.docker_p95_seconds > 2 ? 'text-red-400' : nodeMetrics.docker_p95_seconds > 0.5 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                          {nodeMetrics.docker_p95_seconds < 1
+                            ? `${Math.round(nodeMetrics.docker_p95_seconds * 1000)}ms`
+                            : `${nodeMetrics.docker_p95_seconds.toFixed(2)}s`}
                         </span>
                       </div>
-                      <div className="text-[10px] text-gray-600 italic mt-1">Sin ops registradas aún</div>
-                    </div>
-                  )}
+                    )}
+                    {systemHealth?.docker_ops?.latency_by_operation && Object.keys(systemHealth.docker_ops.latency_by_operation).length > 0 && (
+                      <div className="mt-1 pt-2 border-t border-white/5 flex flex-col gap-1.5">
+                        {Object.entries(systemHealth.docker_ops.latency_by_operation).map(([op, data]) => (
+                          <div key={op} className="flex items-center gap-2 text-[10px]">
+                            <span className="text-gray-600 w-20 truncate font-mono">{op}</span>
+                            <span className="text-gray-400 font-mono ml-auto">{data.mean_seconds != null ? `${data.mean_seconds}s` : '—'}</span>
+                            <span className="text-gray-600 font-mono w-12 text-right">{data.total_ops}x</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* DB pool + Redis */}
@@ -632,7 +649,7 @@ export default function AdminDashboard() {
                 {/* Free tier / cleanup */}
                 <div className="bg-[#111] rounded-xl border border-white/5 p-4">
                   <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Free Tier & Cleanup</div>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-4 gap-3">
                     {[
                       {
                         label: 'Cupo usado',
@@ -651,6 +668,12 @@ export default function AdminDashboard() {
                         val: opsSummary?.free_tier?.zombies ?? '—',
                         sub: `${opsSummary?.free_tier?.expired_ready ?? 0} exp. pendientes`,
                         color: (opsSummary?.free_tier?.zombies ?? 0) > 0 ? '#ffaa00' : '#00ff88',
+                      },
+                      {
+                        label: 'Nuevos hoy',
+                        val: opsSummary?.growth?.users_today ?? '—',
+                        sub: `+${opsSummary?.growth?.containers_today ?? 0} containers`,
+                        color: (opsSummary?.growth?.users_today ?? 0) > 0 ? '#00aaff' : '#4b5563',
                       },
                     ].map((s, i) => (
                       <div key={i} className="flex flex-col gap-1">
@@ -692,6 +715,99 @@ export default function AdminDashboard() {
                         <span className="text-[9px] text-gray-600">{s.sub}</span>
                       </div>
                     ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 4: Top Tenants + Jobs Activity */}
+              <div className="grid grid-cols-2 gap-4">
+
+                {/* Top tenants by resource */}
+                <div className="bg-[#111] rounded-xl border border-white/5 p-4">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">
+                    Top Tenants por Recursos
+                    <span className="ml-2 text-gray-700 normal-case">últimas 24h</span>
+                  </div>
+                  {tenantUsage?.tenants?.length > 0 ? (
+                    <div className="flex flex-col gap-2">
+                      {tenantUsage.tenants.map((t) => {
+                        const cpuColor = t.avg_cpu >= 60 ? '#ef4444' : t.avg_cpu >= 30 ? '#f59e0b' : '#22c55e';
+                        const memColor = t.avg_mem >= 70 ? '#ef4444' : t.avg_mem >= 40 ? '#f59e0b' : '#22c55e';
+                        return (
+                          <div key={t.container_name} className={`flex items-center gap-3 px-2 py-1.5 rounded-lg ${t.costly ? 'bg-red-500/8 border border-red-500/20' : t.abusing ? 'bg-amber-500/8 border border-amber-500/15' : 'border border-transparent'}`}>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-white/80 font-medium truncate">{t.email}</span>
+                                <span className={`text-[8px] px-1 py-0.5 rounded font-bold uppercase ${t.plan === 'free' ? 'bg-white/8 text-gray-500' : 'bg-emerald-500/20 text-emerald-400'}`}>{t.plan}</span>
+                                {t.at_loss && <span className="text-[8px] px-1 py-0.5 rounded bg-red-500/20 text-red-400 font-bold">PÉRDIDA</span>}
+                                {t.costly && !t.at_loss && <span className="text-[8px] px-1 py-0.5 rounded bg-red-500/20 text-red-400 font-bold">COSTOSO</span>}
+                                {t.abusing && !t.costly && !t.at_loss && <span className="text-[8px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 font-bold">ABUSO</span>}
+                              </div>
+                              <div className="text-[9px] text-gray-600 font-mono truncate">{t.container_name}</div>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0">
+                              <div className="text-right">
+                                <div className="text-[9px] text-gray-600">CPU</div>
+                                <div className="text-[10px] font-mono font-bold" style={{ color: cpuColor }}>{t.avg_cpu}%</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-[9px] text-gray-600">RAM</div>
+                                <div className="text-[10px] font-mono font-bold" style={{ color: memColor }}>{t.avg_mem}%</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-[9px] text-gray-600">Saldo</div>
+                                <div className={`text-[10px] font-mono font-bold ${t.balance < (t.monthly_cost_usd ?? 5) ? 'text-red-400' : 'text-gray-300'}`}>${t.balance}</div>
+                                {t.monthly_cost_usd != null && <div className="text-[8px] text-gray-700 font-mono">${t.monthly_cost_usd}/mo</div>}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-gray-600 italic">Sin eventos de recursos en las últimas 24h</div>
+                  )}
+                </div>
+
+                {/* Background jobs + DB errors */}
+                <div className="bg-[#111] rounded-xl border border-white/5 p-4">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-3">Jobs & Errores</div>
+                  <div className="flex flex-col gap-2.5">
+                    {jobsSummary?.db_errors_last_hour != null && (
+                      <div className={`flex items-center justify-between px-2 py-1.5 rounded-lg ${jobsSummary.db_errors_last_hour > 1 ? 'bg-red-500/8 border border-red-500/20' : 'bg-white/3 border border-white/5'}`}>
+                        <span className="text-[10px] text-gray-400">DB Errors/hora</span>
+                        <span className={`text-[10px] font-mono font-bold ${jobsSummary.db_errors_last_hour > 1 ? 'text-red-400' : jobsSummary.db_errors_last_hour > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                          {jobsSummary.db_errors_last_hour === 0 ? '0 ✓' : jobsSummary.db_errors_last_hour.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                    {[
+                      { key: 'reconcile',    label: 'Reconciler',      icon: '⚙' },
+                      { key: 'expire',       label: 'Expiration Job',  icon: '⏱' },
+                      { key: 'health_check', label: 'Health Checker',  icon: '💓' },
+                      { key: 'traffic',      label: 'Traffic Collector',icon: '📊' },
+                    ].map(({ key, label, icon }) => {
+                      const job = jobsSummary?.jobs?.[key];
+                      const active = job?.count_24h > 0;
+                      return (
+                        <div key={key} className="flex items-center justify-between text-[10px]">
+                          <span className="text-gray-500 flex items-center gap-1.5">
+                            <span>{icon}</span>{label}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <div className="text-right">
+                              <div className={`font-mono ${active ? 'text-gray-300' : 'text-gray-600'}`}>
+                                {job ? `${job.count_24h} runs` : '—'}
+                              </div>
+                              {job?.last_run && (
+                                <div className="text-[9px] text-gray-600 font-mono">{fmtDate(job.last_run)}</div>
+                              )}
+                            </div>
+                            <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-emerald-500' : 'bg-gray-700'}`} />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

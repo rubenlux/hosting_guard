@@ -255,6 +255,16 @@ export const getNodeMetrics = async () => {
     return response.data;
 };
 
+export const getTenantResourceUsage = async () => {
+    const response = await api.get('/admin/metrics/tenants');
+    return response.data;
+};
+
+export const getJobsSummary = async () => {
+    const response = await api.get('/admin/jobs/summary');
+    return response.data;
+};
+
 export const adminExtendPlan = async (userId, days) => {
     const response = await api.post(`/admin/users/${userId}/plan/extend`, { days });
     return response.data;

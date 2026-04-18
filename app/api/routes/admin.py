@@ -335,7 +335,14 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
         "disk_avail_bytes": 'node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}',
         "disk_total_bytes": 'node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}',
         # deriv: bytes/sec rate of available space — negative means filling up
-        "disk_deriv": 'deriv(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}[6h])',
+        "disk_deriv":  'deriv(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}[6h])',
+        "ram_avail_predicted": "predict_linear(node_memory_MemAvailable_bytes[6h], 86400*14)",
+        "ram_avail_bytes":     "node_memory_MemAvailable_bytes",
+        "ram_total_bytes":     "node_memory_MemTotal_bytes",
+        # CPU forecast: predict idle ratio in 14 days, convert to usage %
+        "cpu_idle_predicted":  "predict_linear(avg(rate(node_cpu_seconds_total{mode='idle'}[2m]))[6h:], 86400*14)",
+        # Docker p95 latency
+        "docker_p95": "histogram_quantile(0.95, rate(hosting_guard_docker_op_duration_seconds_bucket[5m]))",
     }
 
     result = {"source": "prometheus", "available": False}
@@ -381,6 +388,32 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
                     if fill_rate > 0:
                         days_left = round(avail_now / fill_rate / 86400, 1)
 
+        # CPU forecast: days until CPU saturates (>90%)
+        cpu_days_left = None
+        cpu_idle_predicted = _query(QUERIES["cpu_idle_predicted"])
+        if cpu is not None and cpu_idle_predicted is not None:
+            # idle_predicted is a ratio (0-1); CPU usage = (1 - idle) * 100
+            cpu_future = (1 - cpu_idle_predicted) * 100
+            if cpu_future >= 90 and cpu is not None:
+                # Linear interpolation: days until we hit 90%
+                delta_per_day = (cpu_future - cpu) / 14
+                if delta_per_day > 0:
+                    cpu_days_left = round((90 - cpu) / delta_per_day, 1)
+
+        # Docker p95 latency
+        docker_p95 = _query(QUERIES["docker_p95"])
+
+        # RAM exhaustion projection
+        ram_days_left = None
+        ram_avail_predicted = _query(QUERIES["ram_avail_predicted"])
+        ram_avail_now       = _query(QUERIES["ram_avail_bytes"])
+        ram_total           = _query(QUERIES["ram_total_bytes"])
+        if ram_avail_predicted is not None and ram_avail_now is not None and ram_total and ram_total > 0:
+            if ram_avail_predicted <= 0 and ram_avail_now > 0:
+                fill_rate = (ram_avail_now - ram_avail_predicted) / (14 * 86400)
+                if fill_rate > 0:
+                    ram_days_left = round(ram_avail_now / fill_rate / 86400, 1)
+
         # Determine per-resource status
         def _status(pct):
             if pct is None:  return "unknown"
@@ -408,6 +441,9 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
             "disk_pct":           round(disk, 1) if disk is not None else None,
             "disk_days_left":          days_left,
             "disk_growth_pct_per_day": disk_growth_pct_per_day,
+            "ram_days_left":           ram_days_left,
+            "cpu_days_left":           cpu_days_left,
+            "docker_p95_seconds":      round(docker_p95, 3) if docker_p95 is not None else None,
             "status":             overall,
             "recommendation":     recommendations[overall],
             "cpu_status":         _status(cpu),
@@ -418,6 +454,108 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
         result["error"] = str(exc)
 
     return result
+
+
+@router.get("/metrics/tenants")
+def get_tenant_resource_usage(_: dict = Depends(require_role("admin"))):
+    """Top tenants by CPU/RAM from recent orchestrator events."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        # Average cpu/mem over last 10 events per container
+        cursor.execute("""
+            SELECT
+                o.container_name,
+                o.user_id,
+                u.email,
+                h.plan,
+                u.balance,
+                AVG(o.cpu_pct)  AS avg_cpu,
+                AVG(o.mem_pct)  AS avg_mem,
+                MAX(o.created_at) AS last_seen
+            FROM orchestrator_events o
+            JOIN users u ON u.user_id = o.user_id
+            LEFT JOIN hostings h ON h.container_name = o.container_name
+            WHERE o.cpu_pct IS NOT NULL
+              AND o.created_at::timestamptz > NOW() - INTERVAL '24 hours'
+            GROUP BY o.container_name, o.user_id, u.email, h.plan, u.balance
+            ORDER BY avg_cpu DESC
+            LIMIT 10
+        """)
+        rows = cursor.fetchall()
+        COST_PER_CONTAINER_MONTHLY = float(os.getenv("COST_PER_CONTAINER_MONTHLY", "5.0"))
+        tenants = []
+        for r in rows:
+            avg_cpu = round(r["avg_cpu"] or 0, 1)
+            avg_mem = round(r["avg_mem"] or 0, 1)
+            balance = r["balance"] or 0
+            plan = r["plan"] or "free"
+            abusing = avg_cpu > 60 or avg_mem > 70
+            costly  = abusing and balance < 5 and plan == "free"
+            monthly_cost = round(COST_PER_CONTAINER_MONTHLY, 2)
+            at_loss = balance < monthly_cost and plan == "free"
+            tenants.append({
+                "container_name":      r["container_name"],
+                "user_id":             r["user_id"],
+                "email":               r["email"],
+                "plan":                plan,
+                "balance":             round(balance, 2),
+                "avg_cpu":             avg_cpu,
+                "avg_mem":             avg_mem,
+                "last_seen":           r["last_seen"],
+                "abusing":             abusing,
+                "costly":              costly,
+                "monthly_cost_usd":    monthly_cost,
+                "at_loss":             at_loss,
+            })
+        return {"tenants": tenants, "window": "24h", "cost_per_container_usd": COST_PER_CONTAINER_MONTHLY}
+    except Exception as exc:
+        return {"tenants": [], "error": str(exc)}
+    finally:
+        release_connection(conn)
+
+
+@router.get("/jobs/summary")
+def get_jobs_summary(_: dict = Depends(require_role("admin"))):
+    """Last run times and counts for background jobs (reconciler, expiration, health checker)."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        jobs = {}
+        for event_type in ("reconcile", "expire", "health_check", "traffic"):
+            cursor.execute("""
+                SELECT COUNT(*) AS cnt, MAX(created_at) AS last_run
+                FROM orchestrator_events
+                WHERE event_type ILIKE %s
+                  AND created_at::timestamptz > NOW() - INTERVAL '24 hours'
+            """, (f"%{event_type}%",))
+            row = cursor.fetchone()
+            jobs[event_type] = {
+                "count_24h": int(row["cnt"]) if row else 0,
+                "last_run":  row["last_run"] if row else None,
+            }
+
+        # Prometheus: db_errors_total
+        import os, requests as _req
+        PROM = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
+        db_errors = None
+        try:
+            resp = _req.get(f"{PROM}/api/v1/query",
+                            params={"query": "rate(hosting_guard_db_errors_total[1h])"},
+                            timeout=4)
+            series = resp.json().get("data", {}).get("result", [])
+            if series:
+                db_errors = round(float(series[0]["value"][1]) * 3600, 2)  # errors/hour
+        except Exception:
+            pass
+
+        return {"jobs": jobs, "db_errors_last_hour": db_errors}
+    except Exception as exc:
+        return {"jobs": {}, "error": str(exc)}
+    finally:
+        release_connection(conn)
 
 
 @router.get("/metrics/capacity")
@@ -464,6 +602,23 @@ def get_ops_summary(_: dict = Depends(require_role("admin"))):
 
     total_balance = sum(u.get("balance", 0) or 0 for u in users)
 
+    containers_today = users_today = 0
+    try:
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) AS cnt FROM hostings WHERE created_at::timestamptz > NOW() - INTERVAL '24 hours'")
+            row = cursor.fetchone()
+            containers_today = int(row["cnt"]) if row else 0
+            cursor.execute("SELECT COUNT(*) AS cnt FROM users WHERE created_at::timestamptz > NOW() - INTERVAL '24 hours'")
+            row = cursor.fetchone()
+            users_today = int(row["cnt"]) if row else 0
+        finally:
+            release_connection(conn)
+    except Exception:
+        pass
+
     return {
         "free_tier": {
             "active_users":  free_active,
@@ -479,6 +634,10 @@ def get_ops_summary(_: dict = Depends(require_role("admin"))):
             "free_users":   len(free_users),
             "conversion_pct": round(len(paid_users) / len(users) * 100, 1) if users else 0,
             "total_balance": round(total_balance, 2),
+        },
+        "growth": {
+            "containers_today": containers_today,
+            "users_today": users_today,
         },
     }
 
