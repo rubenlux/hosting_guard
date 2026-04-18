@@ -396,10 +396,22 @@ export default function AdminDashboard() {
           alerts={alerts}
         />
 
-        {/* Capacity status banner — visible when warning or critical */}
-        {capacityMetrics && capacityMetrics.status !== 'ok' && (
-          <SystemStatusBanner capacity={capacityMetrics} />
-        )}
+        {/* Capacity status banner — prefers real Prometheus data, falls back to capacity_forecast */}
+        {(() => {
+          const bannerData = (nodeMetrics?.available && nodeMetrics.status)
+            ? {
+                status:             nodeMetrics.status,
+                cpu_pct:            nodeMetrics.cpu_pct,
+                ram_pct:            nodeMetrics.ram_pct,
+                disk_pct:           nodeMetrics.disk_pct,
+                days_to_exhaustion: nodeMetrics.disk_days_left,
+                recommendation:     nodeMetrics.recommendation,
+              }
+            : capacityMetrics;
+          return bannerData && bannerData.status !== 'ok' && bannerData.status !== 'healthy'
+            ? <SystemStatusBanner capacity={bannerData} />
+            : null;
+        })()}
 
         {/* Scrollable content + alerts sidebar */}
         <div className="flex-1 overflow-hidden flex">

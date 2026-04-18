@@ -317,7 +317,7 @@ async def admin_terminate_hosting(
 
 @router.get("/metrics/node")
 def get_node_metrics(_: dict = Depends(require_role("admin"))):
-    """Real node metrics queried from Prometheus (node_exporter data)."""
+    """Real node metrics from Prometheus with saturation analysis."""
     import os
     import requests as _req
 
@@ -327,27 +327,79 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
         "cpu_pct":  '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100)',
         "ram_pct":  "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100",
         "disk_pct": '(1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}) * 100',
+        # predict_linear: bytes available in 14 days based on last 6h trend
+        "disk_avail_predicted": (
+            'predict_linear('
+            'node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}[6h], 86400*14)'
+        ),
+        "disk_avail_bytes": 'node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}',
+        "disk_total_bytes": 'node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}',
     }
 
     result = {"source": "prometheus", "available": False}
 
-    try:
-        values = {}
-        for key, query in QUERIES.items():
-            resp = _req.get(f"{PROM}/api/v1/query", params={"query": query}, timeout=5)
+    def _query(q: str):
+        try:
+            resp = _req.get(f"{PROM}/api/v1/query", params={"query": q}, timeout=5)
             resp.raise_for_status()
-            data = resp.json()
-            series = data.get("data", {}).get("result", [])
-            if series:
-                values[key] = round(float(series[0]["value"][1]), 1)
-            else:
-                values[key] = None
+            series = resp.json().get("data", {}).get("result", [])
+            return float(series[0]["value"][1]) if series else None
+        except Exception:
+            return None
+
+    try:
+        cpu  = _query(QUERIES["cpu_pct"])
+        ram  = _query(QUERIES["ram_pct"])
+        disk = _query(QUERIES["disk_pct"])
+
+        if cpu is None and ram is None and disk is None:
+            return result
+
+        # Days to disk exhaustion via predict_linear
+        days_left = None
+        avail_predicted = _query(QUERIES["disk_avail_predicted"])
+        avail_now       = _query(QUERIES["disk_avail_bytes"])
+        total           = _query(QUERIES["disk_total_bytes"])
+        if avail_predicted is not None and avail_now is not None and total and total > 0:
+            if avail_predicted <= 0:
+                # Will exhaust within 14 days — calculate exact days
+                # growth_rate bytes/sec = (avail_now - avail_predicted) / (14 * 86400)
+                growth_rate = (avail_now - avail_predicted) / (14 * 86400)
+                if growth_rate > 0:
+                    days_left = round(avail_now / growth_rate / 86400, 1)
+            # else: more than 14 days left — no urgency
+
+        # Determine per-resource status
+        def _status(pct):
+            if pct is None:  return "unknown"
+            if pct >= 90:    return "critical"
+            if pct >= 70:    return "warning"
+            return "ok"
+
+        statuses = [_status(cpu), _status(ram), _status(disk)]
+        overall = (
+            "critical" if "critical" in statuses
+            else "warning" if "warning" in statuses
+            else "ok"
+        )
+
+        recommendations = {
+            "ok":       "Capacidad normal — sin acción requerida",
+            "warning":  "Revisar crecimiento — planificar escalado próximamente",
+            "critical": "Escalar infraestructura ahora",
+        }
 
         result.update({
-            "available": True,
-            "cpu_pct":   values.get("cpu_pct"),
-            "ram_pct":   values.get("ram_pct"),
-            "disk_pct":  values.get("disk_pct"),
+            "available":          True,
+            "cpu_pct":            round(cpu,  1) if cpu  is not None else None,
+            "ram_pct":            round(ram,  1) if ram  is not None else None,
+            "disk_pct":           round(disk, 1) if disk is not None else None,
+            "disk_days_left":     days_left,
+            "status":             overall,
+            "recommendation":     recommendations[overall],
+            "cpu_status":         _status(cpu),
+            "ram_status":         _status(ram),
+            "disk_status":        _status(disk),
         })
     except Exception as exc:
         result["error"] = str(exc)
