@@ -129,16 +129,14 @@ const SiteManagement = ({
                   </button>
                 )}
                 
-                {/* Import backup — WordPress only */}
-                {h.container_name?.includes('_wp_') && (
-                  <button
-                    onClick={() => onImportBackup?.(h)}
-                    className="w-9 h-9 flex items-center justify-center rounded-lg bg-white/5 hover:bg-blue-500/20 hover:text-blue-400 transition-colors"
-                    title="Importar backup"
-                  >
-                    <HardDriveDownload size={15} />
-                  </button>
-                )}
+                {/* Import backup */}
+                <button
+                  onClick={() => onImportBackup?.(h)}
+                  className="w-9 h-9 flex items-center justify-center rounded-lg bg-white/5 hover:bg-blue-500/20 hover:text-blue-400 transition-colors"
+                  title="Importar backup"
+                >
+                  <HardDriveDownload size={15} />
+                </button>
 
                 <div className="w-[1px] h-6 bg-white/10 mx-1"></div>
 

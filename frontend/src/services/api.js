@@ -270,12 +270,16 @@ export const getUnitEconomics = async () => {
     return response.data;
 };
 
-export const startImport = async (hostingId, file) => {
+export const startImport = async (hostingId, file, onProgress) => {
     const form = new FormData();
     form.append('hosting_id', hostingId);
     form.append('file', file);
     const response = await api.post('/hosting/import', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 0,  // no timeout for large file uploads
+        onUploadProgress: onProgress
+            ? (e) => onProgress(Math.round((e.loaded * 100) / (e.total || 1)))
+            : undefined,
     });
     return response.data;
 };

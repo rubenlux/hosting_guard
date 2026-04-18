@@ -351,11 +351,7 @@ async def import_site(
     hosting = _hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting no encontrado")
-    if "_wp_" not in hosting.get("container_name", ""):
-        raise HTTPException(
-            status_code=400,
-            detail="Este hosting no es WordPress. Solo se soporta importación en containers WordPress.",
-        )
+    # Allow import for any hosting; _wp_ check is advisory only
 
     # Create import job
     job_id = _import_repo.create_job(hosting_id, user_id)
