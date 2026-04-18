@@ -71,13 +71,12 @@ services:
   # ---------------------------------------------------------------------------
   app:
     build:
-      context: .
+      context: /opt/hosting_guard
     container_name: hosting_guard
     restart: always
     env_file: .env.production
     depends_on:
       - docker-socket-proxy
-      - pgbouncer
       - redis
 
     environment:
@@ -106,7 +105,7 @@ services:
   # ---------------------------------------------------------------------------
   frontend:
     build:
-      context: ./frontend
+      context: /opt/hosting_guard/frontend
     container_name: frontend
     restart: always
     networks:
@@ -228,7 +227,7 @@ services:
   # ---------------------------------------------------------------------------
   orchestrator:
     build:
-      context: .
+      context: /opt/hosting_guard
     container_name: orchestrator
     restart: always
     env_file: .env.production
