@@ -134,7 +134,6 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
   const [logs,      setLogs]      = useState([]);
   const [error,     setError]     = useState(null);
   const [loading,   setLoading]   = useState(false);
-  const [uploadPct, setUploadPct] = useState(0);
   const inputRef  = useRef(null);
   const pollRef   = useRef(null);
   const sseRef    = useRef(null);
@@ -203,10 +202,9 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
   const handleSubmit = async () => {
     if (!file) return;
     setLoading(true);
-    setUploadPct(0);
     setError(null);
     try {
-      const res = await startImport(hosting.hosting_id, file, setUploadPct);
+      const res = await startImport(hosting.hosting_id, file);
       setJobId(res.job_id);
       setJobStatus({ status: 'uploading' });
       setStep('running');
@@ -216,7 +214,6 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
       setError(detail);
     } finally {
       setLoading(false);
-      setUploadPct(0);
     }
   };
 
@@ -338,19 +335,9 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
                     active:scale-[0.98]"
                 >
                   {loading ? (
-                    <span className="flex flex-col items-center gap-1 w-full">
-                      <span className="flex items-center gap-2">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        {uploadPct < 100 ? `Subiendo... ${uploadPct}%` : 'Procesando...'}
-                      </span>
-                      {uploadPct > 0 && uploadPct < 100 && (
-                        <span className="w-full h-0.5 rounded bg-white/10 overflow-hidden">
-                          <span
-                            className="block h-full bg-[#00ff88] transition-all duration-300 rounded"
-                            style={{ width: `${uploadPct}%` }}
-                          />
-                        </span>
-                      )}
+                    <span className="flex items-center justify-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Subiendo...
                     </span>
                   ) : 'Iniciar importación'}
                 </button>

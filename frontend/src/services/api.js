@@ -270,16 +270,14 @@ export const getUnitEconomics = async () => {
     return response.data;
 };
 
-export const startImport = async (hostingId, file, onProgress) => {
+export const startImport = async (hostingId, file) => {
     const form = new FormData();
     form.append('hosting_id', hostingId);
     form.append('file', file);
+    // Do NOT set Content-Type manually — Axios must auto-generate the multipart boundary.
+    // Do NOT use onUploadProgress — it conflicts with HTTP/2 + Traefik and stalls uploads.
     const response = await api.post('/hosting/import', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 0,  // no timeout for large file uploads
-        onUploadProgress: onProgress
-            ? (e) => onProgress(Math.round((e.loaded * 100) / (e.total || 1)))
-            : undefined,
+        timeout: 0,
     });
     return response.data;
 };
