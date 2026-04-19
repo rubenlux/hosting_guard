@@ -92,13 +92,8 @@ services:
       - "traefik.http.routers.hg.rule=Host(`api.hostingguard.lat`)"
       - "traefik.http.routers.hg.entrypoints=websecure"
       - "traefik.http.routers.hg.tls.certresolver=le"
-      - "traefik.http.routers.hg.middlewares=hg-upload"
       - "traefik.http.services.hg.loadbalancer.server.port=8000"
       - "traefik.http.services.hg.loadbalancer.responseForwarding.flushInterval=100ms"
-      # Allow up to 500MB uploads — buffered to disk, 10MB kept in memory
-      - "traefik.http.middlewares.hg-upload.buffering.maxRequestBodyBytes=524288000"
-      - "traefik.http.middlewares.hg-upload.buffering.memRequestBodyBytes=10485760"
-      - "traefik.http.middlewares.hg-upload.buffering.maxResponseBodyBytes=0"
 
     volumes:
       - ./data:/app/data
