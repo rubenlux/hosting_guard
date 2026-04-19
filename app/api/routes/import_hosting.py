@@ -104,7 +104,8 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path):
             raise RuntimeError(f"Hosting {hosting_id} no encontrado")
         container = hosting["container_name"]
         subdomain = hosting.get("subdomain", "")
-        new_domain = f"{subdomain}.hostingguard.lat"
+        # subdomain is stored as full domain (e.g. "site.hostingguard.lat")
+        new_domain = subdomain
 
         # Detect DB container (naming convention: replace _wp_ with _db_)
         db_container = container.replace("_wp_", "_db_") if "_wp_" in container else None
