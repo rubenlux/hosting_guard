@@ -201,6 +201,9 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
   /* ── submit ────────────────────────────────────────────────── */
   const handleSubmit = async () => {
     if (!file) return;
+    console.log("FILE:", file);
+    console.log("IS FILE:", file instanceof File);
+    console.log("SIZE:", file?.size);
     setLoading(true);
     setError(null);
     try {
