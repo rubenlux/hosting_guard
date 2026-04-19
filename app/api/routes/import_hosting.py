@@ -79,6 +79,102 @@ def _detect_type(path: Path) -> str:
     return "UNKNOWN"
 
 
+_PLAN_RESOURCES: dict = {
+    "free":     {"cpu": "0.25", "memory": "256m"},
+    "personal": {"cpu": "0.5",  "memory": "512m"},
+    "negocio":  {"cpu": "1",    "memory": "1g"},
+    "agencia":  {"cpu": "2",    "memory": "2g"},
+}
+
+
+def _container_exists(name: str) -> bool:
+    r = _docker("inspect", "--format", "{{.State.Status}}", name, timeout=10)
+    return r.returncode == 0
+
+
+def _get_container_env(container: str, key: str) -> Optional[str]:
+    r = _docker("inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", container, timeout=10)
+    if r.returncode != 0:
+        return None
+    for line in r.stdout.splitlines():
+        if line.startswith(f"{key}="):
+            return line[len(key) + 1:]
+    return None
+
+
+def _get_container_network(container: str) -> str:
+    r = _docker(
+        "inspect", "--format",
+        "{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}",
+        container, timeout=10,
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip().split()[0]
+    return "deploy_hosting_network"
+
+
+def _wait_for_db(job_id: int, db_container: str, db_password: str, max_wait: int = 60) -> None:
+    """Block until MariaDB accepts connections or raise RuntimeError."""
+    import time
+    for _ in range(max_wait // 3):
+        r = _docker_exec(
+            db_container,
+            "mysqladmin", "ping", f"-uroot", f"-p{db_password}", "--silent",
+            timeout=5,
+        )
+        if r.returncode == 0:
+            _log(job_id, "[import] DB container ready")
+            return
+        time.sleep(3)
+    raise RuntimeError(f"DB container {db_container} no respondió en {max_wait}s — import abortado")
+
+
+def _ensure_db_container(job_id: int, wp_container: str, db_container: str, plan: str) -> str:
+    """
+    Idempotent: ensure the MariaDB container paired with wp_container exists and is ready.
+    Returns the db_password (extracted from wp_container env or from existing db_container).
+    """
+    if _container_exists(db_container):
+        _log(job_id, f"[import] DB container {db_container} already exists")
+        db_password = _get_container_env(db_container, "MYSQL_PASSWORD") or ""
+        return db_password
+
+    _log(job_id, f"[import] Creating DB container {db_container}...")
+
+    db_password = _get_container_env(wp_container, "WORDPRESS_DB_PASSWORD")
+    if not db_password:
+        raise RuntimeError(
+            f"No se pudo obtener WORDPRESS_DB_PASSWORD del container {wp_container}. "
+            "Verifica que el hosting fue creado correctamente."
+        )
+
+    network = _get_container_network(wp_container)
+    _log(job_id, f"[import] Using network: {network}")
+
+    resources = _PLAN_RESOURCES.get(plan, _PLAN_RESOURCES["free"])
+
+    r = _docker(
+        "run", "-d",
+        "--name",    db_container,
+        "--network", network,
+        "-e", f"MYSQL_ROOT_PASSWORD={db_password}",
+        "-e", "MYSQL_DATABASE=wordpress",
+        "-e", "MYSQL_USER=wpuser",
+        "-e", f"MYSQL_PASSWORD={db_password}",
+        "--cpus",    resources["cpu"],
+        "--memory",  resources["memory"],
+        "mariadb:10.11",
+        timeout=30,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"No se pudo crear DB container: {r.stderr.strip()}")
+
+    _log(job_id, "[import] DB container created, waiting for readiness...")
+    _wait_for_db(job_id, db_container, db_password)
+    _log(job_id, "[import] DB container ready")
+    return db_password
+
+
 def _wait_for_wp(container: str, max_wait: int = 120) -> bool:
     """Wait until WordPress is fully initialised inside the container."""
     for _ in range(max_wait // 5):
@@ -111,6 +207,13 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path):
         db_container = container.replace("_wp_", "_db_") if "_wp_" in container else None
         _log(job_id, f"Container destino: {container}")
         _log(job_id, f"Dominio nuevo: {new_domain}")
+
+        # ── Ensure DB container exists and is ready ───────────────────────
+        if db_container:
+            plan = hosting.get("plan", "free")
+            _ensure_db_container(job_id, container, db_container, plan)
+        else:
+            _log(job_id, "WARN: No se pudo determinar el container DB (nombre WP sin '_wp_')")
 
         # ── Detect backup type ────────────────────────────────────────────
         btype = _detect_type(file_path)
