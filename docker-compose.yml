@@ -88,7 +88,11 @@ services:
       - "traefik.http.routers.hg.rule=Host(`api.hostingguard.lat`)"
       - "traefik.http.routers.hg.entrypoints=websecure"
       - "traefik.http.routers.hg.tls.certresolver=le"
+      - "traefik.http.routers.hg.middlewares=upload-size"
       - "traefik.http.services.hg.loadbalancer.server.port=8000"
+      # Allow uploads up to 500MB — required for WordPress backup imports
+      - "traefik.http.middlewares.upload-size.buffering.maxRequestBodyBytes=524288000"
+      - "traefik.http.middlewares.upload-size.buffering.memRequestBodyBytes=10485760"
 
     volumes:
       - ./data:/app/data
