@@ -22,20 +22,21 @@ _tasks: set = set()
 
 def schedule_job(fn: Callable, interval: int) -> None:
     """
-    Schedule a synchronous callable to run repeatedly every `interval` seconds.
+    Schedule a callable to run repeatedly every `interval` seconds.
 
-    The callable is executed in a thread executor so it never blocks the event loop.
-    Exceptions are caught and logged; the loop continues regardless.
-
-    Future: replace this body with a Celery/ARQ beat registration when
-    distributed job execution is required.
+    Supports both sync and async callables:
+    - async functions are awaited directly on the event loop
+    - sync functions are dispatched to a thread executor
     """
     async def _loop():
         logger.info("schedule_job: starting '%s' (interval=%ds)", fn.__name__, interval)
         while True:
             try:
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, fn)
+                if asyncio.iscoroutinefunction(fn):
+                    await fn()
+                else:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, fn)
             except Exception as e:
                 logger.error("schedule_job '%s' error: %s", fn.__name__, e, exc_info=True)
             await asyncio.sleep(interval)

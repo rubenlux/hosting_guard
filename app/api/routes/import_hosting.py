@@ -118,7 +118,7 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path):
 
         if btype == "WPRESS":
             _restore_wpress(job_id, container, file_path)
-        elif btype == "ZIP_WP":
+        elif btype in ("ZIP_WP", "ZIP_GENERIC"):
             _restore_zip_wp(job_id, container, db_container, file_path)
         elif btype == "ZIP_SQL":
             _restore_zip_sql(job_id, container, db_container, file_path)
@@ -381,11 +381,9 @@ async def import_site(
 
     _log(job_id, f"Archivo guardado ({total // 1024} KB). Iniciando pipeline...")
 
-    # Run pipeline in background thread
+    # Run pipeline in background thread (run_in_executor returns a Future, not a coroutine)
     loop = asyncio.get_running_loop()
-    asyncio.create_task(
-        loop.run_in_executor(None, _run_pipeline, job_id, hosting_id, user_id, dest)
-    )
+    loop.run_in_executor(None, _run_pipeline, job_id, hosting_id, user_id, dest)
 
     return {
         "job_id": job_id,
