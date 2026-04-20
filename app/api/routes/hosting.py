@@ -292,26 +292,38 @@ router.get("/list-hostings")(list_hostings)
 
 
 
-@router.delete("/delete-hosting/{hosting_id}")
-async def delete_hosting(hosting_id: int, user: dict = Depends(require_support_write)):
-    user_id = user.get("user_id")
+async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
+    """Idempotent delete: removes containers (best-effort) then always cleans DB record."""
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
-
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
 
     container_name = hosting["container_name"]
 
+    # Best-effort: -f makes docker rm succeed even if container is already gone
     await run_docker_command_async(["rm", "-f", container_name], timeout=15)
 
-    # FIX #2: si es WordPress, eliminar también el contenedor de DB huérfano.
-    # Convención de nombres: user_{id}_wp_{name}_{uid}  →  user_{id}_db_{name}_{uid}
     if "_wp_" in container_name:
         db_container = container_name.replace("_wp_", "_db_", 1)
         await run_docker_command_async(["rm", "-f", db_container], timeout=15)
 
+    # Always remove from DB regardless of docker outcome
     hosting_repo.delete_hosting(hosting_id, user_id)
     return {"status": "deleted", "hosting_id": hosting_id}
+
+
+@router.delete("/hosting/{hosting_id}")
+async def delete_hosting_rest(hosting_id: int, user: dict = Depends(require_support_write)):
+    """RESTful DELETE — used by the dashboard frontend."""
+    user_id: int = int(user["user_id"])
+    return await _do_delete_hosting(hosting_id, user_id)
+
+
+@router.delete("/delete-hosting/{hosting_id}")
+async def delete_hosting(hosting_id: int, user: dict = Depends(require_support_write)):
+    """Legacy route — kept for backwards compatibility."""
+    user_id: int = int(user["user_id"])
+    return await _do_delete_hosting(hosting_id, user_id)
 
 @router.post("/hostings/{hosting_id}/restart")
 @limiter.limit("3/minute")
