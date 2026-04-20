@@ -468,17 +468,16 @@ def get_tenant_resource_usage(_: dict = Depends(require_role("admin"))):
                 o.container_name,
                 o.user_id,
                 u.email,
-                h.plan,
+                u.plan,
                 u.balance,
                 AVG(o.cpu_pct)  AS avg_cpu,
                 AVG(o.mem_pct)  AS avg_mem,
                 MAX(o.created_at) AS last_seen
             FROM orchestrator_events o
             JOIN users u ON u.user_id = o.user_id
-            LEFT JOIN hostings h ON h.container_name = o.container_name
             WHERE o.cpu_pct IS NOT NULL
               AND o.created_at::timestamptz > NOW() - INTERVAL %s
-            GROUP BY o.container_name, o.user_id, u.email, h.plan, u.balance
+            GROUP BY o.container_name, o.user_id, u.email, u.plan, u.balance
             ORDER BY avg_cpu DESC
             LIMIT 10
         """

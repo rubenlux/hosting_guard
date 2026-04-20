@@ -429,20 +429,19 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
         wp_container = f"user_{user_id}_wp_{project_name}_{uid}"
         network      = "deploy_hosting_network"
 
-        plan = PLANS.get(data.plan)
+        # Always use the user's actual account plan — never trust the form-submitted plan.
+        # This prevents paid users from creating 'free' containers.
+        if user.get("role") != "admin" and user_id is not None:
+            user_db = _user_repo.get_user_by_id(int(user_id))
+            effective_plan_name = (user_db.get("plan") or "free") if user_db else "free"
+        else:
+            effective_plan_name = data.plan  # admin can specify any plan
+
+        plan = PLANS.get(effective_plan_name)
         if not plan:
             raise HTTPException(status_code=400, detail="plan inválido")
 
-        if data.plan != "free" and user.get("role") != "admin":
-            user_db = _user_repo.get_user_by_id(user_id)
-            user_plan = user_db.get("plan", "free") if user_db else "free"
-            if user_plan != data.plan:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Tu plan actual es '{user_plan}'. Actualiza tu suscripción para usar el plan '{data.plan}'."
-                )
-
-        if data.plan == "free" and ip_address:
+        if effective_plan_name == "free" and ip_address:
             if hosting_repo.has_free_plan_from_ip(ip_address):
                 raise HTTPException(
                     status_code=403,
@@ -450,8 +449,8 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
                 )
 
         if user.get("role") != "admin" and user_id is not None:
-            _enforce_free_plan_policy(int(user_id), data.plan)
-            _enforce_plan_container_limit(int(user_id), data.plan)
+            _enforce_free_plan_policy(int(user_id), effective_plan_name)
+            _enforce_plan_container_limit(int(user_id), effective_plan_name)
 
         # FIX #9: la contraseña se genera y se pasa a ambos contenedores correctamente
         # (el patrón de nombres garantiza que delete_hosting pueda limpiar db_container)
@@ -506,7 +505,7 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             name=data.name,
             subdomain=subdomain,
             container_name=wp_container,
-            plan=data.plan,
+            plan=effective_plan_name,
             ip_address=ip_address
         )
 
