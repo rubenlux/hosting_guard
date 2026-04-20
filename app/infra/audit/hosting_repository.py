@@ -169,6 +169,7 @@ class HostingRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
+            self._cascade_delete(cursor, hosting_id)
             cursor.execute("DELETE FROM hostings WHERE hosting_id = %s AND user_id = %s", (hosting_id, user_id))
             conn.commit()
             return cursor.rowcount > 0
@@ -179,11 +180,20 @@ class HostingRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
+            self._cascade_delete(cursor, hosting_id)
             cursor.execute("DELETE FROM hostings WHERE hosting_id = %s", (hosting_id,))
             conn.commit()
             return cursor.rowcount > 0
         finally:
             release_connection(conn)
+
+    @staticmethod
+    def _cascade_delete(cursor, hosting_id: int) -> None:
+        """Delete all child records that reference this hosting before deleting the parent."""
+        cursor.execute("DELETE FROM site_health_history WHERE site_id = %s", (hosting_id,))
+        cursor.execute("DELETE FROM site_alerts WHERE site_id = %s", (hosting_id,))
+        cursor.execute("DELETE FROM ai_diagnosis WHERE hosting_id = %s", (hosting_id,))
+        cursor.execute("DELETE FROM import_jobs WHERE hosting_id = %s", (hosting_id,))
 
     def get_hosting_by_container(self, container_name: str) -> Optional[Dict]:
         conn = get_connection()
