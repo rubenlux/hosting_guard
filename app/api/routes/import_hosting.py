@@ -239,26 +239,27 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
 
         # ── Fix URLs ──────────────────────────────────────────────────────
         _import_repo.set_status(job_id, "fixing_urls")
-        old_domain = _detect_old_domain(container)
+        old_domain = _detect_old_domain(db_container)
         _log(job_id, f"Dominio original detectado: {old_domain or 'no detectado'}")
         _import_repo.set_domains(job_id, old_domain or "", new_domain)
 
-        if old_domain and old_domain != new_domain:
-            _fix_domain(job_id, container, old_domain, new_domain)
+        if db_container:
+            if old_domain and old_domain != new_domain:
+                _fix_domain(job_id, db_container, old_domain, new_domain)
+            else:
+                _log(job_id, "Forzando siteurl/home directamente en BD...")
+                for opt in ("siteurl", "home"):
+                    _mysql_exec(
+                        db_container,
+                        f"UPDATE wp_options SET option_value='https://{new_domain}' WHERE option_name='{opt}';",
+                        timeout=15,
+                    )
         else:
-            _log(job_id, "Search-replace omitido — forzando siteurl/home directamente...")
-            for opt in ("siteurl", "home"):
-                _docker_exec(
-                    container, "wp", "--allow-root",
-                    "option", "update", opt, f"https://{new_domain}",
-                    timeout=30,
-                )
+            _log(job_id, "WARN: sin DB container — fix de dominio omitido")
 
-        # ── Permissions + cache ───────────────────────────────────────────
+        # ── Permissions ───────────────────────────────────────────────────
         _log(job_id, "Ajustando permisos...")
         _docker_exec(container, "chown", "-R", "www-data:www-data", "/var/www/html")
-        _log(job_id, "Flushing rewrite rules...")
-        _docker_exec(container, "wp", "--allow-root", "rewrite", "flush")
 
         # ── Emit event ────────────────────────────────────────────────────
         _hosting_repo.log_orchestrator_event(
@@ -412,41 +413,58 @@ def _restore_sql_file_to_container(job_id: int, db_container: str, sql_path: Pat
 
 # ── domain detection & fix ────────────────────────────────────────────────────
 
-def _detect_old_domain(container: str) -> Optional[str]:
-    r = _docker_exec(
-        container, "wp", "--allow-root",
-        "option", "get", "siteurl",
-        timeout=30,
+def _mysql_exec(db_container: str, sql: str, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run a SQL statement against the wordpress DB inside db_container."""
+    return _docker_exec(
+        db_container, "sh", "-c",
+        f'mysql -u wpuser -p"$MYSQL_PASSWORD" wordpress -e "{sql}"',
+        timeout=timeout,
     )
-    if r.returncode == 0:
-        url = r.stdout.strip().rstrip("/")
-        # Extract domain only (strip scheme)
+
+
+def _detect_old_domain(db_container: Optional[str]) -> Optional[str]:
+    """Read siteurl from wp_options via MySQL (wordpress:latest has no WP-CLI)."""
+    if not db_container:
+        return None
+    r = _mysql_exec(
+        db_container,
+        "SELECT option_value FROM wp_options WHERE option_name='siteurl' LIMIT 1;",
+        timeout=15,
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        url = r.stdout.strip().splitlines()[-1].rstrip("/")
         url = re.sub(r"^https?://", "", url)
         return url or None
     return None
 
 
-def _fix_domain(job_id: int, container: str, old_domain: str, new_domain: str):
-    _log(job_id, f"Ejecutando search-replace: {old_domain} → {new_domain}")
-    for scheme in (f"https://{old_domain}", f"http://{old_domain}"):
-        target = f"https://{new_domain}"
-        r = _docker_exec(
-            container, "wp", "--allow-root",
-            "search-replace", scheme, target, "--all-tables",
-            timeout=120,
-        )
-        if r.returncode == 0:
-            _log(job_id, r.stdout.strip() or "search-replace completado")
-        else:
-            _log(job_id, f"WARN search-replace ({scheme}): {r.stderr.strip()[:200]}")
+def _fix_domain(job_id: int, db_container: str, old_domain: str, new_domain: str):
+    """Replace old domain with new domain in wp DB tables via MySQL."""
+    _log(job_id, f"Actualizando dominio en BD: {old_domain} → {new_domain}")
 
-    # Update siteurl and home directly as safety net
+    for old_scheme in (f"https://{old_domain}", f"http://{old_domain}"):
+        new_url = f"https://{new_domain}"
+        for table, col in (
+            ("wp_options",  "option_value"),
+            ("wp_posts",    "post_content"),
+            ("wp_posts",    "guid"),
+            ("wp_postmeta", "meta_value"),
+        ):
+            sql = f"UPDATE {table} SET {col}=REPLACE({col},'{old_scheme}','{new_url}');"
+            r = _mysql_exec(db_container, sql, timeout=60)
+            if r.returncode == 0:
+                _log(job_id, f"  ✓ {table}.{col}")
+            else:
+                _log(job_id, f"  WARN {table}.{col}: {r.stderr.strip()[:100]}")
+
+    # Force siteurl / home as safety net
     for opt in ("siteurl", "home"):
-        _docker_exec(
-            container, "wp", "--allow-root",
-            "option", "update", opt, f"https://{new_domain}",
-            timeout=30,
+        _mysql_exec(
+            db_container,
+            f"UPDATE wp_options SET option_value='https://{new_domain}' WHERE option_name='{opt}';",
+            timeout=15,
         )
+    _log(job_id, "Dominio actualizado en BD")
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
