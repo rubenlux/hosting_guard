@@ -142,12 +142,14 @@ async def _verify_container_state(container_name: str, expected: str = "running"
 def _enforce_plan_container_limit(user_id: int, plan_name: str) -> None:
     """Raises 403 if the user has reached their plan's container quota.
 
-    Counts only non-deleted hostings so that deleted sites free up their slot.
-    Admins are exempt.
+    Uses the user's actual account plan (not the form-selected plan) so that
+    paid users are checked against their real quota.
     """
-    plan = PLANS.get(plan_name)
+    user_db = _user_repo.get_user_by_id(user_id)
+    effective_plan = (user_db.get("plan") or plan_name) if user_db else plan_name
+    plan = PLANS.get(effective_plan) or PLANS.get(plan_name)
     if not plan:
-        return  # invalid plan is caught separately
+        return
     max_sites = plan.get("max_sites")
     if max_sites is None:
         return  # unlimited (agencia)
@@ -168,9 +170,13 @@ def _enforce_free_plan_policy(user_id: int, plan_name: str) -> None:
     """Raise 503/403 for free-plan requests that breach global or per-user limits.
 
     Called before any create endpoint that accepts plan='free'.
-    Admins bypass all checks.
+    Admins bypass all checks. Paid users bypass free-tier restrictions.
     """
     if plan_name != "free":
+        return
+    # Paid users are not subject to free-tier restrictions
+    user_db = _user_repo.get_user_by_id(user_id)
+    if user_db and user_db.get("plan", "free") != "free":
         return
     from app.observability.metrics import FREE_PLAN_REJECTIONS
     if hosting_repo.count_active_free_users() >= MAX_FREE_USERS:

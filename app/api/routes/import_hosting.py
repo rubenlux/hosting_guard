@@ -246,7 +246,13 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
         if old_domain and old_domain != new_domain:
             _fix_domain(job_id, container, old_domain, new_domain)
         else:
-            _log(job_id, "Dominio idéntico o no detectado — omitiendo search-replace")
+            _log(job_id, "Search-replace omitido — forzando siteurl/home directamente...")
+            for opt in ("siteurl", "home"):
+                _docker_exec(
+                    container, "wp", "--allow-root",
+                    "option", "update", opt, f"https://{new_domain}",
+                    timeout=30,
+                )
 
         # ── Permissions + cache ───────────────────────────────────────────
         _log(job_id, "Ajustando permisos...")
