@@ -393,22 +393,20 @@ def _restore_sql(job_id: int, db_container: Optional[str], file_path: Path):
 
 
 def _restore_sql_file_to_container(job_id: int, db_container: str, sql_path: Path):
-    _log(job_id, f"Copiando SQL al container DB {db_container}...")
-    dest = f"/tmp/import_{sql_path.stem}.sql"
-    r = _docker("cp", str(sql_path), f"{db_container}:{dest}", timeout=120)
+    """Stream SQL file directly via stdin — avoids docker cp (blocked by socket proxy)."""
+    _log(job_id, f"Importando SQL en MariaDB ({sql_path.stat().st_size // 1024} KB)...")
+    with open(sql_path, "rb") as fh:
+        r = subprocess.run(
+            ["docker", "exec", "-i", db_container,
+             "sh", "-c", 'mysql -u wpuser -p"$MYSQL_PASSWORD" wordpress'],
+            stdin=fh,
+            capture_output=True,
+            timeout=300,
+        )
     if r.returncode != 0:
-        raise RuntimeError(f"docker cp SQL falló: {r.stderr.strip()}")
-
-    _log(job_id, "Importando SQL en MariaDB...")
-    r = _docker_exec(
-        db_container,
-        "sh", "-c",
-        f"mysql -u wpuser -p\"$MYSQL_PASSWORD\" wordpress < {dest}",
-        timeout=300,
-    )
-    if r.returncode != 0:
-        _log(job_id, f"WARN mysql import: {r.stderr.strip()[:300]}")
-    _docker_exec(db_container, "rm", "-f", dest)
+        err = r.stderr.decode(errors="replace").strip()[:400]
+        raise RuntimeError(f"mysql import falló: {err}")
+    _log(job_id, "SQL importado correctamente")
 
 
 # ── domain detection & fix ────────────────────────────────────────────────────
