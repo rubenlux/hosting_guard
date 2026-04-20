@@ -188,7 +188,7 @@ def _wait_for_wp(container: str, max_wait: int = 120) -> bool:
 
 # ── pipeline ─────────────────────────────────────────────────────────────────
 
-def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path):
+def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, sql_path: Optional[Path] = None):
     """Blocking pipeline — called from a thread executor so the event loop is free."""
     try:
         _import_repo.set_status(job_id, "processing")
@@ -231,6 +231,12 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path):
         else:
             raise RuntimeError(f"Formato de backup no soportado: {btype}")
 
+        # ── Optional separate SQL file ────────────────────────────────────
+        if sql_path and db_container:
+            _import_repo.set_status(job_id, "restoring_db")
+            _log(job_id, f"Importando SQL separado: {sql_path.name}...")
+            _restore_sql_file_to_container(job_id, db_container, sql_path)
+
         # ── Fix URLs ──────────────────────────────────────────────────────
         _import_repo.set_status(job_id, "fixing_urls")
         old_domain = _detect_old_domain(container)
@@ -269,11 +275,15 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path):
         except Exception:
             pass
     finally:
-        # Always clean up the uploaded file
         try:
             file_path.unlink(missing_ok=True)
         except Exception:
             pass
+        if sql_path:
+            try:
+                sql_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 # ── restoration strategies ────────────────────────────────────────────────────
@@ -435,15 +445,33 @@ def _fix_domain(job_id: int, container: str, old_domain: str, new_domain: str):
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
+async def _save_upload(upload: UploadFile, dest: Path, job_id: int) -> int:
+    """Stream an uploaded file to disk. Returns bytes written."""
+    total = 0
+    with open(dest, "wb") as fh:
+        while True:
+            chunk = await upload.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                fh.close()
+                dest.unlink(missing_ok=True)
+                _import_repo.set_status(job_id, "failed", "Archivo demasiado grande (máx 500MB)")
+                raise HTTPException(status_code=413, detail="Archivo demasiado grande (máx 500MB)")
+            fh.write(chunk)
+    return total
+
+
 @router.post("/import")
 async def import_site(
     hosting_id: int = Form(...),
     file: UploadFile = File(...),
+    sql_file: Optional[UploadFile] = File(None),
     user: dict = Depends(verify_token),
 ):
     user_id = user["user_id"]
 
-    # Validate extension
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -451,31 +479,21 @@ async def import_site(
             detail=f"Formato no soportado. Permitidos: {', '.join(ALLOWED_EXTENSIONS)}",
         )
 
-    # Verify ownership
+    if sql_file and sql_file.filename:
+        sql_suffix = Path(sql_file.filename).suffix.lower()
+        if sql_suffix != ".sql":
+            raise HTTPException(status_code=400, detail="El archivo SQL adicional debe tener extensión .sql")
+
     hosting = _hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting no encontrado")
-    # Allow import for any hosting; _wp_ check is advisory only
 
-    # Create import job
     job_id = _import_repo.create_job(hosting_id, user_id)
 
-    # Stream file to disk (avoid loading 500MB into RAM)
+    # Save main file
     dest = UPLOAD_DIR / f"job_{job_id}{suffix}"
     try:
-        total = 0
-        with open(dest, "wb") as fh:
-            while True:
-                chunk = await file.read(1024 * 1024)  # 1MB chunks
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_UPLOAD_BYTES:
-                    fh.close()
-                    dest.unlink(missing_ok=True)
-                    _import_repo.set_status(job_id, "failed", "Archivo demasiado grande (máx 500MB)")
-                    raise HTTPException(status_code=413, detail="Archivo demasiado grande (máx 500MB)")
-                fh.write(chunk)
+        total = await _save_upload(file, dest, job_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -483,11 +501,27 @@ async def import_site(
         _import_repo.set_status(job_id, "failed", str(exc))
         raise HTTPException(status_code=500, detail=f"Error al guardar archivo: {exc}")
 
-    _log(job_id, f"Archivo guardado ({total // 1024} KB). Iniciando pipeline...")
+    _log(job_id, f"Archivo guardado ({total // 1024} KB).")
 
-    # Run pipeline in background thread (run_in_executor returns a Future, not a coroutine)
+    # Save optional SQL file
+    sql_dest: Optional[Path] = None
+    if sql_file and sql_file.filename:
+        sql_dest = UPLOAD_DIR / f"job_{job_id}_extra.sql"
+        try:
+            sql_total = await _save_upload(sql_file, sql_dest, job_id)
+            _log(job_id, f"SQL adicional guardado ({sql_total // 1024} KB).")
+        except HTTPException:
+            dest.unlink(missing_ok=True)
+            raise
+        except Exception as exc:
+            dest.unlink(missing_ok=True)
+            sql_dest.unlink(missing_ok=True)
+            _import_repo.set_status(job_id, "failed", str(exc))
+            raise HTTPException(status_code=500, detail=f"Error al guardar SQL: {exc}")
+
+    _log(job_id, "Iniciando pipeline...")
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _run_pipeline, job_id, hosting_id, user_id, dest)
+    loop.run_in_executor(None, _run_pipeline, job_id, hosting_id, user_id, dest, sql_dest)
 
     return {
         "job_id": job_id,

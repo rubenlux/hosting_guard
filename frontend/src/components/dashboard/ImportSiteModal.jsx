@@ -128,13 +128,15 @@ function Terminal_({ logs }) {
 export default function ImportSiteModal({ hosting, onClose, onComplete }) {
   const [step,      setStep]      = useState('upload');   // upload | running | done | failed
   const [file,      setFile]      = useState(null);
+  const [sqlFile,   setSqlFile]   = useState(null);
   const [dragging,  setDragging]  = useState(false);
   const [jobId,     setJobId]     = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
   const [logs,      setLogs]      = useState([]);
   const [error,     setError]     = useState(null);
   const [loading,   setLoading]   = useState(false);
-  const inputRef  = useRef(null);
+  const inputRef    = useRef(null);
+  const sqlInputRef = useRef(null);
   const pollRef   = useRef(null);
   const sseRef    = useRef(null);
 
@@ -201,13 +203,10 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
   /* ── submit ────────────────────────────────────────────────── */
   const handleSubmit = async () => {
     if (!file) return;
-    console.log("FILE:", file);
-    console.log("IS FILE:", file instanceof File);
-    console.log("SIZE:", file?.size);
     setLoading(true);
     setError(null);
     try {
-      const res = await startImport(hosting.hosting_id, file);
+      const res = await startImport(hosting.hosting_id, file, sqlFile);
       setJobId(res.job_id);
       setJobStatus({ status: 'uploading' });
       setStep('running');
@@ -243,7 +242,7 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/6">
           <div>
             <div className="text-[13px] font-semibold text-white tracking-tight">Importar sitio</div>
-            <div className="text-[10px] text-white/35 font-mono mt-0.5">{hosting.name} · {hosting.subdomain}.hostingguard.lat</div>
+            <div className="text-[10px] text-white/35 font-mono mt-0.5">{hosting.name} · {hosting.subdomain}</div>
           </div>
           {step === 'upload' && (
             <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
@@ -311,6 +310,46 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
                     )}
                   </div>
                 </div>
+
+                {/* SQL opcional — solo cuando el archivo principal no es SQL */}
+                {(!format || format !== 'SQL') && (
+                  <div className="mt-3">
+                    <input
+                      ref={sqlInputRef}
+                      type="file"
+                      accept=".sql"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files[0];
+                        if (f) setSqlFile(f);
+                        e.target.value = '';
+                      }}
+                    />
+                    {sqlFile ? (
+                      <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-purple-500/8 border border-purple-500/20">
+                        <div className="flex items-center gap-2">
+                          <Database className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                          <span className="text-[11px] text-purple-300 font-mono truncate max-w-[200px]">{sqlFile.name}</span>
+                          <span className="text-[10px] text-white/30">{fmtBytes(sqlFile.size)}</span>
+                        </div>
+                        <button
+                          onClick={() => setSqlFile(null)}
+                          className="text-[10px] text-white/25 hover:text-white/50 transition-colors ml-2 shrink-0"
+                        >
+                          quitar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => sqlInputRef.current?.click()}
+                        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-white/10 hover:border-white/20 text-white/30 hover:text-white/50 transition-all text-[11px]"
+                      >
+                        <Database className="w-3.5 h-3.5 shrink-0" />
+                        <span>Agregar base de datos separada (.sql) — opcional</span>
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {error && (
                   <div className="flex items-start gap-2 mt-3 p-3 rounded-lg bg-red-500/8 border border-red-500/20">

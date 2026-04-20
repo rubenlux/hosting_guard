@@ -270,10 +270,11 @@ export const getUnitEconomics = async () => {
     return response.data;
 };
 
-export const startImport = async (hostingId, file) => {
+export const startImport = async (hostingId, file, sqlFile = null) => {
     const form = new FormData();
     form.append('hosting_id', hostingId);
     form.append('file', file);
+    if (sqlFile) form.append('sql_file', sqlFile);
     // Do NOT set Content-Type manually — Axios must auto-generate the multipart boundary.
     // Do NOT use onUploadProgress — it conflicts with HTTP/2 + Traefik and stalls uploads.
     const response = await api.post('/hosting/import', form, {
