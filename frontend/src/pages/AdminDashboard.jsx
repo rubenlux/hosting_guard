@@ -838,69 +838,64 @@ export default function AdminDashboard() {
                     <span className="text-[11px] font-semibold text-white">Container Metrics</span>
                     <span className="ml-2 text-[9px] text-gray-600">última hora · cAdvisor</span>
                   </div>
-                  <a
-                    href={containerHistory?.grafana_url || 'https://grafana.hostingguard.lat'}
-                    target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[10px] font-medium hover:bg-orange-500/20 transition-colors"
-                  >
-                    <BarChart3 className="w-3 h-3" /> Grafana
-                  </a>
+                  <span className="text-[9px] text-gray-700 font-mono">orchestrator_events</span>
                 </div>
 
                 {containerHistory?.available ? (() => {
                   const containers = containerHistory.containers;
                   const COLORS = ['#00aaff','#22c55e','#f59e0b','#a855f7','#ef4444','#06b6d4'];
+                  const entries = Object.entries(containers);
 
-                  // Build merged time series for CPU chart
-                  const allTs = new Set();
-                  Object.values(containers).forEach(c => c.cpu.forEach(p => allTs.add(p.t)));
-                  const cpuChartData = Array.from(allTs).sort().map(t => {
-                    const row = { t: new Date(t * 1000).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) };
-                    Object.entries(containers).forEach(([name, c]) => {
-                      const pt = c.cpu.find(p => p.t === t);
-                      row[name.replace('user_', 'u').substring(0, 16)] = pt ? pt.v : null;
+                  // Build unified time axis from all containers
+                  const allTs = [...new Set(entries.flatMap(([, c]) => c.data.map(p => p.t)))].sort();
+
+                  const cpuData = allTs.map(t => {
+                    const row = { t };
+                    entries.forEach(([name, c]) => {
+                      const pt = c.data.find(p => p.t === t);
+                      const key = (c.email || name).split('@')[0].substring(0, 14);
+                      row[key] = pt ? pt.cpu : null;
                     });
                     return row;
                   });
 
-                  const allTsRam = new Set();
-                  Object.values(containers).forEach(c => c.ram.forEach(p => allTsRam.add(p.t)));
-                  const ramChartData = Array.from(allTsRam).sort().map(t => {
-                    const row = { t: new Date(t * 1000).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) };
-                    Object.entries(containers).forEach(([name, c]) => {
-                      const pt = c.ram.find(p => p.t === t);
-                      row[name.replace('user_', 'u').substring(0, 16)] = pt ? pt.v : null;
+                  const ramData = allTs.map(t => {
+                    const row = { t };
+                    entries.forEach(([name, c]) => {
+                      const pt = c.data.find(p => p.t === t);
+                      const key = (c.email || name).split('@')[0].substring(0, 14);
+                      row[key] = pt ? pt.ram : null;
                     });
                     return row;
                   });
 
-                  const containerKeys = Object.keys(containers).map(n => n.replace('user_', 'u').substring(0, 16));
+                  const keys = entries.map(([name, c]) => (c.email || name).split('@')[0].substring(0, 14));
 
                   return (
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <div className="text-[9px] text-gray-600 uppercase tracking-wider mb-2">CPU %</div>
+                        <div className="text-[9px] text-gray-600 uppercase tracking-wider mb-2">CPU % · últimas 2h</div>
                         <ResponsiveContainer width="100%" height={160}>
-                          <LineChart data={cpuChartData}>
+                          <LineChart data={cpuData}>
                             <XAxis dataKey="t" tick={{ fontSize: 8, fill: '#4b5563' }} interval="preserveStartEnd" />
-                            <YAxis tick={{ fontSize: 8, fill: '#4b5563' }} unit="%" width={28} />
-                            <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', fontSize: 10 }} />
+                            <YAxis tick={{ fontSize: 8, fill: '#4b5563' }} unit="%" width={28} domain={[0, 100]} />
+                            <Tooltip contentStyle={{ background: '#111', border: '1px solid #333', fontSize: 10 }} />
                             <Legend wrapperStyle={{ fontSize: 9 }} />
-                            {containerKeys.map((k, i) => (
+                            {keys.map((k, i) => (
                               <Line key={k} type="monotone" dataKey={k} stroke={COLORS[i % COLORS.length]} dot={false} strokeWidth={1.5} connectNulls />
                             ))}
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
                       <div>
-                        <div className="text-[9px] text-gray-600 uppercase tracking-wider mb-2">RAM (MB)</div>
+                        <div className="text-[9px] text-gray-600 uppercase tracking-wider mb-2">RAM % · últimas 2h</div>
                         <ResponsiveContainer width="100%" height={160}>
-                          <LineChart data={ramChartData}>
+                          <LineChart data={ramData}>
                             <XAxis dataKey="t" tick={{ fontSize: 8, fill: '#4b5563' }} interval="preserveStartEnd" />
-                            <YAxis tick={{ fontSize: 8, fill: '#4b5563' }} unit="MB" width={36} />
-                            <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', fontSize: 10 }} />
+                            <YAxis tick={{ fontSize: 8, fill: '#4b5563' }} unit="%" width={28} domain={[0, 100]} />
+                            <Tooltip contentStyle={{ background: '#111', border: '1px solid #333', fontSize: 10 }} />
                             <Legend wrapperStyle={{ fontSize: 9 }} />
-                            {containerKeys.map((k, i) => (
+                            {keys.map((k, i) => (
                               <Line key={k} type="monotone" dataKey={k} stroke={COLORS[i % COLORS.length]} dot={false} strokeWidth={1.5} connectNulls />
                             ))}
                           </LineChart>
@@ -909,10 +904,8 @@ export default function AdminDashboard() {
                     </div>
                   );
                 })() : (
-                  <div className="py-6 text-center">
-                    <div className="text-[10px] text-gray-600 mb-1">cAdvisor no disponible — los gráficos aparecen cuando el servicio esté activo</div>
-                    <a href={containerHistory?.grafana_url || 'https://grafana.hostingguard.lat'} target="_blank" rel="noopener noreferrer"
-                       className="text-[10px] text-orange-400 hover:underline">Ver en Grafana →</a>
+                  <div className="py-6 text-center text-[10px] text-gray-600">
+                    Sin datos aún — los gráficos aparecen una vez que el orchestrator registre eventos de CPU/RAM
                   </div>
                 )}
               </div>

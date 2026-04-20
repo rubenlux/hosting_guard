@@ -1033,49 +1033,39 @@ async def admin_upgrade_plan(
 
 @router.get("/metrics/containers/history")
 def get_container_history(_: dict = Depends(require_role("admin"))):
-    """Per-container CPU% and RAM time series (last 1h) from Prometheus cAdvisor."""
-    import time
-    import requests as _req
+    """Per-container CPU%/RAM% time series (last 2h) from orchestrator_events."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                o.container_name,
+                u.email,
+                u.plan,
+                DATE_TRUNC('minute', o.created_at::timestamptz) AS minute,
+                AVG(o.cpu_pct) AS avg_cpu,
+                AVG(o.mem_pct) AS avg_ram
+            FROM orchestrator_events o
+            JOIN users u ON u.user_id = o.user_id
+            WHERE o.cpu_pct IS NOT NULL
+              AND o.created_at::timestamptz > NOW() - INTERVAL '2 hours'
+            GROUP BY o.container_name, u.email, u.plan, minute
+            ORDER BY o.container_name, minute
+        """)
+        rows = cursor.fetchall()
 
-    PROM = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
-    now   = int(time.time())
-    start = now - 3600
-    step  = 60
+        containers: dict = {}
+        for row in rows:
+            name = row["container_name"]
+            if name not in containers:
+                containers[name] = {"email": row["email"], "plan": row["plan"], "data": []}
+            containers[name]["data"].append({
+                "t": row["minute"].strftime("%H:%M"),
+                "cpu": round(float(row["avg_cpu"] or 0), 1),
+                "ram": round(float(row["avg_ram"] or 0), 1),
+            })
 
-    def _range(q: str):
-        try:
-            r = _req.get(f"{PROM}/api/v1/query_range",
-                         params={"query": q, "start": start, "end": now, "step": step},
-                         timeout=10)
-            r.raise_for_status()
-            return r.json().get("data", {}).get("result", [])
-        except Exception:
-            return []
-
-    cpu_data = _range(
-        'sum(rate(container_cpu_usage_seconds_total{image!="",name=~"user_.*"}[2m])) by (name) * 100'
-    )
-    mem_data = _range(
-        'container_memory_usage_bytes{image!="",name=~"user_.*"}'
-    )
-
-    containers: dict = {}
-    for series in cpu_data:
-        name = series["metric"].get("name", "unknown")
-        containers.setdefault(name, {"cpu": [], "ram": []})
-        containers[name]["cpu"] = [
-            {"t": int(v[0]), "v": round(float(v[1]), 1)} for v in series["values"]
-        ]
-    for series in mem_data:
-        name = series["metric"].get("name", "unknown")
-        containers.setdefault(name, {"cpu": [], "ram": []})
-        containers[name]["ram"] = [
-            {"t": int(v[0]), "v": round(float(v[1]) / 1024 / 1024, 1)} for v in series["values"]
-        ]
-
-    return {
-        "available": bool(containers),
-        "containers": containers,
-        "window_minutes": 60,
-        "grafana_url": os.getenv("GRAFANA_URL", "https://grafana.hostingguard.lat"),
-    }
+        return {"available": bool(containers), "containers": containers, "window_minutes": 120}
+    finally:
+        release_connection(conn)
