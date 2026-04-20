@@ -462,7 +462,7 @@ def get_tenant_resource_usage(_: dict = Depends(require_role("admin"))):
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        # Average cpu/mem — try 24h first, fall back to 7d if empty
+        # Average cpu/mem — use 2h window for current health; fall back to 24h if empty
         _TENANT_QUERY = """
             SELECT
                 o.container_name,
@@ -483,13 +483,13 @@ def get_tenant_resource_usage(_: dict = Depends(require_role("admin"))):
             ORDER BY avg_cpu DESC
             LIMIT 10
         """
-        cursor.execute(_TENANT_QUERY, ("24 hours",))
+        cursor.execute(_TENANT_QUERY, ("2 hours",))
         rows = cursor.fetchall()
-        window = "24h"
+        window = "2h"
         if not rows:
-            cursor.execute(_TENANT_QUERY, ("7 days",))
+            cursor.execute(_TENANT_QUERY, ("24 hours",))
             rows = cursor.fetchall()
-            window = "7d"
+            window = "24h"
         COST_PER_CONTAINER_MONTHLY = float(os.getenv("COST_PER_CONTAINER_MONTHLY", "5.0"))
         tenants = []
         for r in rows:
