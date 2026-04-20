@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: HostingGuard
+    folder: HostingGuard
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

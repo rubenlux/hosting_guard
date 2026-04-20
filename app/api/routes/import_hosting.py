@@ -257,9 +257,8 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
         else:
             _log(job_id, "WARN: sin DB container — fix de dominio omitido")
 
-        # ── Permissions ───────────────────────────────────────────────────
-        _log(job_id, "Ajustando permisos...")
-        _docker_exec(container, "chown", "-R", "www-data:www-data", "/var/www/html")
+        # ── Post-import optimization ──────────────────────────────────────
+        _post_import_optimize(job_id, container)
 
         # ── Emit event ────────────────────────────────────────────────────
         _hosting_repo.log_orchestrator_event(
@@ -463,6 +462,46 @@ def _fix_domain(job_id: int, db_container: str, old_domain: str, new_domain: str
             timeout=15,
         )
     _log(job_id, "Dominio actualizado en BD")
+
+
+# ── post-import optimization ──────────────────────────────────────────────────
+
+def _post_import_optimize(job_id: int, container: str):
+    """Harden wp-config.php, install WP Super Cache, fix permissions."""
+    # 1. wp-config.php hardening via PHP (PHP is always available in the container)
+    _log(job_id, "Configurando wp-config.php...")
+    php_harden = (
+        r"grep -q 'FS_METHOD' /var/www/html/wp-config.php || "
+        r"php -r \""
+        r"\$f='/var/www/html/wp-config.php';"
+        r"\$c=file_get_contents(\$f);"
+        r"\$add=\"define('FS_METHOD','direct');\ndefine('WP_CACHE',true);\ndefine('WP_MEMORY_LIMIT','256M');\n\";"
+        r"file_put_contents(\$f,str_replace(\"/* That's all\",\$add.\"/* That's all\",\$c));"
+        r"\""
+    )
+    r = _docker_exec(container, "sh", "-c", php_harden, timeout=10)
+    if r.returncode == 0:
+        _log(job_id, "  ✓ wp-config.php hardened")
+    else:
+        _log(job_id, f"  WARN wp-config: {r.stderr.strip()[:100]}")
+
+    # 2. Page cache via WP-CLI (available in hostingguard/wordpress image)
+    _log(job_id, "Instalando WP Super Cache...")
+    r = _docker_exec(
+        container, "wp", "--allow-root",
+        "plugin", "install", "wp-super-cache", "--activate",
+        timeout=120,
+    )
+    if r.returncode == 0:
+        _log(job_id, "  ✓ WP Super Cache activado")
+        _docker_exec(container, "wp", "--allow-root", "super-cache", "enable", timeout=30)
+    else:
+        _log(job_id, f"  WARN cache: WP-CLI no disponible o plugin falló ({r.stderr.strip()[:80]})")
+
+    # 3. Correct permissions
+    _log(job_id, "Ajustando permisos...")
+    _docker_exec(container, "chown", "-R", "www-data:www-data", "/var/www/html", timeout=30)
+    _log(job_id, "  ✓ Permisos ok")
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────

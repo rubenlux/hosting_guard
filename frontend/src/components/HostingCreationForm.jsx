@@ -5,7 +5,7 @@ import { createHosting, createWordPress, deployFromGithub } from '../services/ap
 import { useAuth } from '../hooks/useAuth';
 
 const PLAN_LABELS = {
-  free:     'Gratis 14d',
+  free:     'Gratis',
   personal: 'Personal $9',
   negocio:  'Negocio $19',
   agencia:  'Agencia $39',
@@ -34,8 +34,11 @@ const TYPES = [
 
 const HostingCreationForm = ({ onSuccess }) => {
   const { user } = useAuth();
+  const userPlan = user?.plan || 'free';
+  const isPaidUser = userPlan !== 'free';
+
   const [name, setName] = useState('');
-  const [plan, setPlan] = useState('free');
+  const [plan, setPlan] = useState(userPlan);
   const [type, setType] = useState('static');
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('main');
@@ -172,23 +175,30 @@ const HostingCreationForm = ({ onSuccess }) => {
 
           {/* Plan */}
           <div className="space-y-2">
-            <label className="block text-[11px] font-black p-1 text-muted uppercase tracking-widest">Selecciona tu plan</label>
-            <div className="grid grid-cols-3 gap-2">
-              {['free', 'personal', 'negocio', 'agencia'].map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setPlan(p)}
-                  className={`py-3 rounded-xl border font-bold capitalize transition-all ${
-                    plan === p
-                      ? 'bg-primary/10 border-primary text-primary'
-                      : 'bg-background border-white/10 text-gray-500 hover:border-white/30'
-                  }`}
-                >
-                  {PLAN_LABELS[p]}
-                </button>
-              ))}
-            </div>
+            <label className="block text-[11px] font-black p-1 text-muted uppercase tracking-widest">Plan</label>
+            {isPaidUser ? (
+              <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-primary/30 bg-primary/5">
+                <span className="text-primary font-black text-sm">{PLAN_LABELS[userPlan]}</span>
+                <span className="text-gray-500 text-xs">— tu plan activo</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {['free', 'personal', 'negocio', 'agencia'].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPlan(p)}
+                    className={`py-3 rounded-xl border font-bold capitalize transition-all ${
+                      plan === p
+                        ? 'bg-primary/10 border-primary text-primary'
+                        : 'bg-background border-white/10 text-gray-500 hover:border-white/30'
+                    }`}
+                  >
+                    {PLAN_LABELS[p]}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* WordPress notice */}

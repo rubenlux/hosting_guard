@@ -228,6 +228,52 @@ services:
       - hosting_network
 
   # ---------------------------------------------------------------------------
+  # cadvisor — métricas por container (CPU, RAM, red) para Prometheus
+  # ---------------------------------------------------------------------------
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    restart: always
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - hosting_network
+
+  # ---------------------------------------------------------------------------
+  # grafana — dashboards de métricas (accesible en grafana.hostingguard.lat)
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+    restart: always
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-changeme_admin}
+      - GF_SERVER_ROOT_URL=https://grafana.hostingguard.lat
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/dashboards/containers.json
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/etc/grafana/dashboards
+    networks:
+      - hosting_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.hostingguard.lat`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=le"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+
+  # ---------------------------------------------------------------------------
   # orchestrator — Monitoreo y auto-scaling inteligente (Safe Mode: DRY_RUN)
   # ---------------------------------------------------------------------------
   orchestrator:
@@ -259,3 +305,4 @@ networks:
 volumes:
   pgdata:
   redisdata:
+  grafanadata:

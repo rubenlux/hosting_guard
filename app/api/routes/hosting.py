@@ -490,7 +490,7 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             "-l", f"traefik.http.routers.{wp_container}.entrypoints=websecure",
             "-l", f"traefik.http.routers.{wp_container}.tls.certresolver=le",
             "-l", f"traefik.http.services.{wp_container}.loadbalancer.server.port=80",
-            "wordpress:latest"
+            "hostingguard/wordpress:latest"
         ]
         wp_code, _, wp_err = await run_docker_command_async(wp_cmd, timeout=30)
         if wp_code != 0:
