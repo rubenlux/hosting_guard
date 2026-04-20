@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import {
   Users, Globe, BarChart3, RefreshCw, ShieldCheck, Activity,
@@ -16,7 +17,7 @@ import {
   getAdminPixelEvents, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
   getSystemHealth, getAdminOpsSummary, getCapacityMetrics, getNodeMetrics,
-  getTenantResourceUsage, getJobsSummary, getUnitEconomics,
+  getTenantResourceUsage, getJobsSummary, getUnitEconomics, getContainerHistory,
   startSupportSession, getSupportSessions, revokeSupportSession,
   listStaff, createStaff, updateStaff, deactivateStaff, resetStaffPassword,
   adminRestartHosting, adminStopHosting, adminStartHosting,
@@ -184,6 +185,7 @@ export default function AdminDashboard() {
   const [tenantUsage, setTenantUsage]         = useState(null);
   const [jobsSummary, setJobsSummary]         = useState(null);
   const [unitEconomics, setUnitEconomics]     = useState(null);
+  const [containerHistory, setContainerHistory] = useState(null);
   const [loading, setLoading]           = useState(true);
   const [tab, setTab]                   = useState('users');
   const [pixelFilter, setPixelFilter]   = useState('all');
@@ -205,6 +207,7 @@ export default function AdminDashboard() {
       getTenantResourceUsage(),
       getJobsSummary(),
       getUnitEconomics(),
+      getContainerHistory(),
     ]);
     if (results[0].status === 'fulfilled') setUsers(results[0].value);
     if (results[1].status === 'fulfilled') setHostings(results[1].value);
@@ -220,6 +223,7 @@ export default function AdminDashboard() {
     if (results[11].status === 'fulfilled') setTenantUsage(results[11].value);
     if (results[12].status === 'fulfilled') setJobsSummary(results[12].value);
     if (results[13].status === 'fulfilled') setUnitEconomics(results[13].value);
+    if (results[14].status === 'fulfilled') setContainerHistory(results[14].value);
     setLoading(false);
   };
 
@@ -827,7 +831,93 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* Row 5: Unit Economics */}
+              {/* Row 5: Container Metrics History (cAdvisor → Prometheus) */}
+              <div className="bg-[#111] rounded-xl border border-white/5 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <span className="text-[11px] font-semibold text-white">Container Metrics</span>
+                    <span className="ml-2 text-[9px] text-gray-600">última hora · cAdvisor</span>
+                  </div>
+                  <a
+                    href={containerHistory?.grafana_url || 'https://grafana.hostingguard.lat'}
+                    target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[10px] font-medium hover:bg-orange-500/20 transition-colors"
+                  >
+                    <BarChart3 className="w-3 h-3" /> Grafana
+                  </a>
+                </div>
+
+                {containerHistory?.available ? (() => {
+                  const containers = containerHistory.containers;
+                  const COLORS = ['#00aaff','#22c55e','#f59e0b','#a855f7','#ef4444','#06b6d4'];
+
+                  // Build merged time series for CPU chart
+                  const allTs = new Set();
+                  Object.values(containers).forEach(c => c.cpu.forEach(p => allTs.add(p.t)));
+                  const cpuChartData = Array.from(allTs).sort().map(t => {
+                    const row = { t: new Date(t * 1000).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) };
+                    Object.entries(containers).forEach(([name, c]) => {
+                      const pt = c.cpu.find(p => p.t === t);
+                      row[name.replace('user_', 'u').substring(0, 16)] = pt ? pt.v : null;
+                    });
+                    return row;
+                  });
+
+                  const allTsRam = new Set();
+                  Object.values(containers).forEach(c => c.ram.forEach(p => allTsRam.add(p.t)));
+                  const ramChartData = Array.from(allTsRam).sort().map(t => {
+                    const row = { t: new Date(t * 1000).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) };
+                    Object.entries(containers).forEach(([name, c]) => {
+                      const pt = c.ram.find(p => p.t === t);
+                      row[name.replace('user_', 'u').substring(0, 16)] = pt ? pt.v : null;
+                    });
+                    return row;
+                  });
+
+                  const containerKeys = Object.keys(containers).map(n => n.replace('user_', 'u').substring(0, 16));
+
+                  return (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <div className="text-[9px] text-gray-600 uppercase tracking-wider mb-2">CPU %</div>
+                        <ResponsiveContainer width="100%" height={160}>
+                          <LineChart data={cpuChartData}>
+                            <XAxis dataKey="t" tick={{ fontSize: 8, fill: '#4b5563' }} interval="preserveStartEnd" />
+                            <YAxis tick={{ fontSize: 8, fill: '#4b5563' }} unit="%" width={28} />
+                            <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', fontSize: 10 }} />
+                            <Legend wrapperStyle={{ fontSize: 9 }} />
+                            {containerKeys.map((k, i) => (
+                              <Line key={k} type="monotone" dataKey={k} stroke={COLORS[i % COLORS.length]} dot={false} strokeWidth={1.5} connectNulls />
+                            ))}
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-gray-600 uppercase tracking-wider mb-2">RAM (MB)</div>
+                        <ResponsiveContainer width="100%" height={160}>
+                          <LineChart data={ramChartData}>
+                            <XAxis dataKey="t" tick={{ fontSize: 8, fill: '#4b5563' }} interval="preserveStartEnd" />
+                            <YAxis tick={{ fontSize: 8, fill: '#4b5563' }} unit="MB" width={36} />
+                            <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', fontSize: 10 }} />
+                            <Legend wrapperStyle={{ fontSize: 9 }} />
+                            {containerKeys.map((k, i) => (
+                              <Line key={k} type="monotone" dataKey={k} stroke={COLORS[i % COLORS.length]} dot={false} strokeWidth={1.5} connectNulls />
+                            ))}
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <div className="py-6 text-center">
+                    <div className="text-[10px] text-gray-600 mb-1">cAdvisor no disponible — los gráficos aparecen cuando el servicio esté activo</div>
+                    <a href={containerHistory?.grafana_url || 'https://grafana.hostingguard.lat'} target="_blank" rel="noopener noreferrer"
+                       className="text-[10px] text-orange-400 hover:underline">Ver en Grafana →</a>
+                  </div>
+                )}
+              </div>
+
+              {/* Row 6: Unit Economics */}
               <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
                   <div>

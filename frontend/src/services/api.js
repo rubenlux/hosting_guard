@@ -255,6 +255,11 @@ export const getNodeMetrics = async () => {
     return response.data;
 };
 
+export const getContainerHistory = async () => {
+    const response = await api.get('/admin/metrics/containers/history');
+    return response.data;
+};
+
 export const getTenantResourceUsage = async () => {
     const response = await api.get('/admin/metrics/tenants');
     return response.data;
