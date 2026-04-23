@@ -14,6 +14,7 @@ services:
       SERVICES:     1
       TASKS:        1
       POST:         1   # crear/parar/reiniciar contenedores de usuarios
+      DELETE:       1   # docker rm — requerido para eliminar containers de usuarios
       IMAGES:       1
       INFO:         1
       PING:         1

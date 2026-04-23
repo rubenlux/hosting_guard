@@ -300,22 +300,60 @@ router.get("/list-hostings")(list_hostings)
 
 
 async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
-    """Idempotent delete: removes containers (best-effort) then always cleans DB record."""
+    """
+    Delete a hosting owned by user_id.
+
+    Steps:
+      1. docker rm -f WP container + DB container (idempotent: 'No such container' = ok)
+      2. Verify with docker inspect that both containers are actually gone
+      3. If any container survives → raise 500, do NOT touch the DB
+      4. soft_delete_hosting: cascade-clean metrics + mark status='deleted'
+    """
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
 
+    if hosting.get("status") == "deleted":
+        return {"status": "deleted", "hosting_id": hosting_id, "note": "already_deleted"}
+
     container_name = hosting["container_name"]
+    db_container   = container_name.replace("_wp_", "_db_", 1) if "_wp_" in container_name else None
+    targets        = [container_name] + ([db_container] if db_container else [])
 
-    # Best-effort: -f makes docker rm succeed even if container is already gone
-    await run_docker_command_async(["rm", "-f", container_name], timeout=15)
+    # ── 1. Remove containers ─────────────────────────────────────────────────
+    docker_errors = []
+    for cname in targets:
+        code, _, stderr = await run_docker_command_async(["rm", "-f", cname], timeout=15)
+        if code != 0 and "No such container" not in stderr:
+            err = stderr.strip()[:160]
+            docker_errors.append(f"{cname}: {err}")
+            logger.error("delete_hosting docker rm -f %s failed (code=%d): %s", cname, code, err)
 
-    if "_wp_" in container_name:
-        db_container = container_name.replace("_wp_", "_db_", 1)
-        await run_docker_command_async(["rm", "-f", db_container], timeout=15)
+    # ── 2. Post-delete verification ──────────────────────────────────────────
+    surviving = []
+    for cname in targets:
+        code, _, _ = await run_docker_command_async(
+            ["inspect", "--format", "{{.Name}}", cname], timeout=5
+        )
+        if code == 0:
+            surviving.append(cname)
 
-    # Always remove from DB regardless of docker outcome
-    hosting_repo.delete_hosting(hosting_id, user_id)
+    if surviving:
+        detail = (
+            f"No se pudo eliminar el hosting. "
+            f"Containers activos: {', '.join(surviving)}. "
+            "Usá 'Force Cleanup' desde el panel de administración."
+        )
+        if docker_errors:
+            detail += f" Docker errors: {'; '.join(docker_errors)}"
+        raise HTTPException(status_code=500, detail=detail)
+
+    # ── 3. Clean metrics + soft-delete DB record ─────────────────────────────
+    hosting_repo.soft_delete_hosting(hosting_id, db_container=db_container)
+    logger.info(
+        "hosting_deleted hosting_id=%s container=%s db_container=%s",
+        hosting_id, container_name, db_container,
+    )
     return {"status": "deleted", "hosting_id": hosting_id}
 
 

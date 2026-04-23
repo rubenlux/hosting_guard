@@ -285,25 +285,27 @@ async def admin_terminate_hosting(
     if not reason:
         raise HTTPException(status_code=400, detail="Se requiere una razón para la terminación.")
 
-    container = hosting["container_name"]
+    container    = hosting["container_name"]
+    db_container = container.replace("_wp_", "_db_", 1) if "_wp_" in container else None
+    targets      = [container] + ([db_container] if db_container else [])
 
-    # 1. Detener y eliminar el contenedor
-    await _run_docker("docker", "rm", "-f", container, timeout=15)
+    # 1. Remove containers; log Docker errors but don't abort on "No such container"
+    docker_errors = []
+    for cname in targets:
+        r = await _run_docker("docker", "rm", "-f", cname, timeout=15)
+        if r.returncode != 0 and "No such container" not in (r.stderr or ""):
+            docker_errors.append(f"{cname}: {(r.stderr or '').strip()[:120]}")
 
-    # 2. Si es WordPress, eliminar también el contenedor de DB
-    if "_wp_" in container:
-        db_container = container.replace("_wp_", "_db_", 1)
-        await _run_docker("docker", "rm", "-f", db_container, timeout=15)
-
-    # 3. Registrar en el audit log ANTES de borrar el registro
+    # 2. Audit log BEFORE modifying DB
     _hosting_repo.log_orchestrator_event(
         container, hosting["user_id"],
         "admin_terminate",
-        f"TERMINADO por admin {admin['email']} | Razón: {reason} | IP: {_get_ip(request)}",
+        f"TERMINADO por admin {admin['email']} | Razón: {reason} | IP: {_get_ip(request)}"
+        + (f" | docker_errors: {docker_errors}" if docker_errors else ""),
     )
 
-    # 4. Eliminar el registro de hostings
-    _hosting_repo.admin_delete_hosting(hosting_id)
+    # 3. Soft-delete (preserves audit trail, cleans metrics)
+    _hosting_repo.soft_delete_hosting(hosting_id, db_container=db_container)
 
     return {
         "ok": True,
@@ -311,6 +313,7 @@ async def admin_terminate_hosting(
         "container": container,
         "reason": reason,
         "admin": admin["email"],
+        "docker_errors": docker_errors,
         "at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1186,3 +1189,60 @@ def get_container_history(_: dict = Depends(require_role("admin"))):
         return {"available": bool(containers), "containers": containers, "window_minutes": 120}
     finally:
         release_connection(conn)
+
+
+@router.post("/hostings/{hosting_id}/force-cleanup")
+async def admin_force_cleanup(
+    hosting_id: int,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """
+    Force cleanup for orphaned hostings (containers alive but DB record stuck).
+
+    Differences from normal delete:
+    - Tolerates 'No such container' (already gone = ok)
+    - Always soft-deletes the DB record regardless of Docker outcome
+    - Does NOT abort if containers can't be found — logs the discrepancy instead
+    """
+    hosting = _hosting_repo.get_hosting_any(hosting_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting no encontrado")
+
+    container    = hosting["container_name"]
+    db_container = container.replace("_wp_", "_db_", 1) if "_wp_" in container else None
+    targets      = [container] + ([db_container] if db_container else [])
+
+    removed  = []
+    not_found = []
+    errors   = []
+
+    for cname in targets:
+        r = await _run_docker("docker", "rm", "-f", cname, timeout=15)
+        err = (r.stderr or "").strip()
+        if r.returncode == 0:
+            removed.append(cname)
+        elif "No such container" in err:
+            not_found.append(cname)
+        else:
+            errors.append(f"{cname}: {err[:120]}")
+
+    # Always clean DB — force cleanup overrides the normal safety gate
+    _hosting_repo.soft_delete_hosting(hosting_id, db_container=db_container)
+
+    _hosting_repo.log_orchestrator_event(
+        container, hosting["user_id"],
+        "admin_force_cleanup",
+        f"Force cleanup por {admin['email']} desde {_get_ip(request)} | "
+        f"removed={removed} not_found={not_found} errors={errors}",
+    )
+
+    return {
+        "ok": True,
+        "hosting_id": hosting_id,
+        "removed": removed,
+        "not_found": not_found,
+        "docker_errors": errors,
+        "admin": admin["email"],
+        "at": datetime.now(timezone.utc).isoformat(),
+    }

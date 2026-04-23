@@ -27,7 +27,7 @@ async def list_hostings(skip: int = 0, limit: int = 50, user: dict = Depends(ver
         None, 
         lambda: hosting_repo.get_all_user_hostings_by_user(user_id, limit=limit, skip=skip)
     )
-    hostings_list = [dict(h) for h in hostings]
+    hostings_list = [dict(h) for h in hostings if h.get("status") != "deleted"]
 
     if not hostings_list:
         return hostings_list

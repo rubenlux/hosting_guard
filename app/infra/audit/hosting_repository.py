@@ -145,6 +145,25 @@ class HostingRepository:
         finally:
             release_connection(conn)
 
+    def soft_delete_hosting(self, hosting_id: int, db_container: Optional[str] = None) -> bool:
+        """Cascade-clean child records + metrics, then soft-delete the hosting row.
+
+        Preserves the audit trail (row stays in DB with status='deleted').
+        Pass db_container to also purge orchestrator_events for the MariaDB container.
+        """
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            self._cascade_delete(cursor, hosting_id, db_container=db_container)
+            cursor.execute(
+                "UPDATE hostings SET status = 'deleted', deleted_at = %s WHERE hosting_id = %s",
+                (datetime.now(timezone.utc).isoformat(), hosting_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            release_connection(conn)
+
     def get_hosting(self, hosting_id: int, user_id: int) -> Optional[Dict]:
         conn = get_connection()
         try:
@@ -188,19 +207,29 @@ class HostingRepository:
             release_connection(conn)
 
     @staticmethod
-    def _cascade_delete(cursor, hosting_id: int) -> None:
-        """Delete all child records that reference this hosting before deleting the parent."""
+    def _cascade_delete(cursor, hosting_id: int, db_container: Optional[str] = None) -> None:
+        """Delete all child records that reference this hosting before deleting the parent.
+
+        Pass db_container to also purge orchestrator_events for the associated MariaDB
+        container (not stored in the hostings table, derived from the WP container name).
+        """
         cursor.execute("DELETE FROM site_health_history WHERE site_id = %s", (hosting_id,))
         cursor.execute("DELETE FROM site_alerts WHERE site_id = %s", (hosting_id,))
         cursor.execute("DELETE FROM ai_diagnosis WHERE hosting_id = %s", (hosting_id,))
         cursor.execute("DELETE FROM import_jobs WHERE hosting_id = %s", (hosting_id,))
-        # Remove orchestrator_events for this container so stale metrics never surface
+        # Remove orchestrator_events for the WP container
         cursor.execute(
             "DELETE FROM orchestrator_events WHERE container_name = ("
             "  SELECT container_name FROM hostings WHERE hosting_id = %s"
             ")",
             (hosting_id,),
         )
+        # Remove orchestrator_events for the DB container (WordPress sites only)
+        if db_container:
+            cursor.execute(
+                "DELETE FROM orchestrator_events WHERE container_name = %s",
+                (db_container,),
+            )
 
     def get_hosting_by_container(self, container_name: str) -> Optional[Dict]:
         conn = get_connection()
@@ -399,7 +428,7 @@ class HostingRepository:
                       END AS days_remaining
                    FROM hostings h
                    JOIN users u ON h.user_id = u.user_id
-                   WHERE h.user_id = %s
+                   WHERE h.user_id = %s AND h.status != 'deleted'
                    LIMIT %s OFFSET %s""",
                 (user_id, limit, skip),
             )
