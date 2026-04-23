@@ -25,6 +25,7 @@ from app.core.health_engine import calculate_health_score
 from app.core.alert_engine import check_alerts
 from app.infra.docker_client import run_docker_command_async
 from app.infra.container_locks import container_lock
+from app.api.wp_optimize import optimize_wordpress
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +508,16 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             container_name=wp_container,
             plan=effective_plan_name,
             ip_address=ip_address
+        )
+
+        # Run optimization in background — WP needs ~60s to initialize before WP-CLI works.
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(
+            None,
+            lambda: optimize_wordpress(
+                wp_container,
+                log=lambda msg: logger.info("[wp_new:%s] %s", wp_container, msg),
+            ),
         )
 
         return {

@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.api.security import verify_token
+from app.api.wp_optimize import optimize_wordpress
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.import_repository import ImportRepository
 
@@ -485,81 +486,8 @@ def _fix_domain(job_id: int, db_container: str, old_domain: str, new_domain: str
 # ── post-import optimization ──────────────────────────────────────────────────
 
 def _post_import_optimize(job_id: int, container: str):
-    """Harden wp-config.php, install caching plugins, fix permissions."""
-    # 1. wp-config.php hardening via `wp config set` — idempotent per constant.
-    #    Each constant is set independently so a pre-existing FS_METHOD never
-    #    prevents WP_REDIS_HOST or WP_CACHE from being written.
-    _log(job_id, "Configurando wp-config.php...")
-    _WP_CONSTANTS = [
-        # (name,          value,    --raw)
-        ("FS_METHOD",      "direct", False),
-        ("WP_CACHE",       "true",   True),   # --raw so PHP sees true, not "true"
-        ("WP_MEMORY_LIMIT","256M",   False),
-        ("WP_REDIS_HOST",  "redis",  False),
-        ("WP_REDIS_PORT",  "6379",   True),   # --raw so PHP sees integer 6379
-    ]
-    config_ok = True
-    for key, value, raw in _WP_CONSTANTS:
-        cmd = ["wp", "--allow-root", "config", "set", key, value, "--type=constant"]
-        if raw:
-            cmd.append("--raw")
-        r = _docker_exec(container, *cmd, timeout=20)
-        if r.returncode == 0:
-            _log(job_id, f"  ✓ wp-config {key}")
-        else:
-            _log(job_id, f"  WARN wp-config {key}: {r.stderr.strip()[:120]}")
-            config_ok = False
-
-    # Verify critical keys were written correctly
-    for key in ("FS_METHOD", "WP_REDIS_HOST", "WP_REDIS_PORT"):
-        r = _docker_exec(container, "wp", "--allow-root", "config", "get", key, timeout=10)
-        val = r.stdout.strip() if r.returncode == 0 else "ERROR"
-        _log(job_id, f"  verify {key}={val}")
-
-    if config_ok:
-        _log(job_id, "  ✓ wp-config.php configurado correctamente")
-
-    # 2. Redis Object Cache (object-level cache — requires redis service on Docker network)
-    _log(job_id, "Instalando Redis Object Cache...")
-    r = _docker_exec(
-        container, "wp", "--allow-root",
-        "plugin", "install", "redis-cache", "--activate",
-        timeout=120,
-    )
-    if r.returncode == 0:
-        _docker_exec(container, "wp", "--allow-root", "redis", "enable", timeout=30)
-        _log(job_id, "  ✓ Redis Object Cache activado")
-    else:
-        _log(job_id, f"  WARN redis-cache: {r.stderr.strip()[:80]}")
-
-    # 3. Page cache via WP Super Cache (file-level cache)
-    _log(job_id, "Instalando WP Super Cache...")
-    r = _docker_exec(
-        container, "wp", "--allow-root",
-        "plugin", "install", "wp-super-cache", "--activate",
-        timeout=120,
-    )
-    if r.returncode == 0:
-        _docker_exec(container, "wp", "--allow-root", "super-cache", "enable", timeout=30)
-        _log(job_id, "  ✓ WP Super Cache activado")
-    else:
-        _log(job_id, f"  WARN wp-super-cache: {r.stderr.strip()[:80]}")
-
-    # 4. Flush rewrite rules so pretty permalinks work immediately
-    r = _docker_exec(container, "wp", "--allow-root", "rewrite", "flush", "--hard", timeout=20)
-    if r.returncode == 0:
-        _log(job_id, "  ✓ Rewrite rules actualizadas")
-    else:
-        _log(job_id, f"  WARN rewrite flush: {r.stderr.strip()[:80]}")
-
-    # 5. Clean up transients left by the old site
-    _docker_exec(container, "wp", "--allow-root", "transient", "delete", "--all", timeout=30)
-    _log(job_id, "  ✓ Transients limpiados")
-
-    # 6. Correct ownership
-    _log(job_id, "Ajustando permisos...")
-    _docker_exec(container, "chown", "-R", "www-data:www-data", "/var/www/html", timeout=30)
-    _log(job_id, "  ✓ Permisos ok")
+    """Delegate to shared optimize_wordpress — logs are forwarded to the import job."""
+    optimize_wordpress(container, log=lambda msg: _log(job_id, msg))
 
 
 # ── post-import site verification ────────────────────────────────────────────
