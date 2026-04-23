@@ -17,13 +17,52 @@ def _docker_exec(container: str, *cmd, timeout: int = 60) -> subprocess.Complete
     )
 
 
-def _wait_for_wp(container: str, max_wait: int = 120) -> bool:
-    """Poll until WP-CLI responds inside the container (WP is fully initialized)."""
-    for _ in range(max_wait // 5):
-        r = _docker_exec(container, "wp", "--allow-root", "--info", timeout=10)
+def _wait_for_wp(container: str, max_wait: int = 240) -> bool:
+    """
+    Wait until the WordPress container is fully initialized and WP-CLI works.
+
+    Two-phase approach:
+    1. Wait for Apache/PHP to start (check process or HTTP on localhost).
+    2. Wait for wp-config.php to exist (entrypoint generates it after DB is ready).
+    Then confirm WP-CLI responds.
+    """
+    # Phase 1: wait for Apache to be running (up to max_wait/2 seconds)
+    deadline_apache = max_wait // 2
+    for i in range(deadline_apache // 5):
+        r = _docker_exec(container, "pgrep", "-x", "apache2", timeout=5)
         if r.returncode == 0:
-            return True
+            logger.debug("[wp_optimize:%s] Apache up after ~%ds", container, i * 5)
+            break
         time.sleep(5)
+    else:
+        logger.warning("[wp_optimize:%s] Apache never started — aborting wait", container)
+        return False
+
+    # Phase 2: wait for wp-config.php to exist (DB connection + entrypoint done)
+    for i in range(30):  # up to 150 more seconds
+        r = _docker_exec(container, "test", "-f", "/var/www/html/wp-config.php", timeout=5)
+        if r.returncode == 0:
+            logger.debug("[wp_optimize:%s] wp-config.php found after ~%ds", container, i * 5)
+            break
+        time.sleep(5)
+    else:
+        logger.warning("[wp_optimize:%s] wp-config.php never appeared", container)
+        # Don't abort — still try WP-CLI below
+
+    # Phase 3: confirm WP-CLI works (needed for wp config set)
+    for i in range(12):  # up to 60 more seconds
+        r = _docker_exec(container, "wp", "--allow-root", "--info", timeout=15)
+        if r.returncode == 0:
+            logger.debug("[wp_optimize:%s] WP-CLI ready", container)
+            return True
+        logger.debug(
+            "[wp_optimize:%s] wp --info returned %d: %s",
+            container, r.returncode,
+            (r.stderr or r.stdout or "").strip()[:120],
+        )
+        time.sleep(5)
+
+    logger.warning("[wp_optimize:%s] WP-CLI never responded — optimización omitida", container)
     return False
 
 

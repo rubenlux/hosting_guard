@@ -4,7 +4,7 @@ import {
   Upload, CheckCircle2, XCircle, AlertTriangle,
   Terminal, Globe, Loader2, X, FileArchive, Database, ArrowRight,
 } from 'lucide-react';
-import { startImport, getImportStatus, getImportLogsUrl } from '../../services/api';
+import { startImport, getImportStatus, getImportLogsUrl } from '../../../services/api';
 
 /* ── constants ────────────────────────────────────────────────── */
 const MAX_BYTES = 500 * 1024 * 1024;
@@ -126,7 +126,7 @@ function Terminal_({ logs }) {
 
 /* ── main component ──────────────────────────────────────────── */
 export default function ImportSiteModal({ hosting, onClose, onComplete }) {
-  const [step,      setStep]      = useState('upload');   // upload | running | done | failed
+  const [step,      setStep]      = useState('upload');   // upload | running | domain_confirm | done | failed
   const [file,      setFile]      = useState(null);
   const [sqlFile,   setSqlFile]   = useState(null);
   const [dragging,  setDragging]  = useState(false);
@@ -151,8 +151,15 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
       if (e.data) setLogs(prev => [...prev, e.data]);
     };
     es.addEventListener('status', (e) => {
-      if (e.data === 'completed') { es.close(); setStep('done'); }
-      if (e.data === 'failed')    { es.close(); setStep('failed'); }
+      if (e.data === 'completed') {
+        es.close();
+        setJobStatus(prev => {
+          const next = prev ?? {};
+          if (next.original_domain) { setStep('domain_confirm'); } else { setStep('done'); }
+          return next;
+        });
+      }
+      if (e.data === 'failed') { es.close(); setStep('failed'); }
     });
     es.onerror = () => es.close();
     sseRef.current = es;
@@ -166,8 +173,11 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
         const j = await getImportStatus(jobId);
         setJobStatus(j);
         if (j.error) setError(j.error);
-        if (j.status === 'completed') { clearInterval(pollRef.current); setStep('done'); }
-        if (j.status === 'failed')    { clearInterval(pollRef.current); setStep('failed'); }
+        if (j.status === 'completed') {
+          clearInterval(pollRef.current);
+          if (j.original_domain) { setStep('domain_confirm'); } else { setStep('done'); }
+        }
+        if (j.status === 'failed') { clearInterval(pollRef.current); setStep('failed'); }
       } catch { /* ignore */ }
     }, 2000);
     return () => clearInterval(pollRef.current);
@@ -410,7 +420,37 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
               </motion.div>
             )}
 
-            {/* ── STEP: DONE ─────────────────────────────────── */}
+            {/* ── STEP 3: DOMAIN CONFIRM ─────────────────────── */}
+            {step === 'domain_confirm' && (
+              <motion.div key="domain_confirm" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                className="flex flex-col items-center gap-5 py-2 text-center">
+                <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/25 flex items-center justify-center">
+                  <Globe className="w-6 h-6 text-amber-400" />
+                </div>
+                <div>
+                  <div className="text-[13px] font-semibold text-white mb-1">Confirmar migración de dominio</div>
+                  <div className="text-[11px] text-white/40">Se detectó el dominio original del backup</div>
+                </div>
+                <div className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-white/3 border border-white/8">
+                  <span className="text-[11px] font-mono text-white/50 truncate">{jobStatus?.original_domain}</span>
+                  <ArrowRight className="w-3.5 h-3.5 text-white/25 shrink-0" />
+                  <span className="text-[11px] font-mono text-[#00ff88] truncate">{jobStatus?.new_domain}</span>
+                </div>
+                <div className="text-[10px] text-white/30 leading-relaxed">
+                  Todas las URLs internas del sitio ya fueron reemplazadas a la nueva dirección.
+                </div>
+                <button
+                  onClick={() => setStep('done')}
+                  className="w-full py-2.5 rounded-xl text-[12px] font-semibold
+                    bg-[#00ff88]/10 border border-[#00ff88]/20 text-[#00ff88]
+                    hover:bg-[#00ff88]/15 hover:border-[#00ff88]/35 transition-all active:scale-[0.98]"
+                >
+                  Entendido, continuar
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── STEP 4: DONE ───────────────────────────────── */}
             {step === 'done' && (
               <motion.div key="done" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
                 className="flex flex-col items-center gap-4 py-4 text-center">
@@ -426,26 +466,17 @@ export default function ImportSiteModal({ hosting, onClose, onComplete }) {
                   <div className="text-[14px] font-semibold text-white mb-1">Importación completada</div>
                   <div className="text-[11px] text-white/40">Sitio disponible en</div>
                 </div>
-                {jobStatus?.new_domain && (
-                  <a
-                    href={`https://${jobStatus.new_domain}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/8 transition-colors"
-                  >
-                    <Globe className="w-3.5 h-3.5 text-[#00ff88]" />
-                    <span className="text-[12px] font-mono text-[#00ff88]">
-                      https://{jobStatus.new_domain}
-                    </span>
-                  </a>
-                )}
-                {jobStatus?.original_domain && jobStatus?.new_domain && (
-                  <div className="flex items-center gap-2 text-[10px] text-white/30 font-mono">
-                    <span>{jobStatus.original_domain}</span>
-                    <ArrowRight className="w-3 h-3" />
-                    <span className="text-white/50">{jobStatus.new_domain}</span>
-                  </div>
-                )}
+                <a
+                  href={`https://${jobStatus?.new_domain || hosting.subdomain + '.hostingguard.lat'}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/8 transition-colors"
+                >
+                  <Globe className="w-3.5 h-3.5 text-[#00ff88]" />
+                  <span className="text-[12px] font-mono text-[#00ff88]">
+                    https://{jobStatus?.new_domain || `${hosting.subdomain}.hostingguard.lat`}
+                  </span>
+                </a>
                 <button
                   onClick={handleDone}
                   className="w-full py-2.5 rounded-xl text-[12px] font-semibold
