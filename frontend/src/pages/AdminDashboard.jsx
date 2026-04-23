@@ -478,89 +478,37 @@ export default function AdminDashboard() {
 
               {/* Row 2: System capacity + Docker ops + DB/Redis */}
               <div className="grid grid-cols-3 gap-4">
-                {/* Capacity forecast */}
+                {/* Capacity — real values only, no forecast here */}
                 <div className="bg-[#111] rounded-xl border border-white/5 p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Capacidad del Nodo</div>
-                    {nodeMetrics?.available && (nodeMetrics.cpu_pct != null || nodeMetrics.ram_pct != null) && (
-                      <span className="text-[9px] font-mono text-emerald-500/60 uppercase tracking-widest">Prometheus</span>
-                    )}
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500/70 uppercase tracking-widest">Real</span>
                   </div>
                   {(() => {
-                    // Per-value fallback: use Prometheus value when non-null, else capacity_forecast
                     const prom = nodeMetrics?.available ? nodeMetrics : null;
                     const fc   = systemHealth?.capacity_forecast;
-                    const diskGrowth = prom?.disk_growth_pct_per_day;
-                    const diskDaysLeft = prom?.disk_days_left;
                     const rows = [
-                      {
-                        label: 'CPU',
-                        icon: <Cpu className="w-3 h-3" />,
-                        pct: prom?.cpu_pct ?? fc?.cpu?.usage,
-                        extra: prom?.cpu_days_left != null ? { daysLeft: prom.cpu_days_left } : null,
-                      },
-                      {
-                        label: 'RAM',
-                        icon: <MemoryStick className="w-3 h-3" />,
-                        pct: prom?.ram_pct ?? fc?.ram?.usage,
-                        extra: prom?.ram_days_left != null ? { daysLeft: prom.ram_days_left } : null,
-                      },
-                      {
-                        label: 'Disco',
-                        icon: <HardDrive className="w-3 h-3" />,
-                        pct: prom?.disk_pct ?? fc?.disk?.usage,
-                        extra: diskGrowth != null ? {
-                          growth: diskGrowth,
-                          daysLeft: diskDaysLeft,
-                        } : null,
-                      },
-                      {
-                        label: 'Cont.',
-                        icon: <Gauge className="w-3 h-3" />,
-                        pct: fc?.containers?.usage,
-                        extra: null,
-                      },
+                      { label: 'CPU',   icon: <Cpu className="w-3 h-3" />,        pct: prom?.cpu_pct  ?? fc?.cpu?.usage },
+                      { label: 'RAM',   icon: <MemoryStick className="w-3 h-3" />, pct: prom?.ram_pct  ?? fc?.ram?.usage },
+                      { label: 'Disco', icon: <HardDrive className="w-3 h-3" />,   pct: prom?.disk_pct ?? fc?.disk?.usage },
+                      { label: 'Cont.', icon: <Gauge className="w-3 h-3" />,       pct: fc?.containers?.usage },
                     ];
                     const hasData = rows.some(r => r.pct != null);
                     if (!hasData) return <div className="text-[10px] text-gray-600 italic">Métricas no disponibles</div>;
                     return (
                       <div className="flex flex-col gap-2.5">
-                        {rows.map(({ label, icon, pct, extra }) => {
+                        {rows.map(({ label, icon, pct }) => {
                           const color = pct == null ? '#4b5563' : pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
-                          const growthColor = extra?.growth > 0.5 ? '#f59e0b' : '#6b7280';
                           return (
-                            <div key={label}>
-                              <div className="flex items-center gap-2">
-                                <span style={{ color }} className="opacity-70">{icon}</span>
-                                <span className="text-[10px] text-gray-400 w-8 shrink-0">{label}</span>
-                                <div className="flex-1 h-1.5 bg-white/5 rounded overflow-hidden">
-                                  <div className="h-full rounded transition-all" style={{
-                                    width: pct != null ? `${Math.min(pct, 100)}%` : '0%',
-                                    background: color,
-                                  }} />
-                                </div>
-                                <span className="text-[10px] font-mono w-12 text-right" style={{ color }}>
-                                  {pct != null ? `${Math.round(pct)}%` : 'N/A'}
-                                </span>
+                            <div key={label} className="flex items-center gap-2">
+                              <span style={{ color }} className="opacity-70">{icon}</span>
+                              <span className="text-[10px] text-gray-400 w-8 shrink-0">{label}</span>
+                              <div className="flex-1 h-1.5 bg-white/5 rounded overflow-hidden">
+                                <div className="h-full rounded transition-all" style={{ width: pct != null ? `${Math.min(pct, 100)}%` : '0%', background: color }} />
                               </div>
-                              {extra && (
-                                <div className="flex items-center gap-2 ml-5 mt-0.5">
-                                  {extra.growth != null && (
-                                    <span className="text-[9px] font-mono" style={{ color: growthColor }}>
-                                      {extra.growth > 0
-                                        ? `+${extra.growth.toFixed(2)}%/día`
-                                        : `${extra.growth.toFixed(2)}%/día`}
-                                    </span>
-                                  )}
-                                  {extra.daysLeft != null && (
-                                    <span className={`text-[9px] font-mono ${extra.daysLeft < 7 ? 'text-red-500' : extra.daysLeft < 30 ? 'text-amber-500' : 'text-gray-600'}`}>
-                                      {extra.growth != null ? '· ' : ''}~{extra.daysLeft < 30
-                                          ? `${extra.daysLeft}d`
-                                          : `${Math.round(extra.daysLeft / 30)}m`} restantes
-                                    </span>
-                                  )}
-                                </div>
-                              )}
+                              <span className="text-[10px] font-mono w-12 text-right" style={{ color }}>
+                                {pct != null ? `${Math.round(pct)}%` : 'N/A'}
+                              </span>
                             </div>
                           );
                         })}
@@ -1265,63 +1213,116 @@ export default function AdminDashboard() {
               );
             })()}
 
-            {/* Predictive Forecast — always visible when Prometheus data available */}
-            {nodeMetrics?.available && (
-              <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
-                <div className="px-4 py-3 border-b border-white/5">
-                  <span className="text-[11px] font-semibold text-white">Forecast</span>
-                  <span className="ml-2 text-[9px] text-gray-600 font-mono">predict_linear</span>
-                </div>
-                <div className="p-3 flex flex-col gap-2.5">
-                  {[
-                    {
-                      label: 'Disco',
-                      pct: nodeMetrics.disk_pct,
-                      growth: nodeMetrics.disk_growth_pct_per_day,
-                      days: nodeMetrics.disk_days_left,
-                    },
-                    {
-                      label: 'RAM',
-                      pct: nodeMetrics.ram_pct,
-                      growth: null,
-                      days: nodeMetrics.ram_days_left,
-                    },
-                    {
-                      label: 'CPU',
-                      pct: nodeMetrics.cpu_pct,
-                      growth: null,
-                      days: nodeMetrics.cpu_days_left,
-                    },
-                  ].map(({ label, pct, growth, days }) => {
-                    const urgent = days != null && days < 14;
-                    const warn   = days != null && days < 60;
-                    const color  = urgent ? '#ef4444' : warn ? '#f59e0b' : '#22c55e';
-                    return (
-                      <div key={label} className={`p-2 rounded-lg ${urgent ? 'bg-red-500/8 border border-red-500/15' : warn ? 'bg-amber-500/8 border border-amber-500/15' : 'bg-white/3 border border-white/5'}`}>
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-[10px] text-gray-400 font-medium">{label}</span>
-                          <span className="text-[10px] font-mono" style={{ color }}>{pct != null ? `${Math.round(pct)}%` : '—'}</span>
+            {/* Predictive Forecast */}
+            {nodeMetrics?.available && (() => {
+              const conf   = nodeMetrics.forecast_confidence;   // "high" | "low" | "unavailable"
+              const reason = nodeMetrics.forecast_unavailable_reason;
+              const confBadge = conf === 'high'
+                ? { label: 'Estimado', cls: 'bg-blue-500/10 text-blue-400/70' }
+                : conf === 'low'
+                ? { label: 'Baja confianza', cls: 'bg-amber-500/10 text-amber-400' }
+                : { label: 'Sin datos', cls: 'bg-white/5 text-gray-500' };
+
+              return (
+                <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-white">Forecast</span>
+                    <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded uppercase tracking-widest ${confBadge.cls}`}>
+                      {confBadge.label}
+                    </span>
+                  </div>
+
+                  {(conf === 'unavailable') ? (
+                    <div className="p-4 text-[10px] text-gray-500 italic">
+                      Forecast no disponible: {reason || 'datos insuficientes o inestables'}
+                    </div>
+                  ) : (
+                    <div className="p-3 flex flex-col gap-2.5">
+                      {conf === 'low' && reason && (
+                        <div className="px-2 py-1.5 rounded-lg bg-amber-500/8 border border-amber-500/15 text-[9px] text-amber-400/80">
+                          {reason}
                         </div>
-                        {growth != null && (
-                          <div className="text-[9px] font-mono text-gray-500">
-                            {growth > 0 ? `+${growth.toFixed(2)}` : growth.toFixed(2)}%/día
+                      )}
+                      {[
+                        { label: 'Disco', pct: nodeMetrics.disk_pct, growth: nodeMetrics.disk_growth_pct_per_day, days: nodeMetrics.disk_days_left },
+                        { label: 'RAM',   pct: nodeMetrics.ram_pct,  growth: null, days: nodeMetrics.ram_days_left },
+                        { label: 'CPU',   pct: nodeMetrics.cpu_pct,  growth: null, days: nodeMetrics.cpu_days_left },
+                      ].map(({ label, pct, growth, days }) => {
+                        const urgent = conf === 'high' && days != null && days < 14;
+                        const warn   = conf === 'high' && days != null && days < 60;
+                        const color  = urgent ? '#ef4444' : warn ? '#f59e0b' : '#6b7280';
+                        return (
+                          <div key={label} className={`p-2 rounded-lg ${urgent ? 'bg-red-500/8 border border-red-500/15' : warn ? 'bg-amber-500/8 border border-amber-500/15' : 'bg-white/3 border border-white/5'}`}>
+                            <div className="flex justify-between items-center mb-0.5">
+                              <span className="text-[10px] text-gray-400 font-medium">{label}</span>
+                              <span className="text-[10px] font-mono text-gray-500">{pct != null ? `${Math.round(pct)}% actual` : '—'}</span>
+                            </div>
+                            {growth != null && conf !== 'unavailable' && (
+                              <div className="text-[9px] font-mono text-gray-600">
+                                {growth > 0 ? `+${growth.toFixed(2)}` : growth.toFixed(2)}%/día (tendencia 24h)
+                              </div>
+                            )}
+                            <div className="text-[9px] font-mono mt-0.5" style={{ color: conf === 'high' && days != null ? color : '#374151' }}>
+                              {conf !== 'high'
+                                ? 'proyección no disponible con confianza suficiente'
+                                : days != null
+                                  ? days < 30 ? `~${days}d hasta 90%` : days < 365 ? `~${Math.round(days / 30)}m hasta 90%` : `>1 año — estable`
+                                  : 'sin tendencia creciente detectada'}
+                            </div>
                           </div>
-                        )}
-                        <div className="text-[9px] font-mono" style={{ color: days != null ? color : '#4b5563' }}>
-                          {days != null
-                            ? days < 30
-                              ? `~${days}d hasta 90%`
-                              : days < 365
-                                ? `~${Math.round(days / 30)}m hasta 90%`
-                                : `>1 año — ok`
-                            : 'sin proyección'}
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Docker Storage — reclaimable space breakdown */}
+            {nodeMetrics?.docker_reclaimable && (() => {
+              const dr = nodeMetrics.docker_reclaimable;
+              const rows = [
+                {
+                  label: 'Imágenes no usadas',
+                  value: dr.images_reclaimable_str ?? dr.images_reclaimable_bytes != null ? `${(dr.images_reclaimable_bytes / 1e9).toFixed(1)} GB` : null,
+                  warn: false,
+                },
+                {
+                  label: 'Build cache',
+                  value: dr.build_cache_str ?? (dr.build_cache_bytes != null ? `${(dr.build_cache_bytes / 1e9).toFixed(1)} GB` : null),
+                  warn: false,
+                },
+                {
+                  label: 'Volumes',
+                  value: dr.volumes_reclaimable_str ?? (dr.volumes_reclaimable_bytes != null ? `${(dr.volumes_reclaimable_bytes / 1e9).toFixed(1)} GB` : null),
+                  warn: true,
+                },
+              ].filter(r => r.value != null && r.value !== '0 B' && r.value !== '0.0 GB');
+
+              if (!rows.length) return null;
+              return (
+                <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-white">Docker Storage</span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-gray-500 uppercase tracking-widest">Reclaimable</span>
+                  </div>
+                  <div className="p-3 flex flex-col gap-2">
+                    {rows.map(({ label, value, warn }) => (
+                      <div key={label} className="flex justify-between items-center">
+                        <span className="text-[10px] text-gray-500">{label}</span>
+                        <div className="flex items-center gap-1.5">
+                          {warn && <span className="text-[9px] text-amber-500/70" title="No se eliminan automáticamente">⚠</span>}
+                          <span className="text-[10px] font-mono text-amber-400">{value}</span>
                         </div>
                       </div>
-                    );
-                  })}
+                    ))}
+                    <div className="mt-1 pt-2 border-t border-white/5 text-[9px] text-gray-600">
+                      Para liberar: <span className="font-mono text-gray-500">docker system prune</span> (no elimina volumes activos)
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Hosting-level alerts (from orchestrator) */}
             <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">

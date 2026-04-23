@@ -317,31 +317,34 @@ async def admin_terminate_hosting(
 
 @router.get("/metrics/node")
 def get_node_metrics(_: dict = Depends(require_role("admin"))):
-    """Real node metrics from Prometheus with saturation analysis."""
+    """Real node metrics from Prometheus. Forecast includes confidence scoring."""
+    import re
     import os
+    import subprocess
     import requests as _req
+    from app.infra.db import get_connection, release_connection
 
     PROM = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
+    _FS = 'fstype!~"tmpfs|overlay",mountpoint="/"'
 
     QUERIES = {
         "cpu_pct":  '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100)',
         "ram_pct":  "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100",
-        "disk_pct": '(1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}) * 100',
-        # predict_linear: bytes available in 14 days based on last 6h trend
-        "disk_avail_predicted": (
-            'predict_linear('
-            'node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}[6h], 86400*14)'
-        ),
-        "disk_avail_bytes": 'node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}',
-        "disk_total_bytes": 'node_filesystem_size_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}',
-        # deriv: bytes/sec rate of available space — negative means filling up
-        "disk_deriv":  'deriv(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint="/"}[6h])',
-        "ram_avail_predicted": "predict_linear(node_memory_MemAvailable_bytes[6h], 86400*14)",
+        "disk_pct": f'(1 - node_filesystem_avail_bytes{{{_FS}}} / node_filesystem_size_bytes{{{_FS}}}) * 100',
+        "disk_avail_bytes": f'node_filesystem_avail_bytes{{{_FS}}}',
+        "disk_total_bytes": f'node_filesystem_size_bytes{{{_FS}}}',
+        # Use 24h window for forecast to avoid single-event distortion
+        "disk_avail_predicted": f'predict_linear(node_filesystem_avail_bytes{{{_FS}}}[24h], 86400*14)',
+        "disk_deriv_24h":       f'deriv(node_filesystem_avail_bytes{{{_FS}}}[24h])',
+        # Variance check: stddev/avg over 6h — detects builds, imports, prune spikes
+        "disk_stddev_6h": f'stddev_over_time(node_filesystem_avail_bytes{{{_FS}}}[6h])',
+        "disk_avg_6h":    f'avg_over_time(node_filesystem_avail_bytes{{{_FS}}}[6h])',
+        # History check: how many samples in last 24h (node-exporter scrapes every 15s → ~5760/day)
+        "disk_samples_24h": f'count_over_time(node_filesystem_avail_bytes{{{_FS}}}[24h])',
+        "ram_avail_predicted": "predict_linear(node_memory_MemAvailable_bytes[24h], 86400*14)",
         "ram_avail_bytes":     "node_memory_MemAvailable_bytes",
         "ram_total_bytes":     "node_memory_MemTotal_bytes",
-        # CPU forecast: avg_over_time smooths short spikes before predict_linear
-        "cpu_idle_predicted":  "predict_linear(avg_over_time(avg(rate(node_cpu_seconds_total{mode='idle'}[5m]))[6h:5m]), 86400*14)",
-        # Docker p95 latency
+        "cpu_idle_predicted":  "predict_linear(avg_over_time(avg(rate(node_cpu_seconds_total{mode='idle'}[5m]))[24h:5m]), 86400*14)",
         "docker_p95": "histogram_quantile(0.95, rate(hosting_guard_docker_op_duration_seconds_bucket[5m]))",
     }
 
@@ -356,6 +359,102 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
         except Exception:
             return None
 
+    def _parse_docker_size(s: str):
+        """'1.8GB' or '1.8 GB (56%)' → bytes as int, or None."""
+        m = re.match(r"([\d.]+)\s*(B|kB|KB|MB|GB|TB)", s.replace(",", "."))
+        if not m:
+            return None
+        val, unit = float(m.group(1)), m.group(2).upper()
+        mult = {"B": 1, "KB": 1000, "MB": 1_000_000, "GB": 1_000_000_000, "TB": 1_000_000_000_000}
+        return int(val * mult.get(unit, 1))
+
+    def _fmt_bytes(n):
+        if n is None:
+            return None
+        for unit, div in (("GB", 1e9), ("MB", 1e6), ("KB", 1e3)):
+            if n >= div:
+                return f"{n / div:.1f} {unit}"
+        return f"{n} B"
+
+    def _get_docker_reclaimable():
+        """Parse docker system df text output. Returns dict or None on failure."""
+        try:
+            r = subprocess.run(
+                ["docker", "system", "df"], capture_output=True, text=True, timeout=15
+            )
+            if r.returncode != 0:
+                return None
+            lines = r.stdout.strip().splitlines()
+            out = {}
+            for line in lines[1:]:
+                parts = line.split()
+                if not parts:
+                    continue
+                if parts[0] == "Images" and len(parts) >= 5:
+                    out["images_total_str"]       = parts[3]
+                    out["images_reclaimable_str"] = parts[4].split("(")[0].strip()
+                    out["images_reclaimable_bytes"] = _parse_docker_size(out["images_reclaimable_str"])
+                elif parts[0] == "Build" and len(parts) >= 6:
+                    out["build_cache_str"]         = parts[5].split("(")[0].strip()
+                    out["build_cache_bytes"]       = _parse_docker_size(out["build_cache_str"])
+                elif parts[0] == "Local" and len(parts) >= 6:
+                    out["volumes_reclaimable_str"] = parts[5].split("(")[0].strip()
+                    out["volumes_reclaimable_bytes"] = _parse_docker_size(out["volumes_reclaimable_str"])
+            return out if out else None
+        except Exception:
+            return None
+
+    def _check_forecast_confidence():
+        """
+        Returns (confidence, reason).
+        confidence: "high" | "low" | "unavailable"
+        Checks:
+          1. Enough Prometheus history (≥24h of samples)
+          2. Low disk variance in last 6h (no builds/imports distorting trend)
+          3. No import events in orchestrator_events in last 6h
+        """
+        confidence = "high"
+        reason = None
+
+        # 1. History check
+        samples = _query(QUERIES["disk_samples_24h"])
+        if samples is not None and samples < 200:
+            return "unavailable", "Historial insuficiente — se necesitan al menos 24h de datos"
+
+        # 2. Variance check: coefficient of variation > 1.5% = unstable window
+        stddev = _query(QUERIES["disk_stddev_6h"])
+        avg6h  = _query(QUERIES["disk_avg_6h"])
+        if stddev is not None and avg6h and avg6h > 0:
+            cov = stddev / avg6h
+            if cov > 0.015:
+                confidence = "low"
+                reason = "Alta varianza en disco en las últimas 6h — posible build, import o docker prune reciente"
+
+        # 3. Recent imports in DB
+        if confidence == "high":
+            try:
+                conn2 = get_connection()
+                try:
+                    c2 = conn2.cursor()
+                    c2.execute(
+                        """
+                        SELECT COUNT(*) AS cnt FROM orchestrator_events
+                        WHERE event_type IN ('import_start', 'import_completed', 'import_failed')
+                          AND created_at::timestamptz > NOW() - INTERVAL '6 hours'
+                        """
+                    )
+                    row = c2.fetchone()
+                    n = (row["cnt"] if hasattr(row, "__getitem__") else row[0]) if row else 0
+                    if n > 0:
+                        confidence = "low"
+                        reason = f"Se detectó importación reciente ({n} evento(s) en las últimas 6h) — el crecimiento de disco puede ser temporal"
+                finally:
+                    release_connection(conn2)
+            except Exception:
+                pass
+
+        return confidence, reason
+
     try:
         cpu  = _query(QUERIES["cpu_pct"])
         ram  = _query(QUERIES["ram_pct"])
@@ -364,45 +463,39 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
         if cpu is None and ram is None and disk is None:
             return result
 
-        # Disk growth rate and days to exhaustion
-        days_left = None
+        avail_now = _query(QUERIES["disk_avail_bytes"])
+        total     = _query(QUERIES["disk_total_bytes"])
+
+        # Disk growth: use 24h deriv instead of 6h to smooth single-event spikes
+        disk_deriv = _query(QUERIES["disk_deriv_24h"])
         disk_growth_pct_per_day = None
-        avail_predicted = _query(QUERIES["disk_avail_predicted"])
-        avail_now       = _query(QUERIES["disk_avail_bytes"])
-        total           = _query(QUERIES["disk_total_bytes"])
-        disk_deriv      = _query(QUERIES["disk_deriv"])  # bytes/sec (negative = filling up)
+        days_left = None
 
         if total and total > 0:
             if disk_deriv is not None:
-                # Convert bytes/sec to %/day  (negative deriv = growing usage)
                 disk_growth_pct_per_day = round(-disk_deriv * 86400 / total * 100, 2)
-
+            avail_predicted = _query(QUERIES["disk_avail_predicted"])
             if avail_predicted is not None and avail_now is not None:
                 if avail_predicted <= 0:
                     growth_rate = (avail_now - avail_predicted) / (14 * 86400)
                     if growth_rate > 0:
                         days_left = round(avail_now / growth_rate / 86400, 1)
                 elif disk_deriv is not None and disk_deriv < 0:
-                    # Disk is filling but won't exhaust in 14d — still compute days
-                    fill_rate = -disk_deriv  # bytes/sec being consumed
+                    fill_rate = -disk_deriv
                     if fill_rate > 0:
                         days_left = round(avail_now / fill_rate / 86400, 1)
 
-        # CPU forecast: smoothed with avg_over_time to suppress short spikes
+        # CPU forecast
         cpu_days_left = None
         cpu_idle_predicted = _query(QUERIES["cpu_idle_predicted"])
         if cpu is not None and cpu_idle_predicted is not None:
-            # idle_predicted is a ratio (0-1) from smoothed avg_over_time; CPU usage = (1 - idle) * 100
             cpu_future = (1 - max(0.0, min(1.0, cpu_idle_predicted))) * 100
             if cpu_future >= 90:
                 delta_per_day = (cpu_future - cpu) / 14
                 if delta_per_day > 0:
                     cpu_days_left = round((90 - cpu) / delta_per_day, 1)
 
-        # Docker p95 latency
-        docker_p95 = _query(QUERIES["docker_p95"])
-
-        # RAM exhaustion projection
+        # RAM forecast
         ram_days_left = None
         ram_avail_predicted = _query(QUERIES["ram_avail_predicted"])
         ram_avail_now       = _query(QUERIES["ram_avail_bytes"])
@@ -413,7 +506,24 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
                 if fill_rate > 0:
                     ram_days_left = round(ram_avail_now / fill_rate / 86400, 1)
 
-        # Determine per-resource status
+        # Forecast confidence
+        forecast_confidence, forecast_unavailable_reason = _check_forecast_confidence()
+        # Suppress days_left projections when confidence is not high
+        if forecast_confidence != "high":
+            days_left = None
+
+        # Docker reclaimable
+        docker_reclaimable = _get_docker_reclaimable()
+        if docker_reclaimable:
+            for k in ("images_reclaimable_bytes", "build_cache_bytes", "volumes_reclaimable_bytes"):
+                if k in docker_reclaimable and docker_reclaimable[k] is not None:
+                    label = k.replace("_bytes", "_str") if k.replace("_bytes", "_str") not in docker_reclaimable else None
+                    if label:
+                        docker_reclaimable[label] = _fmt_bytes(docker_reclaimable[k])
+
+        # Docker p95 latency
+        docker_p95 = _query(QUERIES["docker_p95"])
+
         def _status(pct):
             if pct is None:  return "unknown"
             if pct >= 90:    return "critical"
@@ -427,12 +537,6 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
             else "ok"
         )
 
-        recommendations = {
-            "ok":       "Capacidad normal — sin acción requerida",
-            "warning":  "Revisar crecimiento — planificar escalado próximamente",
-            "critical": "Escalar infraestructura ahora",
-        }
-
         result.update({
             "available":          True,
             "cpu_pct":            round(cpu,  1) if cpu  is not None else None,
@@ -444,10 +548,19 @@ def get_node_metrics(_: dict = Depends(require_role("admin"))):
             "cpu_days_left":           cpu_days_left,
             "docker_p95_seconds":      round(docker_p95, 3) if docker_p95 is not None else None,
             "status":             overall,
-            "recommendation":     recommendations[overall],
+            "recommendation":     {
+                "ok":       "Capacidad normal — sin acción requerida",
+                "warning":  "Revisar crecimiento — planificar escalado próximamente",
+                "critical": "Escalar infraestructura ahora",
+            }[overall],
             "cpu_status":         _status(cpu),
             "ram_status":         _status(ram),
             "disk_status":        _status(disk),
+            # Forecast confidence
+            "forecast_confidence":          forecast_confidence,
+            "forecast_unavailable_reason":  forecast_unavailable_reason,
+            # Docker storage breakdown
+            "docker_reclaimable": docker_reclaimable,
         })
     except Exception as exc:
         result["error"] = str(exc)
