@@ -194,6 +194,13 @@ class HostingRepository:
         cursor.execute("DELETE FROM site_alerts WHERE site_id = %s", (hosting_id,))
         cursor.execute("DELETE FROM ai_diagnosis WHERE hosting_id = %s", (hosting_id,))
         cursor.execute("DELETE FROM import_jobs WHERE hosting_id = %s", (hosting_id,))
+        # Remove orchestrator_events for this container so stale metrics never surface
+        cursor.execute(
+            "DELETE FROM orchestrator_events WHERE container_name = ("
+            "  SELECT container_name FROM hostings WHERE hosting_id = %s"
+            ")",
+            (hosting_id,),
+        )
 
     def get_hosting_by_container(self, container_name: str) -> Optional[Dict]:
         conn = get_connection()

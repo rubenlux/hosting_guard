@@ -87,6 +87,16 @@ _PLAN_RESOURCES: dict = {
 }
 
 
+def _safe_extract(zf: zipfile.ZipFile, work_dir: Path) -> None:
+    """Extract ZIP rejecting any member whose resolved path escapes work_dir (Zip Slip)."""
+    resolved_root = str(work_dir.resolve())
+    for member in zf.infolist():
+        target = os.path.realpath(os.path.join(resolved_root, member.filename))
+        if not target.startswith(resolved_root + os.sep) and target != resolved_root:
+            raise RuntimeError(f"Zip Slip bloqueado: ruta insegura '{member.filename}'")
+    zf.extractall(work_dir)
+
+
 def _container_exists(name: str) -> bool:
     r = _docker("inspect", "--format", "{{.State.Status}}", name, timeout=10)
     return r.returncode == 0
@@ -260,6 +270,14 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
         # ── Post-import optimization ──────────────────────────────────────
         _post_import_optimize(job_id, container)
 
+        # ── Verify site is actually accessible ────────────────────────────
+        site_ok = _verify_site_accessible(job_id, new_domain)
+        if not site_ok:
+            raise RuntimeError(
+                "El sitio no responde correctamente tras el import. "
+                "Revisa que el backup contenga una DB válida."
+            )
+
         # ── Emit event ────────────────────────────────────────────────────
         _hosting_repo.log_orchestrator_event(
             container, user_id, "import_completed",
@@ -341,7 +359,7 @@ def _restore_zip_wp(job_id: int, container: str, db_container: Optional[str], fi
             total = sum(i.file_size for i in zf.infolist())
             if total > 2 * 1024 * 1024 * 1024:  # 2 GB extracted limit
                 raise RuntimeError("Backup demasiado grande (> 2GB extraído)")
-            zf.extractall(work_dir)
+            _safe_extract(zf, work_dir)
 
         # Find wp-content dir
         wp_content = next(work_dir.rglob("wp-content"), None)
@@ -369,7 +387,7 @@ def _restore_zip_sql(job_id: int, container: str, db_container: Optional[str], f
     work_dir.mkdir(exist_ok=True)
     try:
         with zipfile.ZipFile(file_path) as zf:
-            zf.extractall(work_dir)
+            _safe_extract(zf, work_dir)
         sql_files = list(work_dir.rglob("*.sql"))
         if not sql_files:
             raise RuntimeError("No se encontró archivo .sql dentro del ZIP")
@@ -467,25 +485,42 @@ def _fix_domain(job_id: int, db_container: str, old_domain: str, new_domain: str
 # ── post-import optimization ──────────────────────────────────────────────────
 
 def _post_import_optimize(job_id: int, container: str):
-    """Harden wp-config.php, install WP Super Cache, fix permissions."""
-    # 1. wp-config.php hardening via PHP (PHP is always available in the container)
+    """Harden wp-config.php, install caching plugins, fix permissions."""
+    # 1. wp-config.php hardening (PHP always available in the container)
     _log(job_id, "Configurando wp-config.php...")
     php_harden = (
         r"grep -q 'FS_METHOD' /var/www/html/wp-config.php || "
         r"php -r \""
         r"\$f='/var/www/html/wp-config.php';"
         r"\$c=file_get_contents(\$f);"
-        r"\$add=\"define('FS_METHOD','direct');\ndefine('WP_CACHE',true);\ndefine('WP_MEMORY_LIMIT','256M');\n\";"
+        r"\$add=\"define('FS_METHOD','direct');\n"
+        r"define('WP_CACHE',true);\n"
+        r"define('WP_MEMORY_LIMIT','256M');\n"
+        r"define('WP_REDIS_HOST','redis');\n"
+        r"define('WP_REDIS_PORT',6379);\n\";"
         r"file_put_contents(\$f,str_replace(\"/* That's all\",\$add.\"/* That's all\",\$c));"
         r"\""
     )
     r = _docker_exec(container, "sh", "-c", php_harden, timeout=10)
     if r.returncode == 0:
-        _log(job_id, "  ✓ wp-config.php hardened")
+        _log(job_id, "  ✓ wp-config.php hardened (FS_METHOD, WP_CACHE, Redis)")
     else:
         _log(job_id, f"  WARN wp-config: {r.stderr.strip()[:100]}")
 
-    # 2. Page cache via WP-CLI (available in hostingguard/wordpress image)
+    # 2. Redis Object Cache (object-level cache — requires redis service on Docker network)
+    _log(job_id, "Instalando Redis Object Cache...")
+    r = _docker_exec(
+        container, "wp", "--allow-root",
+        "plugin", "install", "redis-cache", "--activate",
+        timeout=120,
+    )
+    if r.returncode == 0:
+        _docker_exec(container, "wp", "--allow-root", "redis", "enable", timeout=30)
+        _log(job_id, "  ✓ Redis Object Cache activado")
+    else:
+        _log(job_id, f"  WARN redis-cache: {r.stderr.strip()[:80]}")
+
+    # 3. Page cache via WP Super Cache (file-level cache)
     _log(job_id, "Instalando WP Super Cache...")
     r = _docker_exec(
         container, "wp", "--allow-root",
@@ -493,15 +528,67 @@ def _post_import_optimize(job_id: int, container: str):
         timeout=120,
     )
     if r.returncode == 0:
-        _log(job_id, "  ✓ WP Super Cache activado")
         _docker_exec(container, "wp", "--allow-root", "super-cache", "enable", timeout=30)
+        _log(job_id, "  ✓ WP Super Cache activado")
     else:
-        _log(job_id, f"  WARN cache: WP-CLI no disponible o plugin falló ({r.stderr.strip()[:80]})")
+        _log(job_id, f"  WARN wp-super-cache: {r.stderr.strip()[:80]}")
 
-    # 3. Correct permissions
+    # 4. Flush rewrite rules so pretty permalinks work immediately
+    r = _docker_exec(container, "wp", "--allow-root", "rewrite", "flush", "--hard", timeout=20)
+    if r.returncode == 0:
+        _log(job_id, "  ✓ Rewrite rules actualizadas")
+    else:
+        _log(job_id, f"  WARN rewrite flush: {r.stderr.strip()[:80]}")
+
+    # 5. Clean up transients left by the old site
+    _docker_exec(container, "wp", "--allow-root", "transient", "delete", "--all", timeout=30)
+    _log(job_id, "  ✓ Transients limpiados")
+
+    # 6. Correct ownership
     _log(job_id, "Ajustando permisos...")
     _docker_exec(container, "chown", "-R", "www-data:www-data", "/var/www/html", timeout=30)
     _log(job_id, "  ✓ Permisos ok")
+
+
+# ── post-import site verification ────────────────────────────────────────────
+
+def _verify_site_accessible(job_id: int, subdomain: str) -> bool:
+    """
+    Best-effort HTTP check after import.
+    Returns False (and logs) only when we definitively confirm the site is broken
+    (install wizard or 5xx). Network errors are treated as WARN, not failure.
+    """
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    url = f"https://{subdomain}/"
+    _log(job_id, f"Verificando accesibilidad del sitio: {url}")
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "HGHealthCheck/1.0"})
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+            status = resp.getcode()
+            final_url = resp.geturl()
+            if "wp-admin/install.php" in final_url:
+                _log(job_id, f"  ✗ Sitio redirige al wizard de instalación — la DB no fue importada correctamente")
+                return False
+            if status >= 500:
+                _log(job_id, f"  ✗ Sitio retornó HTTP {status}")
+                return False
+            _log(job_id, f"  ✓ Sitio accesible (HTTP {status})")
+            return True
+    except urllib.error.HTTPError as exc:
+        if exc.code >= 500:
+            _log(job_id, f"  ✗ Sitio retornó HTTP {exc.code}")
+            return False
+        _log(job_id, f"  ✓ Sitio responde (HTTP {exc.code})")
+        return True
+    except Exception as exc:
+        _log(job_id, f"  WARN: verificación externa no disponible: {exc}")
+        return True  # No fallar el import por problemas de red
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
