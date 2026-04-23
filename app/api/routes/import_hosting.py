@@ -486,26 +486,38 @@ def _fix_domain(job_id: int, db_container: str, old_domain: str, new_domain: str
 
 def _post_import_optimize(job_id: int, container: str):
     """Harden wp-config.php, install caching plugins, fix permissions."""
-    # 1. wp-config.php hardening (PHP always available in the container)
+    # 1. wp-config.php hardening via `wp config set` — idempotent per constant.
+    #    Each constant is set independently so a pre-existing FS_METHOD never
+    #    prevents WP_REDIS_HOST or WP_CACHE from being written.
     _log(job_id, "Configurando wp-config.php...")
-    php_harden = (
-        r"grep -q 'FS_METHOD' /var/www/html/wp-config.php || "
-        r"php -r \""
-        r"\$f='/var/www/html/wp-config.php';"
-        r"\$c=file_get_contents(\$f);"
-        r"\$add=\"define('FS_METHOD','direct');\n"
-        r"define('WP_CACHE',true);\n"
-        r"define('WP_MEMORY_LIMIT','256M');\n"
-        r"define('WP_REDIS_HOST','redis');\n"
-        r"define('WP_REDIS_PORT',6379);\n\";"
-        r"file_put_contents(\$f,str_replace(\"/* That's all\",\$add.\"/* That's all\",\$c));"
-        r"\""
-    )
-    r = _docker_exec(container, "sh", "-c", php_harden, timeout=10)
-    if r.returncode == 0:
-        _log(job_id, "  ✓ wp-config.php hardened (FS_METHOD, WP_CACHE, Redis)")
-    else:
-        _log(job_id, f"  WARN wp-config: {r.stderr.strip()[:100]}")
+    _WP_CONSTANTS = [
+        # (name,          value,    --raw)
+        ("FS_METHOD",      "direct", False),
+        ("WP_CACHE",       "true",   True),   # --raw so PHP sees true, not "true"
+        ("WP_MEMORY_LIMIT","256M",   False),
+        ("WP_REDIS_HOST",  "redis",  False),
+        ("WP_REDIS_PORT",  "6379",   True),   # --raw so PHP sees integer 6379
+    ]
+    config_ok = True
+    for key, value, raw in _WP_CONSTANTS:
+        cmd = ["wp", "--allow-root", "config", "set", key, value, "--type=constant"]
+        if raw:
+            cmd.append("--raw")
+        r = _docker_exec(container, *cmd, timeout=20)
+        if r.returncode == 0:
+            _log(job_id, f"  ✓ wp-config {key}")
+        else:
+            _log(job_id, f"  WARN wp-config {key}: {r.stderr.strip()[:120]}")
+            config_ok = False
+
+    # Verify critical keys were written correctly
+    for key in ("FS_METHOD", "WP_REDIS_HOST", "WP_REDIS_PORT"):
+        r = _docker_exec(container, "wp", "--allow-root", "config", "get", key, timeout=10)
+        val = r.stdout.strip() if r.returncode == 0 else "ERROR"
+        _log(job_id, f"  verify {key}={val}")
+
+    if config_ok:
+        _log(job_id, "  ✓ wp-config.php configurado correctamente")
 
     # 2. Redis Object Cache (object-level cache — requires redis service on Docker network)
     _log(job_id, "Instalando Redis Object Cache...")
