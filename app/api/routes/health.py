@@ -1,6 +1,6 @@
 # app/api/routes/health.py
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from typing import List, Dict
 from app.api.security import verify_token, require_role
 
@@ -14,8 +14,51 @@ health_repo = HealthRepository()
 hosting_repo = HostingRepository()
 system_alert_repo = SystemAlertRepository()
 
-# IMPORTANT: static routes (/system, /{id}/history) must be registered BEFORE
-# the dynamic /{hosting_id} route — FastAPI matches in declaration order.
+# IMPORTANT: static routes must be registered BEFORE the dynamic /{hosting_id}
+# route — FastAPI matches in declaration order. live/ready are public (no auth).
+
+@router.get("/live")
+def health_live():
+    """Liveness: el proceso está corriendo."""
+    return {"status": "alive"}
+
+
+@router.get("/ready")
+async def health_ready(response: Response):
+    """Readiness: DB + Redis responden. Retorna 503 si postgres falla."""
+    from app.infra.db import get_connection, release_connection
+    from app.infra.redis_client import get_redis
+
+    checks: dict = {}
+
+    try:
+        conn = get_connection()
+        cur = conn._conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        release_connection(conn)
+        checks["postgres"] = "ok"
+    except Exception as exc:
+        logger.error("health_ready: postgres check failed: %s", exc)
+        checks["postgres"] = "error"
+
+    try:
+        r = get_redis()
+        if r is None:
+            checks["redis"] = "degraded"
+        else:
+            r.ping()
+            checks["redis"] = "ok"
+    except Exception as exc:
+        logger.error("health_ready: redis check failed: %s", exc)
+        checks["redis"] = "error"
+
+    if checks.get("postgres") != "ok":
+        response.status_code = 503
+        return {"status": "degraded", "checks": checks}
+
+    return {"status": "ok", "checks": checks}
+
 
 @router.get("/system", dependencies=[Depends(require_role("admin"))])
 async def get_system_health():
