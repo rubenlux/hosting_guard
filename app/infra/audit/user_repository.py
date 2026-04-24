@@ -175,6 +175,9 @@ class UserRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
+            # Remove all FK-referencing rows before deleting the user
+            cursor.execute("DELETE FROM orchestrator_events WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM support_sessions WHERE user_id = %s OR impersonated_user_id = %s", (user_id, user_id))
             cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
             conn.commit()
             return cursor.rowcount > 0
