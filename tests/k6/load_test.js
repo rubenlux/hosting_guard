@@ -1,26 +1,28 @@
 /**
  * k6 load test — HostingGuard API
  *
- * Auth: cookie-based JWT (access_token + refresh_token).
- * k6 handles cookies automatically per VU via the default cookie jar.
+ * Auth: cookie-based JWT. Login happens once in setup() and the
+ * access_token cookie is injected per-VU to avoid hitting the
+ * rate limit on /login (5/minute).
  *
  * Usage:
- *   # Smoke (1 VU, 30s) — sanity check before real load
+ *   # Smoke (1 VU, 30s)
  *   k6 run -e BASE_URL=https://api.hostingguard.lat \
- *           -e TEST_EMAIL=your@email.com \
- *           -e TEST_PASSWORD=yourpassword \
- *           --scenario smoke tests/k6/load_test.js
+ *           -e TEST_EMAIL=k6test@hostingguard.lat \
+ *           -e TEST_PASSWORD=K6LoadTest2026! \
+ *           -e SCENARIO=smoke \
+ *           tests/k6/load_test.js
  *
- *   # Load (10 VUs, 2min ramp + 3min steady)
+ *   # Load (10 VUs, ramp 1m + steady 3m)
  *   k6 run -e BASE_URL=https://api.hostingguard.lat \
- *           -e TEST_EMAIL=your@email.com \
- *           -e TEST_PASSWORD=yourpassword \
+ *           -e TEST_EMAIL=k6test@hostingguard.lat \
+ *           -e TEST_PASSWORD=K6LoadTest2026! \
  *           tests/k6/load_test.js
  *
  * Thresholds (SLOs):
  *   - p95 response time < 800ms
  *   - error rate < 1%
- *   - login p99 < 1500ms
+ *   - hosting list p95 < 600ms
  */
 
 import http from "k6/http";
@@ -31,20 +33,15 @@ import { Rate, Trend } from "k6/metrics";
 // Custom metrics
 // ---------------------------------------------------------------------------
 const errorRate = new Rate("errors");
-const loginDuration = new Trend("login_duration", true);
 const hostingListDuration = new Trend("hosting_list_duration", true);
+const meDuration = new Trend("me_duration", true);
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 const BASE_URL = __ENV.BASE_URL || "https://api.hostingguard.lat";
-const EMAIL = __ENV.TEST_EMAIL || "test@hostingguard.lat";
-const PASSWORD = __ENV.TEST_PASSWORD || "changeme";
-
-// ---------------------------------------------------------------------------
-// Scenarios
-// ---------------------------------------------------------------------------
-// Select scenario with: -e SCENARIO=smoke  (default: load)
+const EMAIL = __ENV.TEST_EMAIL || "k6test@hostingguard.lat";
+const PASSWORD = __ENV.TEST_PASSWORD || "K6LoadTest2026!";
 const SCENARIO = __ENV.SCENARIO || "load";
 
 const SCENARIOS = {
@@ -68,23 +65,48 @@ const SCENARIOS = {
 
 export const options = {
   scenarios: { [SCENARIO]: SCENARIOS[SCENARIO] },
-
   thresholds: {
-    // Global p95 < 800ms
     http_req_duration: ["p(95)<800"],
-    // Error rate < 1%
     errors: ["rate<0.01"],
-    // Login specifically: p99 < 1500ms
-    login_duration: ["p(99)<1500"],
-    // Hosting list: p95 < 600ms
     hosting_list_duration: ["p(95)<600"],
+    me_duration: ["p(95)<400"],
   },
 };
 
 // ---------------------------------------------------------------------------
+// setup() — runs once before all VUs start.
+// Logs in and returns the access_token cookie value.
+// ---------------------------------------------------------------------------
+export function setup() {
+  const res = http.post(
+    `${BASE_URL}/login`,
+    JSON.stringify({ email: EMAIL, password: PASSWORD }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+
+  if (res.status !== 200) {
+    throw new Error(
+      `setup(): login failed — status=${res.status} body=${res.body}`
+    );
+  }
+
+  const cookie = res.cookies["access_token"];
+  if (!cookie || !cookie[0]) {
+    throw new Error("setup(): access_token cookie not found in login response");
+  }
+
+  return { accessToken: cookie[0].value };
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const JSON_HEADERS = { "Content-Type": "application/json" };
+function authHeaders(token) {
+  return {
+    headers: { "Content-Type": "application/json" },
+    cookies: { access_token: token },
+  };
+}
 
 function assertOk(res, name) {
   const ok = check(res, {
@@ -95,13 +117,13 @@ function assertOk(res, name) {
 }
 
 // ---------------------------------------------------------------------------
-// Main VU loop
+// Main VU loop — data.accessToken injected from setup()
 // ---------------------------------------------------------------------------
-export default function () {
-  // Each VU gets its own cookie jar automatically — simulates a real browser session.
+export default function (data) {
+  const token = data.accessToken;
 
   // ------------------------------------------------------------------
-  // 1. Public health checks (no auth required)
+  // 1. Public health checks
   // ------------------------------------------------------------------
   group("health", () => {
     const live = http.get(`${BASE_URL}/health/live`);
@@ -112,89 +134,48 @@ export default function () {
     check(ready, {
       "ready 200": (r) => r.status === 200,
       "ready postgres ok": (r) => {
-        try {
-          return JSON.parse(r.body).checks.postgres === "ok";
-        } catch {
-          return false;
-        }
+        try { return JSON.parse(r.body).checks.postgres === "ok"; }
+        catch { return false; }
       },
     });
     errorRate.add(ready.status !== 200);
   });
 
-  sleep(0.5);
+  sleep(0.2);
 
   // ------------------------------------------------------------------
-  // 2. Login
-  // ------------------------------------------------------------------
-  let loggedIn = false;
-  group("auth", () => {
-    const start = Date.now();
-    const res = http.post(
-      `${BASE_URL}/login`,
-      JSON.stringify({ email: EMAIL, password: PASSWORD }),
-      { headers: JSON_HEADERS }
-    );
-    loginDuration.add(Date.now() - start);
-
-    loggedIn = assertOk(res, "login");
-    if (!loggedIn) return;
-
-    check(res, {
-      "login has access_token cookie": (r) =>
-        r.cookies["access_token"] !== undefined,
-    });
-  });
-
-  if (!loggedIn) {
-    sleep(1);
-    return;
-  }
-
-  sleep(0.3);
-
-  // ------------------------------------------------------------------
-  // 3. /me — identity check
+  // 2. /me — identity + auth validation
   // ------------------------------------------------------------------
   group("me", () => {
-    const res = http.get(`${BASE_URL}/me`);
+    const start = Date.now();
+    const res = http.get(`${BASE_URL}/me`, authHeaders(token));
+    meDuration.add(Date.now() - start);
+
     const ok = assertOk(res, "me");
     if (ok) {
       check(res, {
         "me has user_id": (r) => {
-          try {
-            return JSON.parse(r.body).user_id !== undefined;
-          } catch {
-            return false;
-          }
+          try { return JSON.parse(r.body).user_id !== undefined; }
+          catch { return false; }
         },
       });
     }
   });
 
-  sleep(0.3);
+  sleep(0.2);
 
   // ------------------------------------------------------------------
-  // 4. List hostings
+  // 3. List hostings
   // ------------------------------------------------------------------
   group("hosting_list", () => {
     const start = Date.now();
-    const res = http.get(`${BASE_URL}/list-hostings?skip=0&limit=20`);
+    const res = http.get(
+      `${BASE_URL}/list-hostings?skip=0&limit=20`,
+      authHeaders(token)
+    );
     hostingListDuration.add(Date.now() - start);
     assertOk(res, "hosting_list");
   });
 
   sleep(0.5);
-
-  // ------------------------------------------------------------------
-  // 5. Logout — clean session
-  // ------------------------------------------------------------------
-  group("logout", () => {
-    const res = http.post(`${BASE_URL}/logout`, null, {
-      headers: JSON_HEADERS,
-    });
-    assertOk(res, "logout");
-  });
-
-  sleep(1);
 }
