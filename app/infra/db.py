@@ -169,3 +169,32 @@ def release_connection(wrapper: _ConnectionWrapper):
 def reset_pg_connection():
     """Alias para compatibilidad con código antiguo que intentaba limpiar el thread-local."""
     pass
+
+
+def set_user_context(conn: _ConnectionWrapper, user_id: int, is_admin: bool = False) -> None:
+    """Set transaction-local RLS context before running user-scoped queries.
+
+    Uses set_config(..., TRUE) which means the setting is LOCAL to the current
+    transaction — it resets automatically on COMMIT or ROLLBACK. Safe with a
+    shared connection pool because the context never leaks between requests.
+
+    RLS enforcement:
+    - With current postgres superuser: RLS is BYPASSED (policies exist but not enforced).
+    - To fully activate: create a restricted `app_user` DB role and point DATABASE_URL
+      at it. Admin endpoints call with is_admin=True to bypass tenant isolation.
+
+    Usage:
+        conn = get_connection()
+        set_user_context(conn, user_id=42)
+        conn.cursor().execute("SELECT * FROM hostings WHERE user_id = %s", (42,))
+        release_connection(conn)
+    """
+    cur = conn._conn.cursor()
+    cur.execute(
+        "SELECT set_config('app.current_user_id', %s, TRUE)",
+        (str(user_id),),
+    )
+    cur.execute(
+        "SELECT set_config('app.is_admin', %s, TRUE)",
+        ("1" if is_admin else "0",),
+    )

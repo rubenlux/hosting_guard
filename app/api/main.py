@@ -564,24 +564,18 @@ app.add_middleware(_MetricsMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CorrelationMiddleware)
 
-# CORS - Producción
-origins = [
-    "https://hostingguard.lat",
-    "https://www.hostingguard.lat",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-
+# CORS — solo orígenes reales de producción.
+# allow_origin_regex=r".*" fue eliminado: con allow_credentials=True permitía
+# que cualquier origen (incluidos dominios comprometidos) enviara cookies de sesión.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    # Permite cualquier subdominio (ej: mi-academia.hostingguard.lat) y dominios
-    # externos para el pixel de tracking. Los endpoints de auth están protegidos
-    # por cookies HttpOnly con SameSite=Lax, por lo que abrir CORS no es un riesgo.
-    allow_origin_regex=r".*",
+    allow_origins=[
+        "https://hostingguard.lat",
+        "https://www.hostingguard.lat",
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Correlation-ID"],
 )
 
 # Rate Limiting
@@ -869,3 +863,54 @@ def metrics():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/health/live")
+def health_live():
+    """Liveness: el proceso está corriendo. Traefik lo usa para saber si reiniciar."""
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+async def health_ready(response: Response):
+    """Readiness: el proceso puede recibir tráfico real (DB + Redis responden).
+
+    Retorna 503 si algún componente crítico no está disponible.
+    Traefik deja de enviar tráfico a esta instancia si recibe 503.
+    """
+    from app.infra.db import get_connection, release_connection
+    from app.infra.redis_client import get_redis
+
+    checks: dict = {}
+
+    # PostgreSQL
+    try:
+        conn = get_connection()
+        cur = conn._conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        release_connection(conn)
+        checks["postgres"] = "ok"
+    except Exception as exc:
+        logger.error("health_ready: postgres check failed: %s", exc)
+        checks["postgres"] = "error"
+
+    # Redis
+    try:
+        r = get_redis()
+        if r is None:
+            checks["redis"] = "degraded"   # REDIS_URL no configurado
+        else:
+            r.ping()
+            checks["redis"] = "ok"
+    except Exception as exc:
+        logger.error("health_ready: redis check failed: %s", exc)
+        checks["redis"] = "error"
+
+    # 503 solo si postgres falla — Redis degraded no impide servir tráfico
+    critical_ok = checks.get("postgres") == "ok"
+    if not critical_ok:
+        response.status_code = 503
+        return {"status": "degraded", "checks": checks}
+
+    return {"status": "ok", "checks": checks}

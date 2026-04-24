@@ -322,6 +322,128 @@ _INDEXES = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_import_jobs_user ON import_jobs (user_id)",
     "CREATE INDEX IF NOT EXISTS idx_import_jobs_hosting ON import_jobs (hosting_id)",
+
+    # ── Performance indexes (audit 2025-04) ─────────────────────────────────
+    # Covers queries filtered by user_id AND status (list, count_active, soft-delete checks)
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_hostings_user_status ON hostings(user_id, status)",
+    # Covers orchestrator dashboard queries ordered by container + recency
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_orch_container_created ON orchestrator_events(container_name, created_at DESC)",
+
+    # ── Row-Level Security (RLS) — defense-in-depth for user-scoped tables ──
+    # These policies enforce that non-superuser DB roles can only access their
+    # own rows. With the current postgres superuser connection, RLS is bypassed
+    # by default. To fully activate: create an `app_user` role (see db.py).
+    #
+    # Policy logic:
+    #   ALLOW if user_id matches app.current_user_id (set per-transaction)
+    #   OR if app.is_admin = '1' (set by admin endpoints)
+    #
+    # set_user_context() in db.py sets these transaction-local settings.
+
+    "ALTER TABLE hostings ENABLE ROW LEVEL SECURITY",
+    """
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'hostings' AND policyname = 'hostings_tenant_isolation'
+      ) THEN
+        CREATE POLICY hostings_tenant_isolation ON hostings
+          FOR ALL
+          USING (
+            user_id = NULLIF(current_setting('app.current_user_id', TRUE), '')::INTEGER
+            OR current_setting('app.is_admin', TRUE) = '1'
+          )
+          WITH CHECK (
+            user_id = NULLIF(current_setting('app.current_user_id', TRUE), '')::INTEGER
+            OR current_setting('app.is_admin', TRUE) = '1'
+          );
+      END IF;
+    END $$
+    """,
+
+    "ALTER TABLE orchestrator_events ENABLE ROW LEVEL SECURITY",
+    """
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'orchestrator_events' AND policyname = 'orch_events_tenant_isolation'
+      ) THEN
+        CREATE POLICY orch_events_tenant_isolation ON orchestrator_events
+          FOR ALL
+          USING (
+            user_id = NULLIF(current_setting('app.current_user_id', TRUE), '')::INTEGER
+            OR current_setting('app.is_admin', TRUE) = '1'
+          )
+          WITH CHECK (
+            user_id = NULLIF(current_setting('app.current_user_id', TRUE), '')::INTEGER
+            OR current_setting('app.is_admin', TRUE) = '1'
+          );
+      END IF;
+    END $$
+    """,
+
+    "ALTER TABLE site_health_history ENABLE ROW LEVEL SECURITY",
+    """
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'site_health_history' AND policyname = 'health_history_tenant_isolation'
+      ) THEN
+        CREATE POLICY health_history_tenant_isolation ON site_health_history
+          FOR ALL
+          USING (
+            user_id = NULLIF(current_setting('app.current_user_id', TRUE), '')::INTEGER
+            OR current_setting('app.is_admin', TRUE) = '1'
+          )
+          WITH CHECK (
+            user_id = NULLIF(current_setting('app.current_user_id', TRUE), '')::INTEGER
+            OR current_setting('app.is_admin', TRUE) = '1'
+          );
+      END IF;
+    END $$
+    """,
+
+    "ALTER TABLE site_alerts ENABLE ROW LEVEL SECURITY",
+    """
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'site_alerts' AND policyname = 'site_alerts_tenant_isolation'
+      ) THEN
+        CREATE POLICY site_alerts_tenant_isolation ON site_alerts
+          FOR ALL
+          USING (
+            user_id = NULLIF(current_setting('app.current_user_id', TRUE), '')::INTEGER
+            OR current_setting('app.is_admin', TRUE) = '1'
+          )
+          WITH CHECK (
+            user_id = NULLIF(current_setting('app.current_user_id', TRUE), '')::INTEGER
+            OR current_setting('app.is_admin', TRUE) = '1'
+          );
+      END IF;
+    END $$
+    """,
+
+    "ALTER TABLE import_jobs ENABLE ROW LEVEL SECURITY",
+    """
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'import_jobs' AND policyname = 'import_jobs_tenant_isolation'
+      ) THEN
+        CREATE POLICY import_jobs_tenant_isolation ON import_jobs
+          FOR ALL
+          USING (
+            user_id = NULLIF(current_setting('app.current_user_id', TRUE), '')::INTEGER
+            OR current_setting('app.is_admin', TRUE) = '1'
+          )
+          WITH CHECK (
+            user_id = NULLIF(current_setting('app.current_user_id', TRUE), '')::INTEGER
+            OR current_setting('app.is_admin', TRUE) = '1'
+          );
+      END IF;
+    END $$
+    """,
 ]
 
 def ensure_monthly_partitions(cursor):
