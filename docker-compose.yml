@@ -139,10 +139,9 @@ services:
   #   postgresql://user:pass@pgbouncer:5432/dbname
   # ---------------------------------------------------------------------------
   pgbouncer:
-    image: edoburu/pgbouncer:1.22.0
+    image: pgbouncer/pgbouncer:1.23.1
     container_name: pgbouncer
     restart: always
-    env_file: .env.production   # reads PGBOUNCER_* vars (see pgbouncer/pgbouncer.ini)
     depends_on:
       postgres:
         condition: service_healthy
@@ -165,6 +164,11 @@ services:
     container_name: hosting_guard_db
     restart: always
     env_file: .env.production   # lee POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c pg_stat_statements.max=1000
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
