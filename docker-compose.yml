@@ -241,7 +241,7 @@ services:
     restart: always
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./prometheus_alerts.yml:/etc/prometheus/prometheus_alerts.yml:ro
+      - ./prometheus_alerts.yml:/prometheus_alerts.yml:ro
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
