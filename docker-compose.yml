@@ -215,6 +215,24 @@ services:
       - hosting_network
 
   # ---------------------------------------------------------------------------
+  # alertmanager — enruta alertas de Prometheus a email/slack/webhook
+  # ---------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    restart: always
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.listen-address=:9093"
+    ports:
+      - "127.0.0.1:9093:9093"   # solo loopback — no expuesto a Internet
+    networks:
+      - hosting_network
+
+  # ---------------------------------------------------------------------------
   # prometheus — métricas internas
   # ---------------------------------------------------------------------------
   prometheus:
@@ -223,8 +241,15 @@ services:
     restart: always
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus_alerts.yml:/etc/prometheus/prometheus_alerts.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.listen-address=127.0.0.1:9090"
     ports:
       - "127.0.0.1:9090:9090"   # solo loopback — no expuesto a Internet
+    depends_on:
+      - alertmanager
     networks:
       - hosting_network
 

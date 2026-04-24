@@ -1,0 +1,73 @@
+global:
+  # Tiempo que Alertmanager espera antes de re-enviar una alerta que sigue activa
+  resolve_timeout: 5m
+
+  # SMTP para Gmail — requiere App Password (no la contraseña normal)
+  # Pasos: Google Account → Seguridad → Verificación en 2 pasos → Contraseñas de aplicación
+  smtp_smarthost: "smtp.gmail.com:587"
+  smtp_from: "alertas@hostingguard.lat"
+  smtp_auth_username: "ruben.luxor2012@gmail.com"
+  smtp_auth_password: "__GMAIL_APP_PASSWORD__"   # reemplazar antes de deploy
+  smtp_require_tls: true
+
+# Plantillas de notificación personalizadas
+templates:
+  - "/etc/alertmanager/templates/*.tmpl"
+
+# Árbol de rutas — decide quién recibe qué
+route:
+  # Agrupación: 1 email por bloque de alertas del mismo job/alertname
+  group_by: ["alertname", "severity", "job"]
+  group_wait: 30s        # espera antes de enviar el primer email del grupo
+  group_interval: 5m     # espera antes de enviar actualizaciones del mismo grupo
+  repeat_interval: 4h    # re-envía si la alerta sigue activa después de este tiempo
+
+  receiver: "email-admin"
+
+  routes:
+    # Críticos: se envían rápido, sin agrupar mucho
+    - matchers:
+        - severity = "critical"
+      receiver: "email-admin"
+      group_wait: 10s
+      repeat_interval: 1h
+
+    # Warnings: agrupados, menos frecuentes
+    - matchers:
+        - severity = "warning"
+      receiver: "email-admin"
+      group_wait: 2m
+      repeat_interval: 6h
+
+    # Silenciar alertas de info/debug si existieran
+    - matchers:
+        - severity =~ "info|debug"
+      receiver: "null"
+
+# Receptores
+receivers:
+  - name: "null"
+
+  - name: "email-admin"
+    email_configs:
+      - to: "ruben.luxor2012@gmail.com"
+        send_resolved: true
+        headers:
+          subject: "[HostingGuard] {{ .Status | toUpper }} — {{ .CommonAnnotations.summary }}"
+        html: |
+          {{ range .Alerts }}
+          <b>{{ .Status | toUpper }}</b> {{ .Labels.severity }}<br>
+          <b>Alert:</b> {{ .Labels.alertname }}<br>
+          <b>Summary:</b> {{ .Annotations.summary }}<br>
+          <b>Detail:</b> {{ .Annotations.description }}<br>
+          <b>Since:</b> {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}<br>
+          <hr>
+          {{ end }}
+
+# Inhibición: si el nodo está caído no disparar alertas de contenedores
+inhibit_rules:
+  - source_matchers:
+      - alertname = "AppDown"
+    target_matchers:
+      - alertname =~ "SiteHealthZero|ContainerExited|DBHighErrorRate"
+    equal: ["job"]
