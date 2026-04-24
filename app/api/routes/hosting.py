@@ -354,6 +354,19 @@ async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
         "hosting_deleted hosting_id=%s container=%s db_container=%s",
         hosting_id, container_name, db_container,
     )
+
+    # ── 4. Invalidate the Redis list cache for this user ─────────────────────
+    try:
+        from app.infra.redis_client import get_redis
+        r = get_redis()
+        if r is not None:
+            pattern = f"hg:list:{user_id}:*"
+            keys = r.keys(pattern)
+            if keys:
+                r.delete(*keys)
+    except Exception:
+        pass
+
     return {"status": "deleted", "hosting_id": hosting_id}
 
 

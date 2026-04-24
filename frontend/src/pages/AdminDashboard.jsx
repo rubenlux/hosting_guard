@@ -2008,15 +2008,16 @@ function TerminateModal({ hosting, onConfirm, onCancel }) {
           <select
             value={reason}
             onChange={e => setReason(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white outline-none focus:border-red-500/50 mb-2"
+            className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white outline-none focus:border-red-500/50 mb-2"
+            style={{ colorScheme: 'dark' }}
           >
-            <option value="">— Selecciona una razón —</option>
-            <option value="Uso indebido / spam">Uso indebido / spam</option>
-            <option value="Violación de términos de servicio">Violación de términos de servicio</option>
-            <option value="Actividad maliciosa / phishing">Actividad maliciosa / phishing</option>
-            <option value="Contenido prohibido">Contenido prohibido</option>
-            <option value="Solicitud del cliente">Solicitud del cliente</option>
-            <option value="Falta de pago">Falta de pago</option>
+            <option value="" style={{ background: '#1a1a1a', color: '#9ca3af' }}>— Selecciona una razón —</option>
+            <option value="Uso indebido / spam" style={{ background: '#1a1a1a', color: '#fff' }}>Uso indebido / spam</option>
+            <option value="Violación de términos de servicio" style={{ background: '#1a1a1a', color: '#fff' }}>Violación de términos de servicio</option>
+            <option value="Actividad maliciosa / phishing" style={{ background: '#1a1a1a', color: '#fff' }}>Actividad maliciosa / phishing</option>
+            <option value="Contenido prohibido" style={{ background: '#1a1a1a', color: '#fff' }}>Contenido prohibido</option>
+            <option value="Solicitud del cliente" style={{ background: '#1a1a1a', color: '#fff' }}>Solicitud del cliente</option>
+            <option value="Falta de pago" style={{ background: '#1a1a1a', color: '#fff' }}>Falta de pago</option>
           </select>
           <textarea
             placeholder="Descripción adicional (opcional)..."
