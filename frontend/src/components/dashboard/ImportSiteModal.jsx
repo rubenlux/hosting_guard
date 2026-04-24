@@ -4,7 +4,7 @@ import {
   Upload, CheckCircle2, XCircle, AlertTriangle,
   Terminal, Globe, Loader2, X, FileArchive, Database, ArrowRight,
 } from 'lucide-react';
-import { startImport, getImportStatus, getImportLogsUrl } from '../../../services/api';
+import { startImport, getImportStatus, getImportLogsUrl } from '../../services/api';
 
 /* ── constants ────────────────────────────────────────────────── */
 const MAX_BYTES = 500 * 1024 * 1024;
