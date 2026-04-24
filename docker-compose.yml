@@ -245,7 +245,6 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
-      - "--web.listen-address=127.0.0.1:9090"
     ports:
       - "127.0.0.1:9090:9090"   # solo loopback — no expuesto a Internet
     depends_on:
