@@ -1,12 +1,20 @@
 import asyncio
+import json
 import subprocess
 
 from fastapi import Depends
 
 from app.api.security import verify_token
 from app.infra.audit.hosting_repository import HostingRepository
+from app.infra.redis_client import get_redis
 
 hosting_repo = HostingRepository()
+
+_CACHE_TTL = 20  # seconds
+
+
+def _cache_key(user_id: int, skip: int, limit: int) -> str:
+    return f"hg:list:{user_id}:{skip}:{limit}"
 
 
 async def _run_docker(*args, timeout: int = 30) -> subprocess.CompletedProcess:
@@ -20,11 +28,22 @@ async def _run_docker(*args, timeout: int = 30) -> subprocess.CompletedProcess:
 
 
 async def list_hostings(skip: int = 0, limit: int = 50, user: dict = Depends(verify_token)):
-    user_id       = user.get("user_id")
+    user_id: int = user["user_id"]
     loop = asyncio.get_running_loop()
-    # Usar executor para no bloquear el event loop con las consultas síncronas a SQLite
+
+    # --- Redis cache read ---
+    redis = get_redis()
+    cache_key = _cache_key(user_id, skip, limit)
+    if redis is not None:
+        try:
+            cached = redis.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
+
     hostings = await loop.run_in_executor(
-        None, 
+        None,
         lambda: hosting_repo.get_all_user_hostings_by_user(user_id, limit=limit, skip=skip)
     )
     hostings_list = [dict(h) for h in hostings if h.get("status") != "deleted"]
@@ -94,5 +113,12 @@ async def list_hostings(skip: int = 0, limit: int = 50, user: dict = Depends(ver
             h["metrics"] = metrics_by_name[cname]
         else:
             h["metrics"] = {"cpu": "0%", "memory": "0MiB / 0MiB"}
+
+    # --- Redis cache write ---
+    if redis is not None:
+        try:
+            redis.setex(cache_key, _CACHE_TTL, json.dumps(hostings_list))
+        except Exception:
+            pass
 
     return hostings_list
