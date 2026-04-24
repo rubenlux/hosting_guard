@@ -1149,6 +1149,31 @@ async def admin_upgrade_plan(
     }
 
 
+@router.delete("/users/{user_id}")
+def admin_delete_user(user_id: int, admin: dict = Depends(require_role("admin"))):
+    """Hard-delete a user account. Blocked if the user is admin or has active hostings."""
+    target = _user_repo.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if target.get("role") == "admin":
+        raise HTTPException(status_code=403, detail="No se puede eliminar una cuenta admin")
+
+    active_hostings = [
+        h for h in _hosting_repo.get_user_hostings(user_id)
+        if h.get("status") not in ("deleted", "terminated")
+    ]
+    if active_hostings:
+        raise HTTPException(
+            status_code=409,
+            detail=f"El usuario tiene {len(active_hostings)} hosting(s) activo(s). Elimínalos primero."
+        )
+
+    deleted = _user_repo.delete_user(user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return {"ok": True, "deleted_user_id": user_id, "email": target["email"]}
+
+
 @router.get("/metrics/containers/history")
 def get_container_history(_: dict = Depends(require_role("admin"))):
     """Per-container CPU%/RAM% time series (last 2h) from orchestrator_events."""

@@ -23,6 +23,7 @@ import {
   adminRestartHosting, adminStopHosting, adminStartHosting,
   adminGetHostingLogs, adminTerminateHosting,
   adminExtendPlan, adminSetFreePlanForever, adminDeactivateFreePlan, adminUpgradePlan,
+  adminDeleteUser,
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import StaffAnalytics from '../components/StaffAnalytics';
@@ -1543,8 +1544,23 @@ function PlanManagementModal({ user, onClose, onSuccess }) {
 /* ── Sub-components ─────────────────────────────────────────── */
 function UsersTable({ users, loading, navigate, onReloadUsers }) {
   const { activateSupportSession } = useAuth();
-  const [supporting, setSupporting]   = useState(null); // user_id being activated
-  const [planModal, setPlanModal]     = useState(null);  // user object for modal
+  const [supporting, setSupporting]   = useState(null);
+  const [planModal, setPlanModal]     = useState(null);
+  const [deleting, setDeleting]       = useState(null);
+
+  const handleDelete = async (e, u) => {
+    e.stopPropagation();
+    if (!window.confirm(`⚠️ ACCIÓN IRREVERSIBLE\n\nEsto eliminará la cuenta de ${u.email} permanentemente.\n\n¿Confirmar?`)) return;
+    setDeleting(u.user_id);
+    try {
+      await adminDeleteUser(u.user_id);
+      onReloadUsers?.();
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Error al eliminar usuario');
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   const handleSupport = async (e, u) => {
     e.stopPropagation();
@@ -1625,6 +1641,21 @@ function UsersTable({ users, loading, navigate, onReloadUsers }) {
                     <Crown className="w-3 h-3 text-amber-400" />
                     Plan
                   </button>
+                  {u.role !== 'admin' && (
+                    <button
+                      onClick={(e) => handleDelete(e, u)}
+                      disabled={deleting === u.user_id}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold
+                        bg-red-500/10 text-red-400 hover:bg-red-500/25 transition-colors
+                        disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Eliminar usuario permanentemente"
+                    >
+                      {deleting === u.user_id
+                        ? <RefreshCw className="w-3 h-3 animate-spin" />
+                        : <Trash2 className="w-3 h-3" />}
+                      Eliminar
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

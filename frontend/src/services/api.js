@@ -320,6 +320,11 @@ export const adminUpgradePlan = async (userId, plan) => {
     return response.data;
 };
 
+export const adminDeleteUser = async (userId) => {
+    const response = await api.delete(`/admin/users/${userId}`);
+    return response.data;
+};
+
 export const forgotPassword = async (email) => {
     const response = await api.post('/auth/forgot-password', { email });
     return response.data;

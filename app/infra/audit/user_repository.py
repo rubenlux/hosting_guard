@@ -171,6 +171,19 @@ class UserRepository:
         finally:
             release_connection(conn)
 
+    def delete_user(self, user_id: int) -> bool:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            release_connection(conn)
+
     def log_login_attempt(self, email: str, ip: str, success: bool, detail: str = "") -> None:
         conn = get_connection()
         try:
