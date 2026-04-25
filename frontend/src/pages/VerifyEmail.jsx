@@ -58,7 +58,7 @@ const VerifyEmail = () => {
               <p className="text-gray-400 text-sm leading-relaxed mb-6">
                 Tu cuenta está activa. Ya podés crear tu primer hosting.
               </p>
-              <Link to="/"
+              <Link to="/dashboard"
                 className="block w-full py-3 rounded-xl bg-green-500 text-black text-sm font-black hover:bg-green-400 active:scale-[.98] transition-all text-center">
                 Ir al panel
               </Link>
