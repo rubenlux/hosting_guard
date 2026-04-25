@@ -3,6 +3,7 @@ import uuid
 import os
 import re
 import asyncio
+import secrets
 import shutil
 import zipfile
 import logging
@@ -561,6 +562,12 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             ip_address=ip_address
         )
 
+        # Generate WordPress admin credentials and persist them before background task.
+        wp_admin_pass = secrets.token_urlsafe(12)
+        hosting_repo.set_wp_credentials(hosting_id, wp_admin_pass)
+
+        user_email = user.get("email", "")
+
         # Run optimization in background — WP needs ~60s to initialize before WP-CLI works.
         loop = asyncio.get_running_loop()
         loop.run_in_executor(
@@ -568,6 +575,11 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             lambda: optimize_wordpress(
                 wp_container,
                 log=lambda msg: logger.info("[wp_new:%s] %s", wp_container, msg),
+                auto_install=True,
+                install_url=f"https://{subdomain}",
+                install_title=data.name,
+                install_email=user_email,
+                admin_password=wp_admin_pass,
             ),
         )
 

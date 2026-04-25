@@ -1,8 +1,24 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Globe, Cpu, Database, RefreshCw, Upload, FolderOpen,
   Square, RotateCcw, FileText, Play, Trash2, Loader, HardDriveDownload,
+  KeyRound, Copy, Check,
 } from 'lucide-react';
+
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const handle = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  return (
+    <button onClick={handle} className="text-gray-500 hover:text-indigo-400 transition-colors ml-1">
+      {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+    </button>
+  );
+}
 
 /**
  * Maps a hosting status string to the CSS class used for the status badge.
@@ -98,6 +114,22 @@ export default function HostingList({
                   </div>
                 )}
               </div>
+              {h.wp_admin_password && (
+                <div className="flex items-center gap-2 mt-1 text-[10px] font-mono text-gray-500">
+                  <KeyRound className="w-3 h-3 text-indigo-500/60" />
+                  <span>admin</span>
+                  <span className="text-gray-600">/</span>
+                  <span className="text-indigo-400">{h.wp_admin_password}</span>
+                  <CopyButton text={h.wp_admin_password} />
+                  <a
+                    href={`${h.url || `https://${h.subdomain}`}/wp-admin`}
+                    target="_blank" rel="noopener"
+                    className="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/20 transition-colors"
+                  >
+                    wp-admin
+                  </a>
+                </div>
+              )}
             </div>
 
             <div className="ml-auto flex items-center gap-2">

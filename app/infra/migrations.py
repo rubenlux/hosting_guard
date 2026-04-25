@@ -460,6 +460,17 @@ _INDEXES = [
       END IF;
     END $$
     """,
+    # Add wp_admin_password to hostings for auto-provisioned WordPress credentials
+    """
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'hostings' AND column_name = 'wp_admin_password'
+      ) THEN
+        ALTER TABLE hostings ADD COLUMN wp_admin_password TEXT;
+      END IF;
+    END $$
+    """,
 ]
 
 def ensure_monthly_partitions(cursor):

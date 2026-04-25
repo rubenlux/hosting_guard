@@ -373,6 +373,18 @@ class HostingRepository:
         finally:
             release_connection(conn)
 
+    def set_wp_credentials(self, hosting_id: int, admin_password: str) -> None:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE hostings SET wp_admin_password = %s WHERE hosting_id = %s",
+                (admin_password, hosting_id),
+            )
+            conn.commit()
+        finally:
+            release_connection(conn)
+
     def update_hosting_plan(self, hosting_id: int, plan: str) -> bool:
         conn = get_connection()
         try:

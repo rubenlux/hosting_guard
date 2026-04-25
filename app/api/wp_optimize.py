@@ -77,10 +77,19 @@ _WP_CONSTANTS = [
 ]
 
 
-def optimize_wordpress(container: str, log: Optional[Callable[[str], None]] = None) -> dict:
+def optimize_wordpress(
+    container: str,
+    log: Optional[Callable[[str], None]] = None,
+    auto_install: bool = False,
+    install_url: str = "",
+    install_title: str = "Mi Sitio",
+    install_email: str = "",
+    admin_password: str = "",
+) -> dict:
     """
     Idempotent optimization for any WordPress container.
     - Sets wp-config constants individually (safe to re-run, no grep guard)
+    - Optionally runs wp core install if auto_install=True and WP is not yet set up
     - Installs Redis Object Cache + WP Super Cache
     - Flushes rewrite rules, cleans transients, fixes permissions
 
@@ -127,7 +136,33 @@ def optimize_wordpress(container: str, log: Optional[Callable[[str], None]] = No
 
     result["config_ok"] = config_ok
 
-    # ── 3. Redis Object Cache ─────────────────────────────────────────────────
+    # ── 3. Ensure WordPress is fully installed ───────────────────────────────
+    r = _docker_exec(container, "wp", "--allow-root", "core", "is-installed", timeout=20)
+    if r.returncode != 0:
+        if auto_install and install_url and install_email and admin_password:
+            _log("  WordPress no instalado — ejecutando wp core install automáticamente...")
+            install_cmd = [
+                "wp", "--allow-root", "core", "install",
+                f"--url={install_url}",
+                f"--title={install_title}",
+                "--admin_user=admin",
+                f"--admin_password={admin_password}",
+                f"--admin_email={install_email}",
+                "--skip-email",
+            ]
+            r2 = _docker_exec(container, *install_cmd, timeout=60)
+            if r2.returncode == 0:
+                _log("  ✓ WordPress instalado automáticamente (usuario: admin)")
+            else:
+                err = r2.stderr.strip()[:120]
+                _log(f"  WARN wp core install: {err}")
+                result["errors"].append(f"wp core install: {err}")
+                return result
+        else:
+            _log("  WordPress no instalado aún — wp-config listo, plugins diferidos")
+            return result
+
+    # ── 4. Redis Object Cache ─────────────────────────────────────────────────
     _log("Instalando Redis Object Cache...")
     r = _docker_exec(container, "wp", "--allow-root",
                      "plugin", "install", "redis-cache", "--activate", timeout=120)
