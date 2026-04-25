@@ -275,6 +275,11 @@ export const getUnitEconomics = async () => {
     return response.data;
 };
 
+export const getAdminReport = async () => {
+    const response = await api.get('/admin/report');
+    return response.data;
+};
+
 export const startImport = async (hostingId, file, sqlFile = null) => {
     const form = new FormData();
     form.append('hosting_id', hostingId);

@@ -11,6 +11,7 @@ import {
   Terminal, RotateCcw, Play, Square, KeyRound,
   Crown, Infinity, CalendarClock, ShieldOff, TrendingUp as Upgrade, X,
   Database, Cpu, MemoryStick, HardDrive, Trash, Gauge, Wifi, WifiOff,
+  Sparkles, Mail,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
@@ -23,7 +24,7 @@ import {
   adminRestartHosting, adminStopHosting, adminStartHosting,
   adminGetHostingLogs, adminTerminateHosting,
   adminExtendPlan, adminSetFreePlanForever, adminDeactivateFreePlan, adminUpgradePlan,
-  adminDeleteUser,
+  adminDeleteUser, getAdminReport,
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import StaffAnalytics from '../components/StaffAnalytics';
@@ -61,6 +62,7 @@ const NAV = [
   { id: 'pixel-users',   label: 'Pixel Users',      icon: Users,     path: '/admin/pixel-users' },
   { id: 'orchestrator',  label: 'Orchestrator',     icon: Bot },
   { id: 'finance',       label: 'Finance',          icon: DollarSign },
+  { id: 'ai-report',    label: 'AI Report',        icon: Sparkles },
   { id: 'equipo',        label: 'Equipo',           icon: UserCog },
   { id: 'audit',         label: 'Audit Log',        icon: FileText },
   { id: 'settings',      label: 'Settings',         icon: Settings },
@@ -1132,6 +1134,9 @@ export default function AdminDashboard() {
             {/* ══ EQUIPO ══ */}
             {section === 'equipo' && <EquipoSection />}
 
+            {/* ══ AI REPORT ══ */}
+            {section === 'ai-report' && <AIReportPanel />}
+
             {/* ══ SETTINGS ══ */}
             {section === 'settings' && (
               <div className="flex flex-col gap-4">
@@ -2039,6 +2044,161 @@ function TerminateModal({ hosting, onConfirm, onCancel }) {
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   AI REPORT PANEL
+   ═══════════════════════════════════════════════════════════ */
+
+const REPORT_SECTION_STYLE = {
+  '📊': { border: 'border-blue-500/20',    bg: 'bg-blue-500/5',    title: 'text-blue-300' },
+  '🔴': { border: 'border-red-500/20',     bg: 'bg-red-500/5',     title: 'text-red-300' },
+  '⚠️': { border: 'border-amber-500/20',   bg: 'bg-amber-500/5',   title: 'text-amber-300' },
+  '📈': { border: 'border-emerald-500/20', bg: 'bg-emerald-500/5', title: 'text-emerald-300' },
+  '💡': { border: 'border-purple-500/20',  bg: 'bg-purple-500/5',  title: 'text-purple-300' },
+};
+
+function parseReportSections(text) {
+  return text.split(/^## /m).filter(Boolean).map(part => {
+    const nl = part.indexOf('\n');
+    return {
+      title: nl === -1 ? part.trim() : part.slice(0, nl).trim(),
+      body:  nl === -1 ? '' : part.slice(nl + 1).trim(),
+    };
+  });
+}
+
+function AIReportPanel() {
+  const [report, setReport]           = useState(null);
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState(null);
+  const [generatedAt, setGeneratedAt] = useState(null);
+
+  const generate = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getAdminReport();
+      setReport(data.report);
+      setGeneratedAt(new Date());
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'Error generando el reporte. Verificá que CLAUDE_API_KEY esté configurada.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sections = useMemo(() => (report ? parseReportSections(report) : []), [report]);
+
+  const getStyle = (title) => {
+    for (const [emoji, style] of Object.entries(REPORT_SECTION_STYLE)) {
+      if (title.includes(emoji)) return style;
+    }
+    return { border: 'border-white/10', bg: 'bg-white/3', title: 'text-white' };
+  };
+
+  return (
+    <div className="flex flex-col gap-5">
+
+      {/* Header card */}
+      <div className="bg-[#111] rounded-xl border border-white/5 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-2.5 mb-1.5">
+              <div className="w-7 h-7 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20 flex items-center justify-center">
+                <Sparkles className="w-3.5 h-3.5 text-[#00ff88]" />
+              </div>
+              <span className="text-[13px] font-bold text-white">AI Platform Intelligence</span>
+            </div>
+            <p className="text-[10px] text-gray-500 leading-relaxed">
+              Análisis ejecutivo generado por Claude con datos en tiempo real: hostings, alertas, eventos, usuarios y salud del sistema. Solo lectura, sin acciones automáticas.
+            </p>
+            {generatedAt && (
+              <div className="flex items-center gap-1.5 mt-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#00ff88] shrink-0" />
+                <span className="text-[9px] text-gray-600 font-mono">
+                  Generado {generatedAt.toLocaleString('es-AR')} · Reporte diario automático: 8:00 AM UTC por email
+                </span>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={generate}
+            disabled={loading}
+            className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg text-[11px] font-bold bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20 hover:bg-[#00ff88]/20 transition-all disabled:opacity-50 whitespace-nowrap"
+          >
+            {loading
+              ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              : <Sparkles className="w-3.5 h-3.5" />
+            }
+            {loading ? 'Analizando...' : report ? 'Regenerar' : 'Generar Reporte'}
+          </button>
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-4 flex items-start gap-3">
+          <XCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+          <span className="text-[11px] text-red-400">{error}</span>
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading && (
+        <div className="bg-[#111] rounded-xl border border-white/5 p-16 flex flex-col items-center gap-5">
+          <div className="relative">
+            <div className="w-14 h-14 rounded-full border border-[#00ff88]/20 flex items-center justify-center">
+              <Sparkles className="w-6 h-6 text-[#00ff88]/50" />
+            </div>
+            <div className="absolute inset-0 rounded-full border border-[#00ff88]/30 animate-ping" />
+          </div>
+          <div className="text-center">
+            <div className="text-[12px] text-white font-medium mb-1">Analizando la plataforma...</div>
+            <div className="text-[10px] text-gray-500">Claude está procesando métricas, alertas, eventos y salud del sistema</div>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && !report && !error && (
+        <div className="bg-[#111] rounded-xl border border-white/5 p-16 flex flex-col items-center gap-4">
+          <div className="w-14 h-14 rounded-full bg-[#00ff88]/5 border border-[#00ff88]/10 flex items-center justify-center">
+            <Sparkles className="w-6 h-6 text-[#00ff88]/30" />
+          </div>
+          <div className="text-center">
+            <div className="text-[13px] text-gray-400 font-medium mb-2">Sin reporte generado</div>
+            <div className="text-[10px] text-gray-600 leading-relaxed">
+              Presioná "Generar Reporte" para ver el análisis de la plataforma.<br />
+              El reporte diario se envía automáticamente por email a las 8:00 AM UTC.
+            </div>
+          </div>
+          <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/3 border border-white/5">
+            <Mail className="w-3.5 h-3.5 text-gray-500" />
+            <span className="text-[9px] text-gray-500 font-mono">rubenluxor@hostingguard.lat</span>
+          </div>
+        </div>
+      )}
+
+      {/* Report sections */}
+      {!loading && sections.map((s, i) => {
+        const style = getStyle(s.title);
+        return (
+          <div key={i} className={`rounded-xl border ${style.border} ${style.bg} overflow-hidden`}>
+            <div className="px-5 py-3 border-b border-white/5">
+              <span className={`text-[12px] font-bold ${style.title}`}>{s.title}</span>
+            </div>
+            <div className="px-5 py-4">
+              <pre className="text-[11px] text-gray-300 leading-relaxed whitespace-pre-wrap font-sans">
+                {s.body}
+              </pre>
+            </div>
+          </div>
+        );
+      })}
+
     </div>
   );
 }
