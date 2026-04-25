@@ -117,7 +117,7 @@ async def create_ticket(
     hosting_data = None
     if body.hosting_id:
         try:
-            hosting_data = _hosting_repo.get_hosting_by_id(body.hosting_id)
+            hosting_data = _hosting_repo.get_hosting_any(body.hosting_id)
             # Validar que pertenece al usuario
             if hosting_data and hosting_data.get("user_id") != user_id:
                 hosting_data = None
@@ -262,7 +262,7 @@ def send_message(
         content=body.content,
     )
 
-    # Broadcast vía WebSocket (importación diferida para evitar ciclo)
+    # Broadcast vía WebSocket
     try:
         from app.api.websocket.support_ws import broadcast_to_ticket
         import asyncio
@@ -279,7 +279,77 @@ def send_message(
     except Exception as ws_err:
         logger.debug("WS broadcast non-critical error: %s", ws_err)
 
+    # Auto-reply: if message is from user and ticket is still AI-handled, generate AI follow-up
+    if sender_type == "user" and ticket.get("status") == "ai_handled":
+        try:
+            import asyncio as _asyncio
+            _asyncio.create_task(_ai_followup_reply(ticket_id, ticket))
+        except Exception as exc:
+            logger.debug("AI follow-up task creation failed (non-critical): %s", exc)
+
     return {"message_id": msg_id, "ok": True}
+
+
+async def _ai_followup_reply(ticket_id: int, ticket: dict) -> None:
+    """Generate and save an AI reply for a follow-up user message."""
+    try:
+        from app.core.support_ai import generate_support_response
+
+        messages = _ticket_repo.list_messages(ticket_id)
+        history = [
+            m for m in messages
+            if m.get("sender_type") in ("user", "ai", "staff") and m.get("content", "").strip()
+        ]
+        if not history:
+            return
+
+        last_user_msg = next(
+            (m for m in reversed(history) if m.get("sender_type") == "user"), None
+        )
+        if not last_user_msg:
+            return
+
+        # Fetch hosting context
+        hosting_data = None
+        if ticket.get("hosting_id"):
+            try:
+                hosting_data = _hosting_repo.get_hosting_any(ticket["hosting_id"])
+            except Exception:
+                pass
+
+        cat_info = _ticket_repo.get_category_by_name(ticket.get("category", ""))
+        ai_prompt_hint = cat_info.get("ai_prompt_hint", "") if cat_info else ""
+
+        ai_response, _ = await generate_support_response(
+            category=ticket.get("category", "Ayuda técnica"),
+            description=last_user_msg["content"],
+            ai_prompt_hint=ai_prompt_hint,
+            hosting_data=hosting_data,
+            message_history=history[:-1],  # history without the last user message
+        )
+
+        _ticket_repo.add_message(
+            ticket_id=ticket_id,
+            sender_type="ai",
+            content=ai_response,
+        )
+
+        # Broadcast AI response via WebSocket
+        try:
+            from app.api.websocket.support_ws import broadcast_to_ticket
+            await broadcast_to_ticket(ticket_id, {
+                "type":        "message",
+                "ticket_id":   ticket_id,
+                "sender_type": "ai",
+                "content":     ai_response,
+                "created_at":  datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass
+
+        logger.info("AI follow-up reply sent for ticket %s", ticket_id)
+    except Exception as exc:
+        logger.error("AI follow-up reply failed for ticket %s: %s", ticket_id, exc, exc_info=True)
 
 
 @router.post("/tickets/{ticket_id}/escalate")

@@ -37,9 +37,12 @@ _DEFAULT_TIMEOUT = 30  # seconds per command
 # Only actions registered here can ever be executed.
 
 _WHITELIST: dict[str, Callable[[str], list[str]]] = {
-    "nginx_reload":   lambda cn: ["docker", "exec", cn, "nginx", "-s", "reload"],
-    "docker_restart": lambda cn: ["docker", "restart", cn],
-    "docker_start":   lambda cn: ["docker", "start", cn],
+    "nginx_reload":       lambda cn: ["docker", "exec", cn, "nginx", "-s", "reload"],
+    "docker_restart":     lambda cn: ["docker", "restart", cn],
+    "docker_start":       lambda cn: ["docker", "start", cn],
+    "wp_cache_flush":     lambda cn: ["docker", "exec", cn, "wp", "--allow-root", "cache", "flush"],
+    "wp_rewrite_flush":   lambda cn: ["docker", "exec", cn, "wp", "--allow-root", "rewrite", "flush", "--hard"],
+    "wp_transient_flush": lambda cn: ["docker", "exec", cn, "wp", "--allow-root", "transient", "delete", "--all"],
 }
 
 

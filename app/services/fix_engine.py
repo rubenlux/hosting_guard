@@ -40,6 +40,18 @@ def _docker_restart_cmd(container: str) -> list[str]:
 def _docker_start_cmd(container: str) -> list[str]:
     return ["docker", "start", container]
 
+def _wp_cache_flush_cmd(container: str) -> list[str]:
+    return ["docker", "exec", container, "wp", "--allow-root", "cache", "flush"]
+
+def _wp_rewrite_flush_cmd(container: str) -> list[str]:
+    return ["docker", "exec", container, "wp", "--allow-root", "rewrite", "flush", "--hard"]
+
+def _wp_transient_flush_cmd(container: str) -> list[str]:
+    return ["docker", "exec", container, "wp", "--allow-root", "transient", "delete", "--all"]
+
+def _is_wordpress(container_name: str) -> bool:
+    return "_wp_" in container_name
+
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -130,8 +142,29 @@ def _select_fix(
     if score >= 90 and failure_type in ("infra", "runtime", "unknown"):
         return None
 
-    # ── 2. Runtime errors → restart clears stuck processes / bad state ────────
+    # ── 2. Runtime errors ─────────────────────────────────────────────────────
+    # WordPress: flush cache first (0s downtime) — covers corrupted object cache.
+    # Generic: restart clears stuck processes / bad state.
     if failure_type == "runtime":
+        if _is_wordpress(container_name):
+            action = "wp_cache_flush"
+            return FixProposal(
+                fingerprint=fingerprint,
+                hosting_id=hosting_id,
+                container_name=container_name,
+                failure_type=failure_type,
+                risk_level=get_risk_level(action),
+                can_auto_fix=is_auto_executable(action),
+                title="Limpiar caché de WordPress",
+                description=(
+                    "Un error de runtime en WordPress suele originarse en el object cache corrupto. "
+                    "Vaciar el caché resuelve esto sin reiniciar el contenedor."
+                ),
+                action=action,
+                commands=_wp_cache_flush_cmd(container_name),
+                rollback_commands=[],
+                estimated_downtime=get_downtime(action),
+            )
         action = "docker_restart"
         return FixProposal(
             fingerprint=fingerprint,
@@ -172,8 +205,29 @@ def _select_fix(
             estimated_downtime=get_downtime(action),
         )
 
-    # ── 4. Unknown failure type → nginx reload (softest option, 0s downtime) ──
+    # ── 4. Unknown failure ────────────────────────────────────────────────────
+    # WordPress: flush rewrites (fixes permalink 404s, 0s downtime).
+    # Generic: nginx reload (softest option).
     if failure_type == "unknown" and score < 80:
+        if _is_wordpress(container_name):
+            action = "wp_rewrite_flush"
+            return FixProposal(
+                fingerprint=fingerprint,
+                hosting_id=hosting_id,
+                container_name=container_name,
+                failure_type=failure_type,
+                risk_level=get_risk_level(action),
+                can_auto_fix=is_auto_executable(action),
+                title="Regenerar reglas de WordPress",
+                description=(
+                    "Regenerar las reglas de rewrite resuelve errores 404 en páginas y posts "
+                    "sin tiempo de inactividad."
+                ),
+                action=action,
+                commands=_wp_rewrite_flush_cmd(container_name),
+                rollback_commands=_wp_rewrite_flush_cmd(container_name),
+                estimated_downtime=get_downtime(action),
+            )
         action = "nginx_reload"
         return FixProposal(
             fingerprint=fingerprint,
@@ -189,11 +243,34 @@ def _select_fix(
             ),
             action=action,
             commands=_nginx_reload_cmd(container_name),
-            rollback_commands=_nginx_reload_cmd(container_name),  # idempotent
+            rollback_commands=_nginx_reload_cmd(container_name),
             estimated_downtime=get_downtime(action),
         )
 
-    # ── 5. Syntax / import errors → manual only (developer must fix code) ─────
+    # ── 5. WordPress with degraded score (80–89) → flush transients ─────────
+    # Transients are a common source of slowdowns/inconsistencies in WP but don't
+    # cause outright failures — only worth flushing when score is degraded, not critical.
+    if _is_wordpress(container_name) and 70 <= score < 90:
+        action = "wp_transient_flush"
+        return FixProposal(
+            fingerprint=fingerprint,
+            hosting_id=hosting_id,
+            container_name=container_name,
+            failure_type=failure_type or "unknown",
+            risk_level=get_risk_level(action),
+            can_auto_fix=is_auto_executable(action),
+            title="Limpiar transients de WordPress",
+            description=(
+                "Los transients acumulados pueden degradar el rendimiento. "
+                "Limpiarlos libera espacio en la base de datos sin afectar el sitio."
+            ),
+            action=action,
+            commands=_wp_transient_flush_cmd(container_name),
+            rollback_commands=[],
+            estimated_downtime=get_downtime(action),
+        )
+
+    # ── 6. Syntax / import errors → manual only (developer must fix code) ─────
     if failure_type in ("syntax", "import"):
         return FixProposal(
             fingerprint=fingerprint,

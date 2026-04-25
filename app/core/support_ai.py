@@ -1,141 +1,251 @@
 """
-Lógica de IA para el chat de soporte al cliente.
+Support AI — direct Claude integration for customer support chat.
 
-Reutiliza el AIOrchestrator existente sin modificarlo.
-Construye un "support decision" sintético compatible con generate_advisory()
-y obtiene la respuesta enriquecida del LLM.
+Calls Claude directly (not via advisory engine) with:
+  - A support-oriented system prompt
+  - Rich hosting context: status, CPU/RAM, health score, active alerts, last diagnosis
+  - Full conversation history (user/assistant turns)
 
-Claude responde en español, de forma simple, paso a paso,
-y pregunta al final si el problema se resolvió.
+Caching: applied to first responses only (no history context).
+Follow-up messages always hit Claude for accurate, context-aware replies.
 """
 import asyncio
-import logging
-from typing import Dict, List, Optional
-
 import hashlib
-from datetime import datetime, timezone
-from app.core.ai_orchestrator import AIOrchestrator
+import logging
+import os
+from typing import Dict, List, Optional, Tuple
+
 from app.infra.audit.support_cache_repository import SupportCacheRepository
-
-_support_cache_repo = SupportCacheRepository()
-
-# Configuración de TTL por categoría (en minutos)
-_TTL_CONFIG = {
-    "Sitio caído": 15,    # 15 min (cambia rápido)
-    "Sitio lento": 60,    # 1 hora
-    "Error en WordPress": 360, # 6 horas
-    "Problema de billing": 5,   # 5 min (muy sensible)
-    "Ayuda técnica": 120, # 2 horas
-}
 
 logger = logging.getLogger(__name__)
 
-# Instancia dedicada para soporte — sin knowledge provider,
-# no interfiere con la instancia principal de main.py
-_support_orchestrator = AIOrchestrator()
+_support_cache_repo = SupportCacheRepository()
 
-# Mapa de status a prioridad del ticket
 _PRIORITY_MAP = {
-    "Sitio caído": "high",
+    "Sitio caído":        "high",
     "Error en WordPress": "medium",
-    "Sitio lento": "medium",
+    "Sitio lento":        "medium",
     "Problema de billing": "low",
-    "Ayuda técnica": "medium",
-    "Otro": "low",
+    "Ayuda técnica":      "medium",
+    "Otro":               "low",
 }
+
+_TTL_CONFIG = {
+    "Sitio caído":        15,
+    "Sitio lento":        60,
+    "Error en WordPress": 360,
+    "Problema de billing": 5,
+    "Ayuda técnica":      120,
+}
+
+_SYSTEM_PROMPT = """Eres el asistente de soporte de HostingGuard, una plataforma de hosting administrado para sitios WordPress y aplicaciones web.
+Cada cliente tiene su propio contenedor Docker aislado con WordPress + MariaDB.
+
+PERSONALIDAD:
+- Directo, claro y empático. No sos un bot genérico.
+- Respondés en español, informal pero profesional.
+- Siempre preguntás "¿Esto resolvió tu problema?" al final, EXCEPTO cuando estás esperando información del cliente.
+- Máximo 4-5 pasos por respuesta. Sin paja.
+
+ACCIONES QUE EL CLIENTE PUEDE HACER DESDE EL DASHBOARD:
+- Iniciar / Detener / Reiniciar su contenedor (botones en la tarjeta del hosting)
+- Ver logs del contenedor en tiempo real (ícono de archivo)
+- Ver métricas de CPU y RAM en el panel principal
+- Importar un backup de WordPress (.zip, .wpress, .sql)
+- Acceder al wp-admin con credenciales visibles en el panel (usuario: admin, contraseña mostrada)
+- Ejecutar diagnóstico automático (botón "Diagnosticar" en la tarjeta del hosting)
+- Aplicar fix automático si el diagnóstico lo sugiere (botón "Aplicar fix")
+
+REGLAS:
+1. Si el contenedor tiene status "stopped" o "exited": lo primero es sugerir reiniciarlo desde el panel.
+2. Para errores de WordPress: guiar a wp-admin o al diagnóstico automático antes de pasos manuales.
+3. Si ves alertas críticas activas en los datos del hosting: mencionarlas directamente.
+4. Si el último diagnóstico detectó un problema concreto: citarlo y sugerir aplicar el fix automático.
+5. Si el problema no tiene solución desde el panel del cliente, recomendar escalar a soporte humano.
+6. Nunca inventés información que no esté en los datos del hosting.
+7. No prometás tiempos de resolución.
+8. Para problemas de billing: solo informar, no hacer cambios.
+"""
+
+
 def _get_sub_intent(description: str) -> str:
-    """
-    Detecta la sub-intención del mensaje usando una huella digital simple del texto.
-    Normaliza el texto para que variaciones mínimas no rompan el cache.
-    """
     normalized = description.lower()
     for char in [".", ",", "!", "?", "(", ")", "\n", "\r", "-", "_"]:
         normalized = normalized.replace(char, " ")
-    
-    # Tomar palabras significativas > 3 letras, ordenarlas para ignorar orden
     words = [w.strip() for w in normalized.split() if len(w.strip()) > 3]
     if not words:
-        # Fallback si el mensaje es muy corto
         return hashlib.sha256(normalized.encode()).hexdigest()[:16]
-        
-    fingerprint = "|".join(sorted(list(set(words))))
+    fingerprint = "|".join(sorted(set(words)))
     return hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
 
 
-def _is_cache_valid_for_hosting(cache_entry: Dict, current_hosting: Optional[Dict]) -> bool:
+def _build_hosting_context(
+    hosting_data: Dict,
+    metrics: Optional[Dict] = None,
+    alerts: Optional[List] = None,
+    diagnosis: Optional[Dict] = None,
+) -> str:
+    lines = []
+    is_wp = "_wp_" in (hosting_data.get("container_name") or "")
+
+    lines.append("=== DATOS DEL HOSTING DEL CLIENTE ===")
+    lines.append(f"Nombre: {hosting_data.get('name', 'N/A')}")
+    lines.append(f"Plan: {hosting_data.get('plan', 'N/A')}")
+    lines.append(f"Estado del contenedor: {hosting_data.get('status', 'N/A')}")
+    lines.append(f"URL: {hosting_data.get('subdomain', 'N/A')}")
+    lines.append(f"Tipo: {'WordPress' if is_wp else 'Sitio web'}")
+
+    if metrics:
+        score = metrics.get("score")
+        cpu = metrics.get("cpu")
+        ram = metrics.get("ram")
+        health_status = metrics.get("status", "N/A")
+        if score is not None:
+            lines.append(f"\nSalud: {score}/100 ({health_status})")
+        if cpu is not None:
+            lines.append(f"CPU: {cpu}% | RAM: {ram}%")
+
+    active_alerts = [a for a in (alerts or []) if not a.get("resolved")]
+    if active_alerts:
+        lines.append(f"\nAlertas activas ({len(active_alerts)}):")
+        for a in active_alerts[:3]:
+            lines.append(f"  [{a.get('level', '?').upper()}] {a.get('message', '')}")
+
+    if diagnosis:
+        lines.append(f"\nÚltimo diagnóstico automático:")
+        lines.append(f"  Severidad: {diagnosis.get('severity', 'N/A')}")
+        lines.append(f"  Problema: {diagnosis.get('summary', 'N/A')}")
+        if diagnosis.get("root_cause"):
+            lines.append(f"  Causa raíz: {diagnosis['root_cause']}")
+        if diagnosis.get("fix_action"):
+            fix_steps = diagnosis.get("fix_steps") or []
+            lines.append(f"  Fix disponible: {diagnosis['fix_action']}")
+            if fix_steps:
+                lines.append(f"  Pasos: {'; '.join(fix_steps[:2])}")
+
+    lines.append("===")
+    return "\n".join(lines)
+
+
+def _fetch_live_context(hosting_data: Dict) -> Tuple[Optional[Dict], Optional[List], Optional[Dict]]:
     """
-    Verifica si una entrada de cache específica de un hosting sigue siendo válida
-    basándose en el estado actual del hosting.
+    Fetch health metrics, active alerts, and last diagnosis for a hosting.
+    Returns (metrics, alerts, diagnosis). All non-critical — failures return None.
     """
-    if not current_hosting or not cache_entry.get("hosting_id"):
-        return True # Si es cache general, es válido
-        
-    # Si el estado del hosting cambió desde que se cacheó, invalidar
-    if cache_entry.get("hosting_status_when_cached") != current_hosting.get("status"):
-        return False
-        
-    return True
+    from app.infra.audit.health_repository import HealthRepository
+    from app.infra.audit.ai_diagnosis_repository import AIDiagnosisRepository
+
+    hosting_id = hosting_data.get("hosting_id")
+    user_id = hosting_data.get("user_id")
+    if not hosting_id:
+        return None, None, None
+
+    health_repo = HealthRepository()
+    diag_repo = AIDiagnosisRepository()
+
+    metrics = None
+    alerts = None
+    diagnosis = None
+
+    try:
+        metrics = health_repo.get_latest_health(hosting_id)
+    except Exception as exc:
+        logger.debug("support_ai: failed to fetch metrics for hosting %s: %s", hosting_id, exc)
+
+    try:
+        if user_id:
+            all_alerts = health_repo.get_user_alerts(user_id, limit=10)
+            alerts = [a for a in all_alerts if a.get("site_id") == hosting_id]
+    except Exception as exc:
+        logger.debug("support_ai: failed to fetch alerts for hosting %s: %s", hosting_id, exc)
+
+    try:
+        diagnoses = diag_repo.get_by_hosting(hosting_id, limit=1)
+        if diagnoses:
+            diagnosis = diagnoses[0]
+    except Exception as exc:
+        logger.debug("support_ai: failed to fetch diagnosis for hosting %s: %s", hosting_id, exc)
+
+    return metrics, alerts, diagnosis
 
 
-
-def _build_support_decision(
-    category: str,
+def _build_messages(
     description: str,
-    ai_prompt_hint: str,
-    hosting_data: Optional[Dict],
     message_history: List[Dict],
-) -> Dict:
+    context_block: str,
+) -> List[Dict]:
     """
-    Construye un dict compatible con generate_advisory() y llm.generate().
-
-    overall_status = 'requires_human' hace que generate_advisory() devuelva
-    requires_human_attention=True, lo cual es correcto para soporte:
-    siempre hay un humano disponible como escalación.
+    Build Anthropic messages array from ticket history.
+    Merges consecutive same-role messages to satisfy the alternating requirement.
     """
-    history_text = ""
-    if message_history:
-        lines = []
-        for msg in message_history[-6:]:  # últimos 6 mensajes para contexto
-            role = {"user": "Cliente", "ai": "IA", "staff": "Colaborador"}.get(
-                msg.get("sender_type", ""), "Sistema"
-            )
-            lines.append(f"{role}: {msg.get('content', '')}")
-        history_text = "\n".join(lines)
+    # Filter out system messages — they're not part of the conversation
+    relevant = [
+        m for m in message_history
+        if m.get("sender_type") in ("user", "ai", "staff")
+        and m.get("content", "").strip()
+    ]
 
-    hosting_text = ""
-    if hosting_data:
-        hosting_text = (
-            f"Hosting: {hosting_data.get('name', 'N/A')} | "
-            f"Plan: {hosting_data.get('plan', 'N/A')} | "
-            f"Status: {hosting_data.get('status', 'N/A')} | "
-            f"Subdominio: {hosting_data.get('subdomain', 'N/A')}"
+    if not relevant:
+        user_content = f"{context_block}\n\n{description}" if context_block else description
+        return [{"role": "user", "content": user_content}]
+
+    messages: List[Dict] = []
+    for i, msg in enumerate(relevant):
+        sender = msg.get("sender_type")
+        content = msg.get("content", "").strip()
+        role = "user" if sender == "user" else "assistant"
+
+        # Prepend context block to the very first user message
+        if i == 0 and role == "user" and context_block:
+            content = f"{context_block}\n\n{content}"
+
+        # Merge consecutive same-role messages instead of duplicating
+        if messages and messages[-1]["role"] == role:
+            messages[-1]["content"] += f"\n\n{content}"
+        else:
+            messages.append({"role": role, "content": content})
+
+    # Ensure the conversation ends with the latest user message (the new one being answered)
+    # If the last message is already from the user, we're good.
+    # If not, append the description as a user follow-up.
+    if not messages or messages[-1]["role"] != "user":
+        messages.append({"role": "user", "content": description})
+
+    return messages
+
+
+async def _call_claude(system: str, messages: List[Dict], max_tokens: int = 700) -> str:
+    api_key = os.getenv("CLAUDE_API_KEY")
+    if not api_key:
+        raise RuntimeError("CLAUDE_API_KEY not set")
+
+    try:
+        from anthropic import Anthropic
+    except ImportError:
+        raise RuntimeError("anthropic SDK not installed")
+
+    client = Anthropic(api_key=api_key)
+    model = os.getenv("LLM_MODEL", "claude-3-5-sonnet-20241022")
+    timeout = int(os.getenv("LLM_TIMEOUT_SECONDS", "15"))
+
+    def _sync():
+        return client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+            timeout=timeout,
         )
 
-    # El campo 'symptoms' es lo que llm.generate() usa como contexto principal
-    symptoms = (
-        f"[SOPORTE AL CLIENTE]\n"
-        f"Categoría: {category}\n"
-        f"Tipo de problema: {ai_prompt_hint}\n"
-        f"Descripción del cliente: {description}\n"
-        f"{f'Datos del hosting: {hosting_text}' if hosting_text else ''}\n"
-        f"{f'Historial previo:{chr(10)}{history_text}' if history_text else ''}\n\n"
-        f"INSTRUCCIONES PARA LA RESPUESTA:\n"
-        f"- Responde en español, de forma clara y simple\n"
-        f"- Usa pasos numerados si corresponde\n"
-        f"- NO ejecutes acciones, solo sugiere pasos\n"
-        f"- Al final pregunta: '¿Esto resolvió tu problema?'\n"
-        f"- Si el problema requiere acceso al servidor, indícalo claramente\n"
-        f"- Sé empático y profesional"
-    )
+    loop = asyncio.get_running_loop()
+    response = await loop.run_in_executor(None, _sync)
 
-    return {
-        "overall_status": "requires_human",
-        "decision_id": f"support_{category}",
-        "symptoms": symptoms,
-        "diagnosis": f"Ticket de soporte: {category}",
-        "recommended_actions": [],
-        "confidence_level": "medium",
-    }
+    if not response.content:
+        raise RuntimeError("Empty Claude response")
+    text = response.content[0].text.strip()
+    if not text:
+        raise RuntimeError("Empty Claude response text")
+    return text
 
 
 async def generate_support_response(
@@ -144,104 +254,112 @@ async def generate_support_response(
     ai_prompt_hint: str = "",
     hosting_data: Optional[Dict] = None,
     message_history: Optional[List[Dict]] = None,
-) -> tuple[str, Optional[int]]:
+) -> Tuple[str, Optional[int]]:
     """
-    Genera la respuesta de la IA para un ticket de soporte.
-    Retorna (mensaje, cache_id).
+    Generate AI response for a support ticket.
+    Returns (message, cache_id).
     """
-    # 1. Detectar intención y buscar en cache inteligente
-    sub_intent = _get_sub_intent(description)
-    hosting_id = hosting_data.get("hosting_id") if hosting_data else None
-    
-    cached = _support_cache_repo.get_best_match(category, sub_intent, hosting_id)
-    if cached and _is_cache_valid_for_hosting(cached, hosting_data):
-        logger.info("Smart Cache HIT for category=%s, intent=%s (score=%s)", 
-                    category, sub_intent, cached.get("score"))
-        _support_cache_repo.increment_use(cached["cache_id"])
-        return cached["ai_response"], cached["cache_id"]
+    history = message_history or []
+    is_followup = bool(history)
 
-    # 2. Si no hay cache, construir decisión y llamar a IA
-    decision = _build_support_decision(
-        category=category,
-        description=description,
-        ai_prompt_hint=ai_prompt_hint,
-        hosting_data=hosting_data,
-        message_history=message_history or [],
-    )
-
+    # ── 1. Cache check (first messages only, not follow-ups) ──────────────────
     cache_id = None
+    if not is_followup:
+        sub_intent = _get_sub_intent(description)
+        hosting_id = hosting_data.get("hosting_id") if hosting_data else None
+        cached = _support_cache_repo.get_best_match(category, sub_intent, hosting_id)
+        if cached:
+            if not hosting_data or cached.get("hosting_status_when_cached") == hosting_data.get("status"):
+                logger.info("support_ai: cache HIT category=%s intent=%s", category, sub_intent)
+                _support_cache_repo.increment_use(cached["cache_id"])
+                return cached["ai_response"], cached["cache_id"]
+
+    # ── 2. Fetch live hosting context ─────────────────────────────────────────
+    context_block = ""
+    if hosting_data:
+        metrics, alerts, diagnosis = _fetch_live_context(hosting_data)
+        context_block = _build_hosting_context(hosting_data, metrics, alerts, diagnosis)
+
+    # ── 3. Build messages ─────────────────────────────────────────────────────
+    system = _SYSTEM_PROMPT
+    if ai_prompt_hint:
+        system += f"\n\nCATEGORÍA ACTUAL: {category} — {ai_prompt_hint}"
+
+    messages = _build_messages(description, history, context_block)
+
+    # ── 4. Call Claude ────────────────────────────────────────────────────────
     try:
-        result = await _support_orchestrator.enrich(decision=decision, tenant=None)
-        ai_final_msg = ""
+        response = await _call_claude(system, messages)
+    except Exception as exc:
+        logger.error("support_ai: Claude call failed: %s", exc, exc_info=True)
+        response = _fallback_response(category, hosting_data)
 
-        # Preferir la respuesta real del LLM
-        if result.get("llm_explanation"):
-            ai_final_msg = result["llm_explanation"]
-        else:
-            # Fallback: usar el summary del advisory
-            summary = result.get("summary", "")
-            if summary and summary != "No disponible":
-                ai_final_msg = summary
-            else:
-                ai_final_msg = _fallback_response(category)
-
-        # 3. Guardar en cache inteligente si la respuesta es válida
-        if ai_final_msg and ai_final_msg != _fallback_response(category):
+    # ── 5. Cache first responses ──────────────────────────────────────────────
+    if not is_followup and response != _fallback_response(category, hosting_data):
+        try:
+            sub_intent = _get_sub_intent(description)
+            hosting_id = hosting_data.get("hosting_id") if hosting_data else None
             ttl = _TTL_CONFIG.get(category, 60)
             cache_id = _support_cache_repo.save_cache(
                 category=category,
                 sub_intent=sub_intent,
                 problem_summary=description[:200],
-                ai_response=ai_final_msg,
+                ai_response=response,
                 ttl_minutes=ttl,
                 hosting_id=hosting_id,
                 hosting_status=hosting_data.get("status") if hosting_data else None,
-                hosting_updated_at=hosting_data.get("updated_at") if hosting_data else None
+                hosting_updated_at=hosting_data.get("updated_at") if hosting_data else None,
             )
+        except Exception as exc:
+            logger.debug("support_ai: cache save failed (non-critical): %s", exc)
 
-        return ai_final_msg, cache_id
-
-    except Exception as exc:
-        logger.error("Error en generate_support_response: %s", exc, exc_info=True)
-        return _fallback_response(category), None
+    return response, cache_id
 
 
-def _fallback_response(category: str) -> str:
-    """Respuesta genérica cuando el LLM no está disponible."""
+def _fallback_response(category: str, hosting_data: Optional[Dict] = None) -> str:
+    """Fallback when Claude is unavailable."""
+    status = (hosting_data or {}).get("status", "")
+    if status in ("stopped", "exited", "error") and category == "Sitio caído":
+        return (
+            "El contenedor de tu hosting aparece como detenido.\n\n"
+            "1. En el dashboard, buscá tu hosting y hacé clic en el botón **Iniciar** (triángulo verde)\n"
+            "2. Esperá 30-60 segundos y recargá tu sitio\n"
+            "3. Si no inicia, usá el botón **Diagnosticar** para obtener más información\n\n"
+            "¿Esto resolvió tu problema?"
+        )
+
     responses = {
         "Sitio caído": (
-            "Entiendo que tu sitio no está respondiendo. Aquí algunos pasos iniciales:\n\n"
-            "1. Verificá el panel de control — si aparece como 'stopped', intentá reiniciarlo\n"
-            "2. Revisá los logs del contenedor buscando errores recientes\n"
-            "3. Verificá que el dominio/subdominio apunte correctamente\n\n"
-            "Si el sitio sigue caído después de estos pasos, un colaborador lo revisará directamente.\n\n"
+            "Vamos a diagnosticar esto:\n\n"
+            "1. En el dashboard, revisá el estado de tu hosting (debe mostrar ● active en verde)\n"
+            "2. Si está detenido, hacé clic en **Iniciar**\n"
+            "3. Si está activo pero el sitio no carga, usá el botón **Diagnosticar**\n"
+            "4. Revisá los logs (ícono de archivo) buscando errores recientes\n\n"
             "¿Esto resolvió tu problema?"
         ),
         "Sitio lento": (
-            "Para sitios con lentitud, los pasos más comunes son:\n\n"
-            "1. Revisá el uso de CPU y memoria en tu dashboard\n"
-            "2. Si usás WordPress, deshabilitá plugins uno a uno para identificar el culpable\n"
-            "3. Verificá si tenés muchas peticiones simultáneas (pico de tráfico)\n\n"
+            "Para diagnosticar lentitud:\n\n"
+            "1. Revisá las métricas de CPU y RAM en tu dashboard\n"
+            "2. Si CPU o RAM superan el 80%, usá **Reiniciar** para liberar recursos\n"
+            "3. En wp-admin → Plugins, desactivá plugins recientes uno a uno\n"
+            "4. Usá el botón **Diagnosticar** para análisis automático\n\n"
             "¿Esto resolvió tu problema?"
         ),
         "Error en WordPress": (
             "Para errores en WordPress:\n\n"
-            "1. Accedé al Gestor de Archivos y revisá los logs de PHP/Apache\n"
-            "2. Intentá desactivar el último plugin instalado\n"
-            "3. Si ves pantalla blanca, habilitá el modo debug en wp-config.php\n\n"
+            "1. Intentá acceder a wp-admin (credenciales visibles en tu panel)\n"
+            "2. Usá **Diagnosticar** para que el sistema identifique la causa\n"
+            "3. Si el diagnóstico propone un fix automático, aplicalo desde el panel\n"
+            "4. Si ves pantalla blanca, en wp-admin → Plugins → desactivá el último instalado\n\n"
             "¿Esto resolvió tu problema?"
         ),
     }
     return responses.get(
         category,
-        (
-            "Recibí tu consulta y estoy analizando el problema.\n\n"
-            "Si necesitás asistencia inmediata, podés solicitar hablar con un colaborador.\n\n"
-            "¿Hay algo más que puedas contarme sobre el problema?"
-        ),
+        "Recibí tu consulta. Podés usar el botón **Diagnosticar** en tu panel para un análisis automático. "
+        "Si el problema persiste, puedo conectarte con un colaborador.\n\n¿Hay algo más que puedas contarme?",
     )
 
 
 def get_ticket_priority(category: str) -> str:
-    """Retorna la prioridad por defecto para una categoría."""
     return _PRIORITY_MAP.get(category, "medium")

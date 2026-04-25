@@ -29,6 +29,21 @@ _RISK_TABLE: dict[str, dict] = {
         "estimated_downtime": "5–10s",
         "description":        "Reinicia el contenedor — limpia estado en memoria y procesos colgados.",
     },
+    "wp_cache_flush": {
+        "risk_level":         "low",
+        "estimated_downtime": "0s",
+        "description":        "Limpia el object cache de WordPress (wp cache flush). Sin downtime.",
+    },
+    "wp_rewrite_flush": {
+        "risk_level":         "low",
+        "estimated_downtime": "0s",
+        "description":        "Regenera las reglas de rewrite de WordPress. Resuelve errores 404 en permalinks.",
+    },
+    "wp_transient_flush": {
+        "risk_level":         "low",
+        "estimated_downtime": "0s",
+        "description":        "Elimina todos los transients expirados de la base de datos de WordPress.",
+    },
     "manual": {
         "risk_level":         "none",
         "estimated_downtime": "n/a",
