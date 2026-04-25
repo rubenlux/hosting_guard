@@ -146,7 +146,14 @@ def optimize_wordpress(container: str, log: Optional[Callable[[str], None]] = No
                      "plugin", "install", "wp-super-cache", "--activate", timeout=120)
     if r.returncode == 0:
         _docker_exec(container, "wp", "--allow-root", "super-cache", "enable", timeout=30)
-        _log("  ✓ WP Super Cache activado")
+        # PHP simple mode (no mod_rewrite needed), gzip on, 1h cache expiry
+        for opt, val in (
+            ("wp_cache_mod_rewrite", "0"),
+            ("wp_cache_compression", "1"),
+            ("cache_max_time",       "3600"),
+        ):
+            _docker_exec(container, "wp", "--allow-root", "option", "update", opt, val, timeout=10)
+        _log("  ✓ WP Super Cache activado y configurado")
         result["supercache_ok"] = True
     else:
         err = r.stderr.strip()[:80]
@@ -167,6 +174,14 @@ def optimize_wordpress(container: str, log: Optional[Callable[[str], None]] = No
     # ── 7. Fix ownership ──────────────────────────────────────────────────────
     _docker_exec(container, "chown", "-R", "www-data:www-data", "/var/www/html", timeout=30)
     _log("  ✓ Permisos ok")
+
+    # ── 8. DB optimize ────────────────────────────────────────────────────────
+    _log("Optimizando base de datos...")
+    r = _docker_exec(container, "wp", "--allow-root", "db", "optimize", timeout=120)
+    if r.returncode == 0:
+        _log("  ✓ DB optimizada")
+    else:
+        _log(f"  WARN db optimize: {r.stderr.strip()[:80]}")
 
     _log("Optimización completada")
     return result

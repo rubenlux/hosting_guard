@@ -26,6 +26,27 @@ setup_logging()
 logger = logging.getLogger("scheduler_runner")
 
 
+def _cleanup_old_events() -> None:
+    """Delete orchestrator_events older than 30 days."""
+    from app.infra.db import get_connection, release_connection
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM orchestrator_events WHERE created_at < NOW() - INTERVAL '30 days'"
+        )
+        deleted = cur.rowcount
+        conn.commit()
+        if deleted:
+            logger.info("cleanup_old_events: deleted %d rows", deleted)
+    except Exception as exc:
+        logger.warning("cleanup_old_events failed: %s", exc)
+    finally:
+        if conn:
+            release_connection(conn)
+
+
 async def _main() -> None:
     # ── DB pool (small — schedulers don't need many connections) ──────────────
     from app.infra.db import init_db_pool
@@ -51,6 +72,7 @@ async def _main() -> None:
     schedule_job(check_all_hostings,             interval=300)     # 5 min
     schedule_job(reconcile_containers,           interval=300)     # 5 min
     schedule_job(poll_prometheus_alerts,         interval=60)      # 1 min
+    schedule_job(_cleanup_old_events,            interval=86400)   # 24 h
 
     if ENABLE_CAPACITY_FORECAST:
         def _run_capacity_forecast():
