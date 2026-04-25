@@ -210,9 +210,14 @@ def optimize_wordpress(
     _docker_exec(container, "chown", "-R", "www-data:www-data", "/var/www/html", timeout=30)
     _log("  ✓ Permisos ok")
 
-    # ── 8. DB optimize ────────────────────────────────────────────────────────
+    # ── 8. DB optimize — skip-ssl because MariaDB containers run without SSL ─
     _log("Optimizando base de datos...")
-    r = _docker_exec(container, "wp", "--allow-root", "db", "optimize", timeout=120)
+    r = _docker_exec(
+        container,
+        "wp", "--allow-root", "db", "query",
+        "OPTIMIZE TABLE wp_options, wp_posts, wp_postmeta, wp_comments, wp_commentmeta, wp_terms, wp_termmeta, wp_term_relationships, wp_term_taxonomy, wp_usermeta, wp_users;",
+        timeout=120,
+    )
     if r.returncode == 0:
         _log("  ✓ DB optimizada")
     else:
