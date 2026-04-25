@@ -21,9 +21,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
+from app.api.rate_limit import limiter
 from app.api.security import verify_token
 from app.api.wp_optimize import optimize_wordpress
 from app.infra.audit.hosting_repository import HostingRepository
@@ -552,13 +553,21 @@ async def _save_upload(upload: UploadFile, dest: Path, job_id: int) -> int:
 
 
 @router.post("/import")
+@limiter.limit("3/hour")
 async def import_site(
+    request: Request,
     hosting_id: int = Form(...),
     file: UploadFile = File(...),
     sql_file: Optional[UploadFile] = File(None),
     user: dict = Depends(verify_token),
 ):
     user_id = user["user_id"]
+
+    if _import_repo.has_active_job(user_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Ya tenés un import en progreso. Esperá a que termine antes de iniciar otro.",
+        )
 
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:

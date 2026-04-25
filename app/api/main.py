@@ -531,9 +531,30 @@ def get_advisory_mock(user=Depends(verify_token)):
     ]
 
 # ---------------------------------------------------------------------------
-# HTTP metrics middleware — records latency + status for every request
+# Body size guard — rejects oversized JSON bodies before they reach handlers.
+# Multipart uploads (file imports) are exempt; they enforce their own limits.
 # ---------------------------------------------------------------------------
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
+from fastapi.responses import JSONResponse as _JSONResponse
+
+_MAX_JSON_BODY = 1 * 1024 * 1024  # 1 MB for JSON endpoints
+
+class _BodySizeMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        ct = request.headers.get("content-type", "")
+        # skip multipart (file uploads enforce their own MAX_UPLOAD_BYTES limit)
+        if "multipart/form-data" not in ct:
+            cl = request.headers.get("content-length")
+            if cl and int(cl) > _MAX_JSON_BODY:
+                return _JSONResponse(
+                    status_code=413,
+                    content={"detail": f"Request body exceeds limit ({_MAX_JSON_BODY // 1024} KB)"},
+                )
+        return await call_next(request)
+
+# ---------------------------------------------------------------------------
+# HTTP metrics middleware — records latency + status for every request
+# ---------------------------------------------------------------------------
 from app.observability.metrics import HTTP_REQUEST_LATENCY, HTTP_REQUESTS_TOTAL, HTTP_REQUESTS_IN_FLIGHT
 
 class _MetricsMiddleware(_BaseHTTPMiddleware):
@@ -561,6 +582,7 @@ class _MetricsMiddleware(_BaseHTTPMiddleware):
 
 # Middleware de seguridad y trazabilidad
 app.add_middleware(_MetricsMiddleware)
+app.add_middleware(_BodySizeMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CorrelationMiddleware)
 

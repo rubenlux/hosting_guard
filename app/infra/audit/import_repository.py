@@ -88,6 +88,19 @@ class ImportRepository:
         finally:
             release_connection(conn)
 
+    def has_active_job(self, user_id: int) -> bool:
+        """True if user has any import job currently in a non-terminal state."""
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM import_jobs WHERE user_id = %s AND status NOT IN ('completed', 'failed') LIMIT 1",
+                (user_id,),
+            )
+            return cursor.fetchone() is not None
+        finally:
+            release_connection(conn)
+
     def list_jobs(self, user_id: int, hosting_id: Optional[int] = None) -> List[Dict]:
         conn = get_connection()
         try:

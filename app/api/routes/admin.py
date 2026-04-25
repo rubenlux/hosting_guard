@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 import os
+from app.api.rate_limit import limiter
 from app.api.security import require_role
 from app.infra.audit.user_repository import UserRepository
 from app.infra.audit.hosting_repository import HostingRepository
@@ -48,7 +49,8 @@ def list_all_hostings(user: dict = Depends(require_role("admin"))):
 
 
 @router.get("/hostings/metrics")
-async def get_all_hostings_metrics(_: dict = Depends(require_role("admin"))):
+@limiter.limit("5/minute")
+async def get_all_hostings_metrics(request: Request, _: dict = Depends(require_role("admin"))):
     """
     Returns live CPU/RAM from docker stats for every active user container,
     joined with DB hosting info + stored traffic and uptime data.
@@ -180,6 +182,7 @@ def _get_ip(request: Request) -> str:
 
 
 @router.post("/hostings/{hosting_id}/restart")
+@limiter.limit("30/minute")
 async def admin_restart_hosting(
     hosting_id: int,
     request: Request,
@@ -199,6 +202,7 @@ async def admin_restart_hosting(
 
 
 @router.post("/hostings/{hosting_id}/stop")
+@limiter.limit("30/minute")
 async def admin_stop_hosting(
     hosting_id: int,
     request: Request,
@@ -219,6 +223,7 @@ async def admin_stop_hosting(
 
 
 @router.post("/hostings/{hosting_id}/start")
+@limiter.limit("30/minute")
 async def admin_start_hosting(
     hosting_id: int,
     request: Request,
@@ -266,6 +271,7 @@ async def admin_get_logs(
 
 
 @router.delete("/hostings/{hosting_id}/terminate")
+@limiter.limit("10/minute")
 async def admin_terminate_hosting(
     hosting_id: int,
     body: TerminateRequest,

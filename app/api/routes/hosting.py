@@ -349,7 +349,7 @@ async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
         raise HTTPException(status_code=500, detail=detail)
 
     # ── 3. Clean metrics + soft-delete DB record ─────────────────────────────
-    hosting_repo.soft_delete_hosting(hosting_id, db_container=db_container)
+    hosting_repo.soft_delete_hosting(hosting_id, db_container=db_container, user_id=user_id)
     logger.info(
         "hosting_deleted hosting_id=%s container=%s db_container=%s",
         hosting_id, container_name, db_container,

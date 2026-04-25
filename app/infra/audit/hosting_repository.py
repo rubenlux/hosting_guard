@@ -145,20 +145,33 @@ class HostingRepository:
         finally:
             release_connection(conn)
 
-    def soft_delete_hosting(self, hosting_id: int, db_container: Optional[str] = None) -> bool:
+    def soft_delete_hosting(
+        self,
+        hosting_id: int,
+        db_container: Optional[str] = None,
+        user_id: Optional[int] = None,
+    ) -> bool:
         """Cascade-clean child records + metrics, then soft-delete the hosting row.
 
         Preserves the audit trail (row stays in DB with status='deleted').
-        Pass db_container to also purge orchestrator_events for the MariaDB container.
+        Pass user_id to add AND user_id = ? to the WHERE — DB-level ownership
+        enforcement so the delete is a no-op if ownership check was bypassed upstream.
         """
         conn = get_connection()
         try:
             cursor = conn.cursor()
             self._cascade_delete(cursor, hosting_id, db_container=db_container)
-            cursor.execute(
-                "UPDATE hostings SET status = 'deleted', deleted_at = %s WHERE hosting_id = %s",
-                (datetime.now(timezone.utc).isoformat(), hosting_id),
-            )
+            if user_id is not None:
+                cursor.execute(
+                    "UPDATE hostings SET status = 'deleted', deleted_at = %s "
+                    "WHERE hosting_id = %s AND user_id = %s",
+                    (datetime.now(timezone.utc).isoformat(), hosting_id, user_id),
+                )
+            else:
+                cursor.execute(
+                    "UPDATE hostings SET status = 'deleted', deleted_at = %s WHERE hosting_id = %s",
+                    (datetime.now(timezone.utc).isoformat(), hosting_id),
+                )
             conn.commit()
             return cursor.rowcount > 0
         finally:
