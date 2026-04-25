@@ -197,22 +197,24 @@ class HostingRepository:
         finally:
             release_connection(conn)
 
-    def delete_hosting(self, hosting_id: int, user_id: int) -> bool:
+    def delete_hosting(self, hosting_id: int, user_id: int, db_container: Optional[str] = None) -> bool:
+        """Hard-delete a hosting and all its child records (user-owned)."""
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            self._cascade_delete(cursor, hosting_id)
+            self._cascade_delete(cursor, hosting_id, db_container=db_container)
             cursor.execute("DELETE FROM hostings WHERE hosting_id = %s AND user_id = %s", (hosting_id, user_id))
             conn.commit()
             return cursor.rowcount > 0
         finally:
             release_connection(conn)
 
-    def admin_delete_hosting(self, hosting_id: int) -> bool:
+    def admin_delete_hosting(self, hosting_id: int, db_container: Optional[str] = None) -> bool:
+        """Hard-delete any hosting and all its child records (admin, no ownership check)."""
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            self._cascade_delete(cursor, hosting_id)
+            self._cascade_delete(cursor, hosting_id, db_container=db_container)
             cursor.execute("DELETE FROM hostings WHERE hosting_id = %s", (hosting_id,))
             conn.commit()
             return cursor.rowcount > 0
@@ -221,23 +223,24 @@ class HostingRepository:
 
     @staticmethod
     def _cascade_delete(cursor, hosting_id: int, db_container: Optional[str] = None) -> None:
-        """Delete all child records that reference this hosting before deleting the parent.
+        """Hard-delete all child records for this hosting, then the hosting row itself.
 
-        Pass db_container to also purge orchestrator_events for the associated MariaDB
-        container (not stored in the hostings table, derived from the WP container name).
+        Cleans every table that references hosting_id / site_id / container_name
+        so no orphan rows remain after a hosting is removed.
         """
         cursor.execute("DELETE FROM site_health_history WHERE site_id = %s", (hosting_id,))
         cursor.execute("DELETE FROM site_alerts WHERE site_id = %s", (hosting_id,))
         cursor.execute("DELETE FROM ai_diagnosis WHERE hosting_id = %s", (hosting_id,))
         cursor.execute("DELETE FROM import_jobs WHERE hosting_id = %s", (hosting_id,))
-        # Remove orchestrator_events for the WP container
+        cursor.execute("DELETE FROM pixel_events WHERE site_id = %s", (hosting_id,))
+        # orchestrator_events for the WP container
         cursor.execute(
             "DELETE FROM orchestrator_events WHERE container_name = ("
             "  SELECT container_name FROM hostings WHERE hosting_id = %s"
             ")",
             (hosting_id,),
         )
-        # Remove orchestrator_events for the DB container (WordPress sites only)
+        # orchestrator_events for the DB container (WordPress sites only)
         if db_container:
             cursor.execute(
                 "DELETE FROM orchestrator_events WHERE container_name = %s",

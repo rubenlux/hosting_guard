@@ -308,7 +308,7 @@ async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
       1. docker rm -f WP container + DB container (idempotent: 'No such container' = ok)
       2. Verify with docker inspect that both containers are actually gone
       3. If any container survives → raise 500, do NOT touch the DB
-      4. soft_delete_hosting: cascade-clean metrics + mark status='deleted'
+      4. delete_hosting: hard-delete all child records + remove hosting row
     """
     hosting = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
@@ -349,8 +349,8 @@ async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
             detail += f" Docker errors: {'; '.join(docker_errors)}"
         raise HTTPException(status_code=500, detail=detail)
 
-    # ── 3. Clean metrics + soft-delete DB record ─────────────────────────────
-    hosting_repo.soft_delete_hosting(hosting_id, db_container=db_container, user_id=user_id)
+    # ── 3. Hard-delete: cascade-clean all child records + remove hosting row ────
+    hosting_repo.delete_hosting(hosting_id, user_id, db_container=db_container)
     logger.info(
         "hosting_deleted hosting_id=%s container=%s db_container=%s",
         hosting_id, container_name, db_container,

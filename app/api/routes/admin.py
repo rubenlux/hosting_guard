@@ -282,6 +282,49 @@ async def admin_get_logs(
     return {"logs": logs, "container": hosting["container_name"]}
 
 
+@router.post("/hostings/purge-deleted")
+@limiter.limit("5/minute")
+async def admin_purge_deleted_hostings(
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """
+    Hard-delete all hostings with status 'deleted' or 'zombie' that were soft-deleted
+    previously. Purges all their child records and removes the hosting row completely.
+    Safe to run multiple times (idempotent).
+    """
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT hosting_id, container_name FROM hostings WHERE status IN ('deleted', 'zombie')"
+        )
+        rows = cursor.fetchall()
+    finally:
+        release_connection(conn)
+
+    purged = []
+    errors = []
+    for row in rows:
+        hosting_id     = row["hosting_id"]
+        container_name = row["container_name"]
+        db_container   = container_name.replace("_wp_", "_db_", 1) if "_wp_" in container_name else None
+        try:
+            _hosting_repo.admin_delete_hosting(hosting_id, db_container=db_container)
+            purged.append({"hosting_id": hosting_id, "container": container_name})
+        except Exception as exc:
+            errors.append({"hosting_id": hosting_id, "error": str(exc)})
+
+    _hosting_repo.log_orchestrator_event(
+        container_name="—",
+        user_id=admin["user_id"],
+        event_type="admin_purge_deleted",
+        message=f"Admin {admin['email']} purgó {len(purged)} hosting(s) soft-deleted. Errors: {len(errors)}",
+    )
+    return {"ok": True, "purged": len(purged), "errors": errors, "detail": purged}
+
+
 @router.delete("/hostings/{hosting_id}/terminate")
 @limiter.limit("10/minute")
 async def admin_terminate_hosting(
@@ -322,8 +365,8 @@ async def admin_terminate_hosting(
         + (f" | docker_errors: {docker_errors}" if docker_errors else ""),
     )
 
-    # 3. Soft-delete (preserves audit trail, cleans metrics)
-    _hosting_repo.soft_delete_hosting(hosting_id, db_container=db_container)
+    # 3. Hard-delete: removes all child records + hosting row completely
+    _hosting_repo.admin_delete_hosting(hosting_id, db_container=db_container)
 
     return {
         "ok": True,
@@ -1270,8 +1313,8 @@ async def admin_force_cleanup(
         else:
             errors.append(f"{cname}: {err[:120]}")
 
-    # Always clean DB — force cleanup overrides the normal safety gate
-    _hosting_repo.soft_delete_hosting(hosting_id, db_container=db_container)
+    # Always hard-delete — force cleanup overrides the normal safety gate
+    _hosting_repo.admin_delete_hosting(hosting_id, db_container=db_container)
 
     _hosting_repo.log_orchestrator_event(
         container, hosting["user_id"],
