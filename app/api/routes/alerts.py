@@ -169,7 +169,11 @@ async def get_dashboard_summary(user: dict = Depends(verify_token)):
         }
         for a in alerts_raw
     ]
-    events = sorted(normalized_orch + normalized_health, key=lambda x: x["created_at"], reverse=True)[:20]
+    events = sorted(
+        normalized_orch + normalized_health,
+        key=lambda x: x["created_at"].isoformat() if hasattr(x["created_at"], "isoformat") else x["created_at"],
+        reverse=True,
+    )[:20]
 
     return {
         "hostings": hostings,
