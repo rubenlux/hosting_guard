@@ -45,7 +45,7 @@ _SCHEMA_PG = """
         user_id INTEGER NOT NULL,
         event_type TEXT NOT NULL,
         message TEXT NOT NULL,
-        created_at TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
         cpu_pct REAL,
         mem_pct REAL,
         risk_level TEXT,
@@ -238,6 +238,22 @@ _MIGRATIONS_PG = [
         created_at   TEXT NOT NULL,
         FOREIGN KEY (hosting_id) REFERENCES hostings (hosting_id)
     )""",
+    # Convert orchestrator_events.created_at TEXT → TIMESTAMPTZ so time-range
+    # queries use native comparison instead of lexicographic string ordering.
+    """
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'orchestrator_events'
+          AND column_name = 'created_at'
+          AND data_type = 'text'
+      ) THEN
+        ALTER TABLE orchestrator_events
+          ALTER COLUMN created_at TYPE TIMESTAMPTZ
+          USING created_at::TIMESTAMPTZ;
+      END IF;
+    END $$
+    """,
 ]
 
 _INDEXES = [

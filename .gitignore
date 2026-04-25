@@ -57,3 +57,10 @@ hosting_guard_complete.pdf
 generate_pdf.py
 frontend/dist/
 .claude/settings.local.json
+
+# Internal AI/dev docs — not for version control
+CLAUDE.md
+docs/AI_CONTEXT.md
+docs/ARCHITECTURE.md
+docs/CURRENT_TASK.md
+docs/DECISIONS.md

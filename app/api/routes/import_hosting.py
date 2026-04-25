@@ -257,7 +257,7 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
 
         if db_container:
             if old_domain and old_domain != new_domain:
-                _fix_domain(job_id, db_container, old_domain, new_domain)
+                _fix_domain(job_id, db_container, old_domain, new_domain, container=container)
             else:
                 _log(job_id, "Forzando siteurl/home directamente en BD...")
                 for opt in ("siteurl", "home"):
@@ -455,30 +455,54 @@ def _detect_old_domain(db_container: Optional[str]) -> Optional[str]:
     return None
 
 
-def _fix_domain(job_id: int, db_container: str, old_domain: str, new_domain: str):
-    """Replace old domain with new domain in wp DB tables via MySQL."""
+def _fix_domain(job_id: int, db_container: str, old_domain: str, new_domain: str, container: Optional[str] = None):
+    """Replace old domain with new domain using wp search-replace (handles PHP serialized data).
+
+    wp search-replace correctly updates serialized strings by recalculating byte-length
+    metadata — plain MySQL REPLACE() does not, which corrupts PHP serialized values
+    stored in wp_options and wp_postmeta by themes and plugins.
+    """
+    # Reject domains that could escape the SQL string in the fallback path.
+    # old_domain comes from the backup's wp_options — a crafted backup could inject SQL.
+    if not re.fullmatch(r"[a-zA-Z0-9.\-]+(:\d+)?", old_domain):
+        raise RuntimeError(f"Dominio inválido detectado en el backup: {old_domain!r}")
+
     _log(job_id, f"Actualizando dominio en BD: {old_domain} → {new_domain}")
+    new_url = f"https://{new_domain}"
 
-    for old_scheme in (f"https://{old_domain}", f"http://{old_domain}"):
-        new_url = f"https://{new_domain}"
-        for table, col in (
-            ("wp_options",  "option_value"),
-            ("wp_posts",    "post_content"),
-            ("wp_posts",    "guid"),
-            ("wp_postmeta", "meta_value"),
-        ):
-            sql = f"UPDATE {table} SET {col}=REPLACE({col},'{old_scheme}','{new_url}');"
-            r = _mysql_exec(db_container, sql, timeout=60)
+    if container is not None:
+        for old_url in (f"http://{old_domain}", f"https://{old_domain}"):
+            r = _docker_exec(
+                container,
+                "wp", "--allow-root", "search-replace",
+                old_url, new_url,
+                "--all-tables", "--skip-columns=guid",
+                timeout=300,
+            )
             if r.returncode == 0:
-                _log(job_id, f"  ✓ {table}.{col}")
+                _log(job_id, f"  ✓ search-replace {old_url}")
             else:
-                _log(job_id, f"  WARN {table}.{col}: {r.stderr.strip()[:100]}")
+                _log(job_id, f"  WARN search-replace {old_url}: {r.stderr.strip()[:120]}")
+    else:
+        _log(job_id, "  WARN: WP container no disponible — usando MySQL REPLACE (serialización no garantizada)")
+        stmts = [
+            f"UPDATE {table} SET {col}=REPLACE({col},'{old_scheme}','{new_url}');"
+            for old_scheme in (f"http://{old_domain}", f"https://{old_domain}")
+            for table, col in (
+                ("wp_options",  "option_value"),
+                ("wp_posts",    "post_content"),
+                ("wp_postmeta", "meta_value"),
+            )
+        ]
+        r = _mysql_exec(db_container, " ".join(stmts), timeout=60)
+        if r.returncode != 0:
+            _log(job_id, f"  WARN MySQL REPLACE: {r.stderr.strip()[:120]}")
 
-    # Force siteurl / home as safety net
+    # Force siteurl/home directly — safety net regardless of search-replace result
     for opt in ("siteurl", "home"):
         _mysql_exec(
             db_container,
-            f"UPDATE wp_options SET option_value='https://{new_domain}' WHERE option_name='{opt}';",
+            f"UPDATE wp_options SET option_value='{new_url}' WHERE option_name='{opt}';",
             timeout=15,
         )
     _log(job_id, "Dominio actualizado en BD")
