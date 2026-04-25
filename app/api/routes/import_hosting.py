@@ -608,8 +608,18 @@ async def import_site(
             raise HTTPException(status_code=500, detail=f"Error al guardar SQL: {exc}")
 
     _log(job_id, "Iniciando pipeline...")
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _run_pipeline, job_id, hosting_id, user_id, dest, sql_dest)
+
+    from app.infra.arq_pool import get_arq_pool
+    pool = get_arq_pool()
+    if pool is not None:
+        await pool.enqueue_job(
+            "import_site_job",
+            job_id, hosting_id, user_id,
+            str(dest), str(sql_dest) if sql_dest else None,
+        )
+    else:
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, _run_pipeline, job_id, hosting_id, user_id, dest, sql_dest)
 
     return {
         "job_id": job_id,

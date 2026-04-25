@@ -100,6 +100,7 @@ services:
       - ./data:/app/data
       - /usr/bin/docker:/usr/bin/docker:ro   # binario docker del host (solo lectura)
       - /opt/clients:/opt/clients             # sitios desplegados por usuarios (github deploy)
+      - imports:/tmp/hg_imports              # uploads compartidos con el worker
       # sin socket directo — DOCKER_HOST apunta al proxy
 
     networks:
@@ -257,6 +258,36 @@ services:
       - hosting_network
 
   # ---------------------------------------------------------------------------
+  # worker — Arq background job worker (import pipeline)
+  #
+  # Runs import jobs outside the HTTP process so:
+  #   - Jobs survive app restarts (queue lives in Redis)
+  #   - Import I/O doesn't compete with HTTP threads
+  #   - Orphaned jobs are auto-recovered on worker startup
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      context: /opt/hosting_guard
+    container_name: hg_worker
+    restart: always
+    env_file: .env.production
+    depends_on:
+      - docker-socket-proxy
+      - redis
+    command: arq app.worker.WorkerSettings
+    environment:
+      DOCKER_HOST: "tcp://docker-socket-proxy:2375"
+      RUN_ORCHESTRATOR: "false"   # no background schedulers in the worker
+    volumes:
+      - /usr/bin/docker:/usr/bin/docker:ro
+      - /opt/clients:/opt/clients
+      - ./data:/app/data
+      - imports:/tmp/hg_imports
+    networks:
+      - hosting_network
+      - socket_proxy_network
+
+  # ---------------------------------------------------------------------------
   # orchestrator — Monitoreo y auto-scaling inteligente (Safe Mode: DRY_RUN)
   # ---------------------------------------------------------------------------
   orchestrator:
@@ -288,3 +319,4 @@ networks:
 volumes:
   pgdata:
   redisdata:
+  imports:   # shared upload dir between app and worker

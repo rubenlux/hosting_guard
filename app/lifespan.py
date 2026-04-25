@@ -15,6 +15,7 @@ from app.services.reconciler import reconcile_containers
 from app.services.scheduler import schedule_job
 from app.services.prometheus_alert_poller import poll_prometheus_alerts
 from app.api.config import ENABLE_CAPACITY_FORECAST
+from app.infra.arq_pool import init_arq_pool, close_arq_pool
 
 logger = logging.getLogger("hosting_guard_audit")
 
@@ -28,6 +29,8 @@ async def lifespan(app):
     # Initialize database schema (idempotent)
     from app.infra.migrations import init_db
     init_db()
+
+    await init_arq_pool()
 
     if _RUN_ORCHESTRATOR:
         schedule_job(check_and_expire_free_hostings, interval=43200)  # 12 hours
@@ -52,4 +55,6 @@ async def lifespan(app):
         logger.info("lifespan: RUN_ORCHESTRATOR=false — background tasks disabled (orchestrator container active)")
 
     yield
+
+    await close_arq_pool()
     # Shutdown: asyncio cancels running tasks automatically on event loop close.
