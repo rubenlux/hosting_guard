@@ -29,16 +29,19 @@ def schedule_job(fn: Callable, interval: int) -> None:
     - sync functions are dispatched to a thread executor
     """
     async def _loop():
-        logger.info("schedule_job: starting '%s' (interval=%ds)", fn.__name__, interval)
+        logger.info("job %s started (interval=%ds)", fn.__name__, interval)
         while True:
+            t0 = asyncio.get_event_loop().time()
             try:
                 if asyncio.iscoroutinefunction(fn):
                     await fn()
                 else:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(None, fn)
+                elapsed = asyncio.get_event_loop().time() - t0
+                logger.info("job %s completed in %.2fs", fn.__name__, elapsed)
             except Exception as e:
-                logger.error("schedule_job '%s' error: %s", fn.__name__, e, exc_info=True)
+                logger.error("job %s failed: %s", fn.__name__, e, exc_info=True)
             await asyncio.sleep(interval)
 
     task = asyncio.create_task(_loop())

@@ -48,7 +48,9 @@ logger = logging.getLogger("hosting_guard_audit")
 
 
 from app.infra.db import init_db_pool
-init_db_pool(minconn=2, maxconn=60)
+# maxconn=20 per worker: 2 Uvicorn workers × 20 = 40 app conns + 10 scheduler = 50 total.
+# PostgreSQL default max_connections=100 — stay well under it.
+init_db_pool(minconn=2, maxconn=20)
 
 app = FastAPI(
     title="Hosting Guard API",

@@ -72,7 +72,7 @@ services:
       - socket_proxy_network
 
   # ---------------------------------------------------------------------------
-  # app — backend FastAPI
+  # app — backend FastAPI (stateless, 2 workers, no schedulers)
   # ---------------------------------------------------------------------------
   app:
     build:
@@ -83,10 +83,13 @@ services:
     depends_on:
       - docker-socket-proxy
       - redis
+    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --workers 2
 
     environment:
       # La CLI de docker usa el proxy en lugar del socket directo
       DOCKER_HOST: "tcp://docker-socket-proxy:2375"
+      # Schedulers run in the dedicated scheduler container — not here.
+      RUN_ORCHESTRATOR: "false"
 
     labels:
       - "traefik.enable=true"
@@ -283,6 +286,37 @@ services:
       - /opt/clients:/opt/clients
       - ./data:/app/data
       - imports:/tmp/hg_imports
+    networks:
+      - hosting_network
+      - socket_proxy_network
+
+  # ---------------------------------------------------------------------------
+  # scheduler — Standalone periodic job runner (single instance).
+  #
+  # Runs all 5-6 background jobs (health_checker, traffic_collector,
+  # expiration_job, reconcile_containers, poll_prometheus_alerts,
+  # capacity_forecast) as a dedicated service so they are never
+  # duplicated across Uvicorn workers.
+  #
+  # The app service runs with RUN_ORCHESTRATOR=false — no schedulers there.
+  # ---------------------------------------------------------------------------
+  scheduler:
+    build:
+      context: /opt/hosting_guard
+    container_name: hg_scheduler
+    restart: always
+    env_file: .env.production
+    depends_on:
+      - docker-socket-proxy
+      - redis
+    command: python -m app.services.scheduler_runner
+    environment:
+      DOCKER_HOST: "tcp://docker-socket-proxy:2375"
+      RUN_ORCHESTRATOR: "true"
+    volumes:
+      - /usr/bin/docker:/usr/bin/docker:ro
+      - /opt/clients:/opt/clients
+      - ./data:/app/data
     networks:
       - hosting_network
       - socket_proxy_network
