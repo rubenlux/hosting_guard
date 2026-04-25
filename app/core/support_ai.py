@@ -84,6 +84,7 @@ def _build_hosting_context(
     metrics: Optional[Dict] = None,
     alerts: Optional[List] = None,
     diagnosis: Optional[Dict] = None,
+    live_status: Optional[Dict] = None,
 ) -> str:
     lines = []
     is_wp = "_wp_" in (hosting_data.get("container_name") or "")
@@ -111,6 +112,19 @@ def _build_hosting_context(
         for a in active_alerts[:3]:
             lines.append(f"  [{a.get('level', '?').upper()}] {a.get('message', '')}")
 
+    if live_status:
+        container_state = live_status.get("container_state")
+        http_ok = live_status.get("http_ok")
+        http_status = live_status.get("http_status")
+        lines.append(f"\nVERIFICACIÓN EN TIEMPO REAL:")
+        if container_state:
+            lines.append(f"  Contenedor (LIVE): {container_state}")
+        if http_status is not None:
+            if http_ok:
+                lines.append(f"  Sitio web (LIVE): RESPONDE correctamente (HTTP {http_status})")
+            else:
+                lines.append(f"  Sitio web (LIVE): NO RESPONDE — {http_status}")
+
     if diagnosis:
         lines.append(f"\nÚltimo diagnóstico automático:")
         lines.append(f"  Severidad: {diagnosis.get('severity', 'N/A')}")
@@ -127,10 +141,53 @@ def _build_hosting_context(
     return "\n".join(lines)
 
 
-def _fetch_live_context(hosting_data: Dict) -> Tuple[Optional[Dict], Optional[List], Optional[Dict]]:
+def _check_live_status(hosting_data: Dict) -> Dict:
     """
-    Fetch health metrics, active alerts, and last diagnosis for a hosting.
-    Returns (metrics, alerts, diagnosis). All non-critical — failures return None.
+    Fetch real-time container state + HTTP reachability.
+    Returns dict with container_state and http_status. Never raises.
+    """
+    import subprocess
+    result: Dict = {}
+
+    container_name = hosting_data.get("container_name")
+    subdomain = hosting_data.get("subdomain", "")
+
+    # Live container state via docker inspect
+    if container_name:
+        try:
+            r = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.Status}}", container_name],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0:
+                result["container_state"] = r.stdout.strip()
+        except Exception as exc:
+            logger.debug("support_ai: docker inspect failed for %s: %s", container_name, exc)
+
+    # HTTP check — does the site actually respond?
+    if subdomain:
+        try:
+            import urllib.request
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            url = f"https://{subdomain}"
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=4, context=ctx) as resp:
+                result["http_status"] = resp.status
+                result["http_ok"] = resp.status < 400
+        except Exception as exc:
+            result["http_status"] = f"no_responde ({type(exc).__name__})"
+            result["http_ok"] = False
+
+    return result
+
+
+def _fetch_live_context(hosting_data: Dict) -> Tuple[Optional[Dict], Optional[List], Optional[Dict], Dict]:
+    """
+    Fetch health metrics, active alerts, last diagnosis, and live status.
+    Returns (metrics, alerts, diagnosis, live_status). All non-critical.
     """
     from app.infra.audit.health_repository import HealthRepository
     from app.infra.audit.ai_diagnosis_repository import AIDiagnosisRepository
@@ -138,7 +195,7 @@ def _fetch_live_context(hosting_data: Dict) -> Tuple[Optional[Dict], Optional[Li
     hosting_id = hosting_data.get("hosting_id")
     user_id = hosting_data.get("user_id")
     if not hosting_id:
-        return None, None, None
+        return None, None, None, {}
 
     health_repo = HealthRepository()
     diag_repo = AIDiagnosisRepository()
@@ -166,7 +223,9 @@ def _fetch_live_context(hosting_data: Dict) -> Tuple[Optional[Dict], Optional[Li
     except Exception as exc:
         logger.debug("support_ai: failed to fetch diagnosis for hosting %s: %s", hosting_id, exc)
 
-    return metrics, alerts, diagnosis
+    live_status = _check_live_status(hosting_data)
+
+    return metrics, alerts, diagnosis, live_status
 
 
 def _build_messages(
@@ -277,8 +336,8 @@ async def generate_support_response(
     # ── 2. Fetch live hosting context ─────────────────────────────────────────
     context_block = ""
     if hosting_data:
-        metrics, alerts, diagnosis = _fetch_live_context(hosting_data)
-        context_block = _build_hosting_context(hosting_data, metrics, alerts, diagnosis)
+        metrics, alerts, diagnosis, live_status = _fetch_live_context(hosting_data)
+        context_block = _build_hosting_context(hosting_data, metrics, alerts, diagnosis, live_status)
 
     # ── 3. Build messages ─────────────────────────────────────────────────────
     system = _SYSTEM_PROMPT

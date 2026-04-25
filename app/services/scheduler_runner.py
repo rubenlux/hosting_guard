@@ -67,12 +67,20 @@ async def _main() -> None:
     from app.services.prometheus_alert_poller import poll_prometheus_alerts
     from app.api.config import ENABLE_CAPACITY_FORECAST
 
+    def _daily_report_job() -> None:
+        from datetime import datetime, timezone
+        if datetime.now(timezone.utc).hour != 8:
+            return
+        from app.services.admin_ai_reporter import run_daily_report
+        run_daily_report()
+
     schedule_job(check_and_expire_free_hostings, interval=43200)  # 12 h
     schedule_job(collect_traffic,                interval=300)     # 5 min
     schedule_job(check_all_hostings,             interval=300)     # 5 min
     schedule_job(reconcile_containers,           interval=300)     # 5 min
     schedule_job(poll_prometheus_alerts,         interval=60)      # 1 min
     schedule_job(_cleanup_old_events,            interval=86400)   # 24 h
+    schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
     if ENABLE_CAPACITY_FORECAST:
         def _run_capacity_forecast():
@@ -83,9 +91,9 @@ async def _main() -> None:
                 logger.warning("capacity_forecast job failed: %s", exc)
 
         schedule_job(_run_capacity_forecast, interval=600)         # 10 min
-        logger.info("scheduler: 6 background jobs scheduled (capacity forecast enabled)")
+        logger.info("scheduler: 7 background jobs scheduled (capacity forecast enabled)")
     else:
-        logger.info("scheduler: 5 background jobs scheduled")
+        logger.info("scheduler: 6 background jobs scheduled")
 
     # ── Wait for shutdown signal ──────────────────────────────────────────────
     stop = asyncio.Event()

@@ -38,6 +38,18 @@ async def _run_docker(*args, timeout: int = 30) -> subprocess.CompletedProcess:
     )
 
 
+@router.get("/report")
+@limiter.limit("4/hour")
+async def get_admin_report(request: Request, _: dict = Depends(require_role("admin"))):
+    """On-demand AI platform intelligence report (same as the daily email)."""
+    from app.services.admin_ai_reporter import generate_platform_report
+    try:
+        report = await generate_platform_report()
+        return {"ok": True, "report": report}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.get("/users")
 def list_all_users(user: dict = Depends(require_role("admin"))):
     return _user_repo.get_all_users()
