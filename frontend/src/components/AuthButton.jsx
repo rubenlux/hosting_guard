@@ -1,10 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import LoginModal from './LoginModal';
 
 const AuthButton = () => {
   const { user, logoutAction } = useAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location.state?.openLogin) {
+      setIsModalOpen(true);
+    }
+  }, [location.state]);
 
   const handleLogout = () => {
     logoutAction();

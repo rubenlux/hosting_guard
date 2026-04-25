@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { ShieldCheck, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { verifyEmail } from '../services/api';
 
@@ -7,6 +7,7 @@ const VerifyEmail = () => {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
 
+  const navigate = useNavigate();
   const [status, setStatus] = useState('loading'); // 'loading' | 'success' | 'error'
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -58,10 +59,11 @@ const VerifyEmail = () => {
               <p className="text-gray-400 text-sm leading-relaxed mb-6">
                 Tu cuenta está activa. Ya podés crear tu primer hosting.
               </p>
-              <Link to="/dashboard"
+              <button
+                onClick={() => navigate('/', { state: { openLogin: true } })}
                 className="block w-full py-3 rounded-xl bg-green-500 text-black text-sm font-black hover:bg-green-400 active:scale-[.98] transition-all text-center">
                 Ir al panel
-              </Link>
+              </button>
             </>
           )}
 
