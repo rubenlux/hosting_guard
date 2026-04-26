@@ -1,54 +1,34 @@
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
-
 export default function BounceRadialChart({ bounceRate }) {
   const rate = Math.min(Math.max(bounceRate || 0, 0), 100);
-  const data = [
-    { name: 'Bounce Rate', value: rate },
-    { name: 'Retención', value: 100 - rate }
-  ];
+  const retention = 100 - rate;
+  const noData = rate >= 100;
 
-  // Dynamic colors based on severity
-  const bounceColor = rate > 75 ? '#ef4444' : rate > 40 ? '#f59e0b' : '#3b82f6';
-  const COLORS = [bounceColor, '#1b1f28']; // Active and Track
+  const color = noData ? '#555' : retention >= 60 ? '#3b82f6' : retention >= 40 ? '#f59e0b' : '#ef4444';
+  const label = noData ? 'Sin datos' : retention >= 60 ? 'Buena' : retention >= 40 ? 'Regular' : 'Baja';
 
   return (
-    <div className="bg-[#0d1117] border border-[#2b3245] rounded-xl pt-5 pb-2 px-5 shadow-2xl relative flex flex-col items-center justify-center">
-      
-      <div className="w-full mb-1">
-        <h3 className="text-[12px] font-mono text-amber-400 uppercase tracking-widest font-bold">Puntuación Bounce</h3>
+    <div style={{ background: '#121214', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 160 }}>
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#888', marginBottom: 4 }}>Retención</div>
+        <div style={{ fontSize: 11, color: '#444' }}>Usuarios que continúan navegando</div>
       </div>
 
-      <div className="h-[140px] w-full relative">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              cx="50%"
-              cy="50%"
-              innerRadius={45}
-              outerRadius={65}
-              startAngle={180}
-              endAngle={-180}
-              dataKey="value"
-              stroke="none"
-              cornerRadius={5}
-            >
-              {data.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-              ))}
-            </Pie>
-            <Tooltip 
-              contentStyle={{ backgroundColor: '#161b22', borderColor: '#30363d', borderRadius: '8px', fontSize: '10px' }}
-              itemStyle={{ color: '#fff', fontWeight: 'bold' }}
-              formatter={(value) => `${value.toFixed(1)}%`}
-            />
-          </PieChart>
-        </ResponsiveContainer>
+      <div style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 12 }}>
+          <span style={{ fontSize: 36, fontWeight: 900, color: noData ? '#333' : '#fff', lineHeight: 1 }}>
+            {noData ? '—' : `${retention.toFixed(0)}%`}
+          </span>
+          {!noData && <span style={{ fontSize: 11, color: '#555' }}>retención</span>}
+        </div>
 
-        {/* Center overlay text */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-2">
-          <span className="text-2xl font-black text-white">{rate.toFixed(1)}%</span>
-          <span className="text-[9px] text-gray-500 uppercase tracking-wider font-mono mt-1">Rebote</span>
+        <div style={{ width: '100%', height: 4, background: 'rgba(255,255,255,0.05)', borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${noData ? 0 : retention}%`, background: color, borderRadius: 4, transition: 'width 0.8s ease' }} />
+        </div>
+
+        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
+          <span style={{ fontSize: 10, color, fontWeight: 700 }}>{label}</span>
+          {!noData && <span style={{ fontSize: 10, color: '#444' }}>· Rebote: {rate.toFixed(0)}%</span>}
         </div>
       </div>
     </div>

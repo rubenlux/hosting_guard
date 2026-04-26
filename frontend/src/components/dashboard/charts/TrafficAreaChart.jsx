@@ -2,63 +2,64 @@ import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, YAxis, CartesianG
 
 export default function TrafficAreaChart({ data }) {
   if (!data || data.length < 2) {
-    return <div className="h-[250px] bg-[#0d1117] border border-white/10 rounded-xl animate-pulse" />;
+    return <div className="h-[240px] bg-[#121214] border border-white/8 rounded-xl animate-pulse" />;
   }
 
-  // Pre-process data specifically for the Area Chart if needed
   const chartData = data.map((d, i) => ({
-    name: d.date || `Dia ${i + 1}`,
-    page_views: d.page_views || 0,
-    sessions: d.unique_sessions || 0,
+    name: d.date ? d.date.slice(5) : `Día ${i + 1}`,
+    'Visitas': d.page_views || 0,
+    'Sesiones': d.unique_sessions || 0,
   }));
 
-  return (
-    <div className="bg-[#0d1117] border border-[#2b3245] rounded-xl p-5 shadow-2xl overflow-hidden relative">
-      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-cyan-500"></div>
-      
-      <div className="mb-4">
-        <h3 className="text-[12px] font-mono text-cyan-400 uppercase tracking-widest font-bold">Rendimiento de Tráfico</h3>
-        <p className="text-[10px] text-gray-500">Visualización de Vistas de Página a lo largo del tiempo</p>
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div style={{ background: '#1a1a1f', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '10px 14px', fontSize: 12 }}>
+        <div style={{ color: '#888', marginBottom: 6, fontSize: 11 }}>{label}</div>
+        {payload.map(p => (
+          <div key={p.name} style={{ color: p.color, fontWeight: 700 }}>{p.name}: {p.value}</div>
+        ))}
       </div>
+    );
+  };
 
-      <div className="h-[200px] w-full">
+  return (
+    <div style={{ background: '#121214', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: '20px 20px 12px', overflow: 'hidden' }}>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', marginBottom: 2 }}>Tráfico del sitio</div>
+        <div style={{ fontSize: 11, color: '#555' }}>Vistas de página y sesiones únicas</div>
+      </div>
+      <div style={{ height: 200 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+          <AreaChart data={chartData} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
             <defs>
-              <linearGradient id="colorViews" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#10b981" stopOpacity={0.6}/>
-                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+              <linearGradient id="gViews" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.25} />
+                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+              </linearGradient>
+              <linearGradient id="gSessions" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%"  stopColor="#818cf8" stopOpacity={0.15} />
+                <stop offset="95%" stopColor="#818cf8" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ffffff0a" />
-            <XAxis 
-              dataKey="name" 
-              axisLine={false} 
-              tickLine={false} 
-              tick={{ fill: '#8b949e', fontSize: 10 }}
-              dy={10}
-            />
-            <YAxis 
-              axisLine={false} 
-              tickLine={false} 
-              tick={{ fill: '#8b949e', fontSize: 10 }}
-            />
-            <Tooltip 
-              contentStyle={{ backgroundColor: '#161b22', borderColor: '#30363d', borderRadius: '8px', color: '#fff', fontSize: '11px' }}
-              itemStyle={{ color: '#fff', fontWeight: 'bold' }}
-              cursor={{ fill: 'rgba(255, 255, 255, 0.02)' }}
-            />
-            <Area 
-              type="monotone" 
-              dataKey="page_views" 
-              name="Visitas"
-              stroke="#10b981" 
-              strokeWidth={3}
-              fillOpacity={1} 
-              fill="url(#colorViews)" 
-            />
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.04)" />
+            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#555', fontSize: 10 }} dy={8} />
+            <YAxis axisLine={false} tickLine={false} tick={{ fill: '#555', fontSize: 10 }} />
+            <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.06)', strokeWidth: 1 }} />
+            <Area type="monotone" dataKey="Visitas" stroke="#3b82f6" strokeWidth={2} fill="url(#gViews)" dot={false} />
+            <Area type="monotone" dataKey="Sesiones" stroke="#818cf8" strokeWidth={1.5} fill="url(#gSessions)" dot={false} strokeDasharray="4 2" />
           </AreaChart>
         </ResponsiveContainer>
+      </div>
+      <div style={{ display: 'flex', gap: 16, marginTop: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ width: 12, height: 2, background: '#3b82f6', borderRadius: 1 }} />
+          <span style={{ fontSize: 10, color: '#555' }}>Visitas</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ width: 12, height: 2, background: '#818cf8', borderRadius: 1 }} />
+          <span style={{ fontSize: 10, color: '#555' }}>Sesiones</span>
+        </div>
       </div>
     </div>
   );

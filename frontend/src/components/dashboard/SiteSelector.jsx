@@ -14,7 +14,7 @@ export default function SiteSelector({ sites, selectedId, onChange }) {
     <select
       value={selectedId || ''}
       onChange={e => onChange(e.target.value)}
-      className="text-[9px] font-mono text-gray-600 bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-400 cursor-pointer shadow-sm"
+      style={{ fontSize: 11, color: '#888', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '4px 8px', outline: 'none', cursor: 'pointer' }}
     >
       {sites.map(s => (
         <option key={s.site_id} value={s.site_id}>
