@@ -685,14 +685,14 @@ const Dashboard = () => {
       {/* SUPPORT MODAL */}
       {showSupport && (
         supportView === 'history' && !openTicketId ? (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(17,24,39,0.3)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: '1.5rem' }}
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: '1.5rem' }}
             onClick={e => e.target === e.currentTarget && setShowSupport(false)}>
-            <div style={{ width: 460, maxHeight: '80vh', background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: '1.5rem', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.1)' }}>
-              <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>Historial de Soporte</div>
+            <div style={{ width: 460, maxHeight: '80vh', background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '1.5rem', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.8)', animation: 'slideUp 0.25s ease' }}>
+              <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'linear-gradient(135deg, rgba(0,255,136,0.06), rgba(0,0,0,0))', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>Historial de Soporte</div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button onClick={() => { setSupportView('chat'); setOpenTicketId(null); }} style={{ fontSize: 11, padding: '0.4rem 0.8rem', borderRadius: '0.5rem', background: '#f3f4f6', border: '1px solid #e5e7eb', color: '#374151', cursor: 'pointer', fontWeight: 600 }}>+ Nuevo ticket</button>
-                  <button onClick={() => setShowSupport(false)} style={{ background: '#f3f4f6', border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer', color: '#6b7280', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
+                  <button onClick={() => { setSupportView('chat'); setOpenTicketId(null); }} style={{ fontSize: 11, padding: '0.4rem 0.8rem', borderRadius: '0.5rem', background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.2)', color: '#00ff88', cursor: 'pointer', fontWeight: 600 }}>+ Nuevo ticket</button>
+                  <button onClick={() => setShowSupport(false)} style={{ background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: '50%', width: 28, height: 28, cursor: 'pointer', color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
                 </div>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
