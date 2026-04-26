@@ -423,24 +423,90 @@ const Dashboard = () => {
                   </div>
                 ))}
 
-                {/* HERO SPLIT — traffic analytics + AI advisory side by side */}
-                <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 mt-4">
-                  <div className="xl:col-span-3">
-                    <Suspense fallback={<div className="p-4 text-xs text-muted">Cargando módulo...</div>}>
-                      <BusinessOverview />
-                    </Suspense>
+                {/* ── KPI STRIP ─────────────────────────────────────────── */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+                  {/* Sitios activos */}
+                  {(() => {
+                    const active = hostings.filter(h => h.status === 'active').length;
+                    const total  = hostings.length;
+                    const pct    = total > 0 ? Math.round((active / total) * 100) : 0;
+                    return (
+                      <div className="bg-[#121214] border border-white/8 rounded-2xl p-5 relative overflow-hidden" style={{ borderTop: '2px solid #00ff88' }}>
+                        <div className="absolute top-4 right-4 opacity-[0.06]"><Activity className="w-12 h-12 text-emerald-400" /></div>
+                        <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">Sitios activos</div>
+                        <div className="text-4xl font-black text-white tracking-tight mb-1">
+                          {active}<span className="text-xl text-gray-600">/{total}</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-white/5 rounded-full mt-3 overflow-hidden">
+                          <div className="h-full rounded-full transition-all duration-700 bg-emerald-500" style={{ width: `${pct}%` }} />
+                        </div>
+                        <div className="text-[10px] text-gray-500 mt-2">{pct}% operativos</div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Salud general */}
+                  <div className="bg-[#121214] border border-white/8 rounded-2xl p-5 relative overflow-hidden" style={{ borderTop: '2px solid #818cf8' }}>
+                    <div className="absolute top-4 right-4 opacity-[0.06]"><ShieldCheck className="w-12 h-12 text-indigo-400" /></div>
+                    <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">Salud general</div>
+                    <div className="text-4xl font-black text-white tracking-tight mb-1">
+                      {avgHealthScore ?? '—'}<span className="text-xl text-gray-600">/100</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-white/5 rounded-full mt-3 overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-700" style={{ width: `${avgHealthScore ?? 0}%`, background: (avgHealthScore ?? 0) >= 85 ? '#818cf8' : (avgHealthScore ?? 0) >= 60 ? '#f59e0b' : '#ef4444' }} />
+                    </div>
+                    <div className="flex items-center gap-1 mt-2">
+                      <span className="text-[10px] font-medium" style={{ color: healthTrend.color }}>{healthTrend.arrow} {healthTrend.label}</span>
+                      <TrendLine data={primaryHostingHistory} />
+                    </div>
                   </div>
-                  <div className="xl:col-span-2">
-                    <AIAdvisoryPanel
-                      advisories={advisories}
-                      onDiagnose={handleDiagnose}
-                    />
-                  </div>
+
+                  {/* CPU */}
+                  {(() => {
+                    const cpu = parseFloat(avgCpu) || 0;
+                    const cpuColor = cpu > 85 ? '#ef4444' : cpu > 60 ? '#f59e0b' : '#3b82f6';
+                    return (
+                      <div className="bg-[#121214] border border-white/8 rounded-2xl p-5 relative overflow-hidden" style={{ borderTop: '2px solid #3b82f6' }}>
+                        <div className="absolute top-4 right-4 opacity-[0.06]"><Zap className="w-12 h-12 text-blue-400" /></div>
+                        <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">CPU promedio</div>
+                        <div className="text-4xl font-black text-white tracking-tight mb-1">
+                          {avgCpu}<span className="text-xl text-gray-600">%</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-white/5 rounded-full mt-3 overflow-hidden">
+                          <div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.min(cpu, 100)}%`, background: cpuColor }} />
+                        </div>
+                        <div className="text-[10px] mt-2" style={{ color: cpuColor }}>
+                          {cpu > 85 ? 'Carga alta' : cpu > 60 ? 'Carga moderada' : 'Carga normal'}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Alertas */}
+                  {(() => {
+                    const hasAlerts = unresolved > 0;
+                    return (
+                      <div className="bg-[#121214] border border-white/8 rounded-2xl p-5 relative overflow-hidden" style={{ borderTop: `2px solid ${hasAlerts ? '#ef4444' : '#00ff88'}` }}>
+                        <div className="absolute top-4 right-4 opacity-[0.06]"><AlertTriangle className="w-12 h-12" style={{ color: hasAlerts ? '#ef4444' : '#00ff88' }} /></div>
+                        <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">Alertas activas</div>
+                        <div className="text-4xl font-black tracking-tight mb-1" style={{ color: hasAlerts ? '#ef4444' : '#00ff88' }}>
+                          {unresolved}
+                        </div>
+                        <div className="mt-3">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${hasAlerts ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
+                            {hasAlerts ? `${unresolved} sin resolver` : '● Todo normal'}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-gray-600 mt-2">RAM: {totalRam}</div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
-                {/* SITES + ACCOUNT */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-                  <div className="lg:col-span-2 space-y-6">
+                {/* ── MAIN GRID: Hostings + AI Advisory ─────────────────── */}
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-6">
+                  {/* Hosting list — takes 2/3 */}
+                  <div className="xl:col-span-2">
                     <HostingList
                       hostings={hostings}
                       loading={loading}
@@ -457,124 +523,60 @@ const Dashboard = () => {
                       onOpenFiles={(h) => { setSelectedFilesHosting(h); setShowFiles(true); }}
                       onImportBackup={(h) => setImportModal(h)}
                     />
-                    <ActivityFeed events={events} onRefresh={refresh} />
                   </div>
 
-                  {/* ACCOUNT PANEL */}
-                  <div className="h-full">
-                    <div className="card-dash p-6 h-full bg-[#121214] border border-white/10 shadow-sm rounded-2xl relative overflow-hidden font-sans flex flex-col">
-                      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-purple-500" />
-                      <div className="flex justify-between items-start mb-6">
+                  {/* Right column: AI Advisory + balance widget */}
+                  <div className="flex flex-col gap-6">
+                    <AIAdvisoryPanel advisories={advisories} onDiagnose={handleDiagnose} />
+
+                    {/* Compact balance widget */}
+                    <div className="bg-[#121214] border border-white/8 rounded-2xl p-5 relative overflow-hidden">
+                      <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-indigo-500 to-purple-500" />
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-[10px] font-bold tracking-widest text-gray-500 uppercase">Tu cuenta</span>
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${user?.has_payment_method ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                          {user?.has_payment_method ? 'Tarjeta vinculada' : 'Sin tarjeta'}
+                        </span>
+                      </div>
+                      <div className="flex items-end gap-3 mb-4">
                         <div>
-                          <div className="text-[10px] text-indigo-400 font-mono font-bold uppercase tracking-[0.2em] mb-2">Tu Saldo</div>
-                          <div className="text-3xl font-black text-white tracking-tight">${user?.balance?.toFixed(2) || '0.00'}</div>
+                          <div className="text-[10px] text-gray-600 mb-0.5">Saldo</div>
+                          <div className="text-2xl font-black text-white">${(user?.balance || 0).toFixed(2)}</div>
                         </div>
-                        <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${user?.has_payment_method ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
-                          {user?.has_payment_method ? 'Vinculada' : 'Sin Tarjeta'}
+                        <div className="mb-0.5 pb-0.5">
+                          <div className="text-[10px] text-gray-600 mb-0.5">Plan</div>
+                          <div className="text-sm font-bold text-indigo-400 uppercase">{user?.plan || 'Free'}</div>
                         </div>
                       </div>
-                      <div className="space-y-4 flex-1 flex flex-col">
-                        <div className="flex-1 space-y-4">
-                          <div onClick={handleToggleAutoscale} className={`p-4 rounded-2xl relative overflow-hidden group transition-all cursor-pointer shadow-sm hover:shadow-md ${user?.autoscale_enabled ? 'border border-emerald-500/30 bg-emerald-500/10' : 'border border-white/10 bg-[#0a0a0c] hover:bg-white/5'}`}>
-                            {userActionLoading === 'user' && <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px] flex items-center justify-center z-10"><RefreshCw className="w-4 h-4 animate-spin text-indigo-400" /></div>}
-                            <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity"><Zap className="w-16 h-16 text-indigo-500" /></div>
-                            <div className="relative">
-                              <div className="flex justify-between items-center mb-1">
-                                <span className="text-xs font-bold text-white flex items-center gap-2">
-                                  <Zap className={`w-3 h-3 ${user?.autoscale_enabled ? 'text-emerald-500 fill-emerald-500' : 'text-gray-400'}`} /> Auto-Scaling
-                                </span>
-                                <span className={`text-[10px] font-black uppercase ${user?.autoscale_enabled ? 'text-emerald-500' : 'text-gray-500'}`}>
-                                  {user?.autoscale_enabled ? 'Activado' : 'Desactivado'}
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-gray-400 font-medium leading-relaxed pr-8">Optimiza recursos dinámicamente según picos de demanda real.</p>
-                            </div>
-                          </div>
-                          {!user?.has_payment_method && user?.balance <= 0 && (
-                            <div className="text-[10px] bg-red-400/10 text-red-400 p-3 rounded-xl border border-red-400/20 flex items-center gap-3 font-medium animate-pulse">
-                              <AlertTriangle className="w-4 h-4 shrink-0" /> Recarga saldo para evitar suspensiones.
-                            </div>
-                          )}
+                      {!user?.has_payment_method && user?.balance <= 0 && (
+                        <div className="text-[10px] bg-red-500/8 text-red-400 p-2.5 rounded-xl border border-red-500/15 flex items-center gap-2 mb-3">
+                          <AlertTriangle className="w-3 h-3 shrink-0" /> Recargá saldo para evitar suspensiones.
                         </div>
-                        <button onClick={handleTopup} disabled={userActionLoading === 'user'} className="w-full py-3.5 bg-indigo-600 text-white rounded-xl font-black text-xs hover:bg-indigo-700 transition-all shadow-md hover:shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:scale-100 mt-4">
-                          {userActionLoading === 'user' ? 'PROCESANDO...' : 'RECARGAR SALDO +$10'}
-                        </button>
-                      </div>
+                      )}
+                      <button
+                        onClick={handleTopup}
+                        disabled={userActionLoading}
+                        className="w-full py-2.5 rounded-xl text-xs font-black text-white transition-all disabled:opacity-50"
+                        style={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
+                      >
+                        {userActionLoading ? 'Procesando...' : 'Recargar +$10'}
+                      </button>
+                      <button onClick={() => setSidebarSection('billing')} className="w-full mt-2 py-2 rounded-xl text-[10px] font-semibold text-gray-500 hover:text-gray-300 transition-colors bg-transparent border-none cursor-pointer">
+                        Ver facturación →
+                      </button>
                     </div>
                   </div>
                 </div>
 
-                {/* INFRA METRICS — with historical sparklines */}
-                <div className="mt-6">
-                  <div className="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                    <span className="w-3 h-px bg-warn/40" /> Infraestructura
+                {/* ── BOTTOM: Traffic + Activity ─────────────────────────── */}
+                <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 mt-6 pb-6">
+                  <div className="xl:col-span-3">
+                    <Suspense fallback={<div className="p-6 bg-[#121214] border border-white/8 rounded-2xl text-xs text-gray-500">Cargando tráfico...</div>}>
+                      <BusinessOverview />
+                    </Suspense>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    {/* Health score card — sparkline from real history */}
-                    <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-emerald-500">
-                      <div className="flex justify-between items-start">
-                        <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase">Salud General</div>
-                        <TrendLine data={primaryHostingHistory} />
-                      </div>
-                      <div className="mt-3">
-                        <div className="text-3xl font-black text-white tracking-tight">
-                          {avgHealthScore ?? '—'}<span className="text-lg text-gray-500">/100</span>
-                        </div>
-                        <div className="text-[11px] text-gray-400 mt-2 flex items-center justify-between">
-                          <div className="flex items-center gap-1 font-medium">
-                            <span style={{ color: healthTrend.color }}>{healthTrend.arrow}</span>
-                            <span style={{ color: healthTrend.color }}>{healthTrend.label}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-mono text-gray-400 font-bold">PROACTIVO</span>
-                            {unresolved > 0 && (
-                              <span className="bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded-md font-bold text-[9px] border border-red-500/20 animate-pulse">
-                                {unresolved} ALERTAS
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* CPU card — mini bar from history */}
-                    <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-blue-500">
-                      <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-3">CPU Promedio</div>
-                      <div>
-                        <div className="text-3xl font-black text-white tracking-tight">
-                          {avgCpu}<span className="text-lg text-gray-500">%</span>
-                        </div>
-                        {/* Proportional bar instead of fixed 16px */}
-                        <div className="w-full h-1.5 bg-white/5 rounded-full mt-3 overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all duration-700"
-                            style={{
-                              width: `${Math.min(parseFloat(avgCpu) || 0, 100)}%`,
-                              background: parseFloat(avgCpu) > 85 ? '#ef4444' : parseFloat(avgCpu) > 60 ? '#f59e0b' : '#3b82f6',
-                            }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* RAM card */}
-                    <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-amber-500">
-                      <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-3">RAM Usada</div>
-                      <div>
-                        <div className="text-3xl font-black text-white tracking-tight">{totalRam}</div>
-                        <div className="text-[11px] text-gray-400 mt-2 font-medium">Tiempo real</div>
-                      </div>
-                    </div>
-
-                    {/* Storage card */}
-                    <div className="bg-[#121214] border border-white/10 shadow-sm rounded-xl p-5 flex flex-col justify-between border-t-2 border-t-purple-500">
-                      <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-3">Almacenamiento</div>
-                      <div>
-                        <div className="text-3xl font-black text-white tracking-tight">
-                          18<span className="text-lg font-bold text-gray-500"> GB</span>
-                        </div>
-                      </div>
-                    </div>
+                  <div className="xl:col-span-2">
+                    <ActivityFeed events={events} onRefresh={refresh} />
                   </div>
                 </div>
               </>
