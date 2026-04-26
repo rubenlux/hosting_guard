@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
-  getAdminPixelEvents, getAdminHostingsMetrics,
+  getAdminPixelEvents, getAdminPixelSiteByDomain, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
   getSystemHealth, getAdminOpsSummary, getCapacityMetrics, getNodeMetrics,
   getTenantResourceUsage, getJobsSummary, getUnitEconomics, getContainerHistory,
@@ -177,6 +177,7 @@ export default function AdminDashboard() {
   const [users, setUsers]               = useState([]);
   const [hostings, setHostings]         = useState([]);
   const [hostingMetrics, setHostingMetrics] = useState([]);
+  const [ownSite, setOwnSite]               = useState(null);
   const [pixelOverview, setPixelOverview]   = useState(null);
   const [pixelEvents, setPixelEvents]       = useState([]);
   const [orcEvents, setOrcEvents]           = useState([]);
@@ -195,12 +196,21 @@ export default function AdminDashboard() {
 
   const fetchAll = async () => {
     setLoading(true);
+
+    // Resolve hostingguard.lat site_id first — pixel section shows only our own site.
+    let ownSiteId = null;
+    try {
+      const site = await getAdminPixelSiteByDomain('hostingguard.lat');
+      setOwnSite(site || null);
+      ownSiteId = site?.site_id || null;
+    } catch (_) {}
+
     const results = await Promise.allSettled([
       getAdminUsers(),
       getAdminHostings(),
       getAdminHostingsMetrics(),
-      getAdminPixelOverview(),
-      getAdminPixelEvents(500, 0),
+      getAdminPixelOverview(ownSiteId),
+      getAdminPixelEvents(500, 0, ownSiteId),
       getAdminOrchestratorEvents(200),
       getAdminFinanceSummary(),
       getSystemHealth(),
@@ -962,6 +972,19 @@ export default function AdminDashboard() {
             {/* ══ PIXEL ANALYTICS ══ */}
             {section === 'pixel' && (
               pixelAnalytics ? (<>
+                {/* Site source badge */}
+                <div className="flex items-center gap-2 mb-4 px-1">
+                  <Globe className="w-3.5 h-3.5 text-[#00ff88]" />
+                  <span className="text-[11px] text-gray-400">Mostrando datos de</span>
+                  <span className="text-[11px] font-mono font-bold text-[#00ff88]">
+                    {ownSite ? (ownSite.name || ownSite.domain || 'hostingguard.lat') : 'hostingguard.lat'}
+                  </span>
+                  {!ownSite && (
+                    <span className="text-[9px] text-amber-500/70 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
+                      sitio no registrado en pixel
+                    </span>
+                  )}
+                </div>
                 {/* Overview stats */}
                 <div className="grid grid-cols-6 gap-3">
                   {[

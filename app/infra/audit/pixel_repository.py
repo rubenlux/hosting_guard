@@ -66,6 +66,71 @@ class PixelRepository:
         finally:
             release_connection(conn)
 
+    def get_site_by_domain(self, domain: str) -> Optional[Dict]:
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM pixel_sites WHERE domain ILIKE %s ORDER BY created_at ASC LIMIT 1",
+                (domain,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            release_connection(conn)
+
+    def get_stats_for_site(self, site_id: str) -> Dict:
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) AS total_events FROM pixel_events WHERE site_id = %s", (site_id,))
+            events_row = cursor.fetchone()
+            cursor.execute(
+                "SELECT COUNT(*) AS today_events FROM pixel_events WHERE site_id = %s AND created_at >= current_date",
+                (site_id,),
+            )
+            today_row = cursor.fetchone()
+            cursor.execute(
+                "SELECT event_type, COUNT(*) AS count FROM pixel_events WHERE site_id = %s GROUP BY event_type ORDER BY count DESC LIMIT 10",
+                (site_id,),
+            )
+            by_type = [dict(r) for r in cursor.fetchall()]
+            return {
+                "total_sites":   1,
+                "total_events":  events_row["total_events"],
+                "today_events":  today_row["today_events"],
+                "by_event_type": by_type,
+            }
+        finally:
+            release_connection(conn)
+
+    def get_events_for_site(self, site_id: str, limit: int = 100, offset: int = 0) -> List[Dict]:
+        from app.infra.db import get_connection, release_connection
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT pe.event_id, pe.site_id, pe.user_id, pe.event_type,
+                       pe.url, pe.referrer, pe.user_agent, pe.ip,
+                       pe.country, pe.device, pe.browser, pe.os,
+                       pe.session_id, pe.visitor_id,
+                       pe.properties, pe.created_at,
+                       ps.name AS site_name
+                FROM pixel_events pe
+                LEFT JOIN pixel_sites ps ON ps.site_id = pe.site_id
+                WHERE pe.site_id = %s
+                ORDER BY pe.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (site_id, limit, offset),
+            )
+            return [dict(r) for r in cursor.fetchall()]
+        finally:
+            release_connection(conn)
+
     def save_event(self, **kwargs) -> str:
         from app.infra.db import get_connection, release_connection
         event_id = str(uuid.uuid4())

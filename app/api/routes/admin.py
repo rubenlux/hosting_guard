@@ -161,13 +161,26 @@ def get_user_full(user_id: int, _: dict = Depends(require_role("admin"))):
     }
 
 
+@router.get("/pixel/site-by-domain")
+def pixel_site_by_domain(domain: str, _: dict = Depends(require_role("admin"))):
+    """Lookup the pixel_sites record for a given domain (e.g. 'hostingguard.lat')."""
+    site = _pixel_repo.get_site_by_domain(domain)
+    if not site:
+        raise HTTPException(status_code=404, detail=f"No pixel site registered for domain '{domain}'")
+    return site
+
+
 @router.get("/pixel/overview")
-def pixel_overview(_: dict = Depends(require_role("admin"))):
+def pixel_overview(site_id: str = None, _: dict = Depends(require_role("admin"))):
+    if site_id:
+        return _pixel_repo.get_stats_for_site(site_id)
     return _pixel_repo.get_overview_admin()
 
 
 @router.get("/pixel/events")
-def pixel_events(limit: int = 100, offset: int = 0, _: dict = Depends(require_role("admin"))):
+def pixel_events(limit: int = 100, offset: int = 0, site_id: str = None, _: dict = Depends(require_role("admin"))):
+    if site_id:
+        return _pixel_repo.get_events_for_site(site_id=site_id, limit=limit, offset=offset)
     return _pixel_repo.get_all_events_admin(limit=limit, offset=offset)
 
 

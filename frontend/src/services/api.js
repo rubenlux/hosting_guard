@@ -215,13 +215,21 @@ export const getAdminUserFull = async (userId) => {
     return response.data;
 };
 
-export const getAdminPixelOverview = async () => {
-    const response = await api.get('/admin/pixel/overview');
+export const getAdminPixelSiteByDomain = async (domain) => {
+    const response = await api.get(`/admin/pixel/site-by-domain?domain=${encodeURIComponent(domain)}`);
     return response.data;
 };
 
-export const getAdminPixelEvents = async (limit = 100, offset = 0) => {
-    const response = await api.get(`/admin/pixel/events?limit=${limit}&offset=${offset}`);
+export const getAdminPixelOverview = async (siteId = null) => {
+    const url = siteId ? `/admin/pixel/overview?site_id=${siteId}` : '/admin/pixel/overview';
+    const response = await api.get(url);
+    return response.data;
+};
+
+export const getAdminPixelEvents = async (limit = 100, offset = 0, siteId = null) => {
+    const params = new URLSearchParams({ limit, offset });
+    if (siteId) params.set('site_id', siteId);
+    const response = await api.get(`/admin/pixel/events?${params}`);
     return response.data;
 };
 
