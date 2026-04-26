@@ -387,10 +387,7 @@ const Dashboard = () => {
                     user={user}
                     setUser={setUser}
                     hostings={hostings}
-                    onStart={(id) => start.mutate(id)}
-                    onStop={(id) => stop.mutate(id)}
-                    onRestart={(id) => restart.mutate(id)}
-                    actionLoading={activeHostingActionId}
+                    logoutAction={logoutAction}
                   />
                 )}
               </div>
