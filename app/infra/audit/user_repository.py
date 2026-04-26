@@ -180,6 +180,7 @@ class UserRepository:
             # but we delete any remaining rows as a safety net against FK violations.
             cursor.execute("DELETE FROM orchestrator_events WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM support_sessions WHERE user_id = %s OR impersonated_user_id = %s", (user_id, user_id))
+            cursor.execute("DELETE FROM auth_tokens WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM hostings WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
             conn.commit()
