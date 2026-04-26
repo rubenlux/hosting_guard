@@ -32,6 +32,12 @@ import SupportTicketList    from '../components/SupportTicketList';
 import SiteManagement       from '../components/SiteManagement';
 import AIAdvisoryPage       from './AIAdvisory';
 import ImportSiteModal      from '../components/dashboard/ImportSiteModal';
+import DomainsSection       from '../components/dashboard/sections/DomainsSection';
+import BackupsSection       from '../components/dashboard/sections/BackupsSection';
+import SSLSection           from '../components/dashboard/sections/SSLSection';
+import EmailSection         from '../components/dashboard/sections/EmailSection';
+import BillingSection       from '../components/dashboard/sections/BillingSection';
+import ConfigSection        from '../components/dashboard/sections/ConfigSection';
 const BusinessOverview = lazy(() => import('../components/dashboard/BusinessOverview'));
 
 const Dashboard = () => {
@@ -99,6 +105,7 @@ const Dashboard = () => {
   const [showFiles,             setShowFiles]             = useState(false);
   const [selectedFilesHosting,  setSelectedFilesHosting]  = useState(null);
   const [isSidebarCollapsed,    setIsSidebarCollapsed]    = useState(false);
+  const [sidebarSection,        setSidebarSection]        = useState(null); // 'domains'|'backups'|'ssl'|'email'|'billing'|'config'
   const [showSupport,           setShowSupport]           = useState(false);
   const [supportView,           setSupportView]           = useState('chat');
   const [openTicketId,          setOpenTicketId]          = useState(null);
@@ -212,19 +219,19 @@ const Dashboard = () => {
 
           <nav className="nav-dash">
             <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Principal'}</div>
-            <div className={`nav-item-dash ${activeView === 'dashboard' && !showCreate ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/dashboard'); }}>
+            <div className={`nav-item-dash ${activeView === 'dashboard' && !showCreate && !sidebarSection ? 'active' : ''}`} onClick={() => { setShowCreate(false); setSidebarSection(null); navigate('/dashboard'); }}>
               <div className="nav-icon-dash icon-green"><Activity size={18} /></div>
               {!isSidebarCollapsed && <span>Dashboard</span>}
             </div>
-            <div className={`nav-item-dash ${activeView === 'sites' ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/sites'); }}>
+            <div className={`nav-item-dash ${activeView === 'sites' ? 'active' : ''}`} onClick={() => { setShowCreate(false); setSidebarSection(null); navigate('/sites'); }}>
               <div className="nav-icon-dash icon-blue"><Globe size={18} /></div>
               {!isSidebarCollapsed && <span>Mis Sitios</span>}
             </div>
-            <div className={`nav-item-dash ${activeView === 'pixel' ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/pixel'); }}>
+            <div className={`nav-item-dash ${activeView === 'pixel' ? 'active' : ''}`} onClick={() => { setShowCreate(false); setSidebarSection(null); navigate('/pixel'); }}>
               <div className="nav-icon-dash icon-multi"><BarChart3 size={18} /></div>
               {!isSidebarCollapsed && <span>Pixel Analytics</span>}
             </div>
-            <div className={`nav-item-dash ${activeView === 'advisory' ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/advisory'); }}>
+            <div className={`nav-item-dash ${activeView === 'advisory' ? 'active' : ''}`} onClick={() => { setShowCreate(false); setSidebarSection(null); navigate('/advisory'); }}>
               <div className="nav-icon-dash icon-ia"><Bot size={18} /></div>
               {!isSidebarCollapsed && <span>IA Advisory</span>}
               {!isSidebarCollapsed && advisories.filter(a => a.requiresAttention).length > 0 && (
@@ -238,25 +245,43 @@ const Dashboard = () => {
               )}
             </div>
             {user?.role === 'admin' && (
-              <div className={`nav-item-dash ${activeView === 'admin' ? 'active' : ''}`} onClick={() => { setShowCreate(false); navigate('/admin'); }}>
+              <div className={`nav-item-dash ${activeView === 'admin' ? 'active' : ''}`} onClick={() => { setShowCreate(false); setSidebarSection(null); navigate('/admin'); }}>
                 <div className="nav-icon-dash icon-orange"><ShieldCheck size={18} /></div>
                 {!isSidebarCollapsed && <span>Admin Panel</span>}
               </div>
             )}
 
             <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Gestión'}</div>
-            <div className="nav-item-dash"><div className="nav-icon-dash icon-gold"><Key size={18} /></div>{!isSidebarCollapsed && <span>Dominios</span>}</div>
-            <div className="nav-item-dash"><div className="nav-icon-dash icon-purple"><Database size={18} /></div>{!isSidebarCollapsed && <span>Backups</span>}</div>
-            <div className="nav-item-dash"><div className="nav-icon-dash icon-orange"><Lock size={18} /></div>{!isSidebarCollapsed && <span>SSL</span>}</div>
-            <div className="nav-item-dash"><div className="nav-icon-dash icon-blue"><Mail size={18} /></div>{!isSidebarCollapsed && <span>Email</span>}</div>
+            <div className={`nav-item-dash ${sidebarSection === 'domains' ? 'active' : ''}`} onClick={() => { setSidebarSection('domains'); setShowCreate(false); navigate('/dashboard'); }}>
+              <div className="nav-icon-dash icon-gold"><Key size={18} /></div>
+              {!isSidebarCollapsed && <span>Dominios</span>}
+            </div>
+            <div className={`nav-item-dash ${sidebarSection === 'backups' ? 'active' : ''}`} onClick={() => { setSidebarSection('backups'); setShowCreate(false); navigate('/dashboard'); }}>
+              <div className="nav-icon-dash icon-purple"><Database size={18} /></div>
+              {!isSidebarCollapsed && <span>Backups</span>}
+            </div>
+            <div className={`nav-item-dash ${sidebarSection === 'ssl' ? 'active' : ''}`} onClick={() => { setSidebarSection('ssl'); setShowCreate(false); navigate('/dashboard'); }}>
+              <div className="nav-icon-dash icon-orange"><Lock size={18} /></div>
+              {!isSidebarCollapsed && <span>SSL</span>}
+            </div>
+            <div className={`nav-item-dash ${sidebarSection === 'email' ? 'active' : ''}`} onClick={() => { setSidebarSection('email'); setShowCreate(false); navigate('/dashboard'); }}>
+              <div className="nav-icon-dash icon-blue"><Mail size={18} /></div>
+              {!isSidebarCollapsed && <span>Email</span>}
+            </div>
 
             <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Cuenta'}</div>
             <div className="nav-item-dash" onClick={() => { setShowSupport(true); setSupportView('history'); setOpenTicketId(null); }}>
               <div className="nav-icon-dash" style={{ color: '#818cf8' }}><Headset size={18} /></div>
               {!isSidebarCollapsed && <span>Soporte</span>}
             </div>
-            <div className="nav-item-dash"><div className="nav-icon-dash icon-blue"><CreditCard size={18} /></div>{!isSidebarCollapsed && <span>Facturación</span>}</div>
-            <div className="nav-item-dash"><div className="nav-icon-dash"><Settings size={18} /></div>{!isSidebarCollapsed && <span>Configuración</span>}</div>
+            <div className={`nav-item-dash ${sidebarSection === 'billing' ? 'active' : ''}`} onClick={() => { setSidebarSection('billing'); setShowCreate(false); navigate('/dashboard'); }}>
+              <div className="nav-icon-dash icon-blue"><CreditCard size={18} /></div>
+              {!isSidebarCollapsed && <span>Facturación</span>}
+            </div>
+            <div className={`nav-item-dash ${sidebarSection === 'config' ? 'active' : ''}`} onClick={() => { setSidebarSection('config'); setShowCreate(false); navigate('/dashboard'); }}>
+              <div className="nav-icon-dash"><Settings size={18} /></div>
+              {!isSidebarCollapsed && <span>Configuración</span>}
+            </div>
           </nav>
 
           <div className="p-4 border-t border-[var(--border)] mt-auto">
@@ -285,6 +310,12 @@ const Dashboard = () => {
           <div className="topbar-dash">
             <div className="text-[15px] font-medium flex-1">
               {showCreate ? 'Nuevo Proyecto'
+                : sidebarSection === 'domains'  ? 'Dominios'
+                : sidebarSection === 'backups'  ? 'Backups'
+                : sidebarSection === 'ssl'      ? 'SSL / HTTPS'
+                : sidebarSection === 'email'    ? 'Email / SMTP'
+                : sidebarSection === 'billing'  ? 'Facturación'
+                : sidebarSection === 'config'   ? 'Configuración'
                 : activeView === 'pixel'    ? 'Pixel Analytics'
                 : activeView === 'admin'    ? 'Panel de Administración'
                 : activeView === 'sites'    ? 'Mis Sitios (Operaciones)'
@@ -294,7 +325,7 @@ const Dashboard = () => {
             <div className="hidden md:flex items-center gap-2 bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-500/20 text-xs font-medium">
               <div className="pulse-dash" /> Servicios Operativos
             </div>
-            {activeView !== 'admin' && (
+            {activeView !== 'admin' && !sidebarSection && (
               <button
                 onClick={() => {
                   if (showCreate) { setShowCreate(false); }
@@ -305,7 +336,7 @@ const Dashboard = () => {
                 {showCreate ? 'Volver' : '+ Nuevo sitio'}
               </button>
             )}
-            <button className="btn-dash btn-primary-dash">Upgrade</button>
+            {!sidebarSection && <button className="btn-dash btn-primary-dash">Upgrade</button>}
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 lg:p-10 bg-[#0a0a0c]">
@@ -337,6 +368,32 @@ const Dashboard = () => {
                 onImportBackup={(h) => setImportModal(h)}
                 onDiagnose={handleDiagnose}
               />
+            ) : sidebarSection ? (
+              <div style={{ paddingBottom: '3rem' }}>
+                {sidebarSection === 'domains'  && <DomainsSection hostings={hostings} />}
+                {sidebarSection === 'backups'  && <BackupsSection />}
+                {sidebarSection === 'ssl'      && <SSLSection hostings={hostings} />}
+                {sidebarSection === 'email'    && <EmailSection hostings={hostings} />}
+                {sidebarSection === 'billing'  && (
+                  <BillingSection
+                    user={user}
+                    onTopup={handleTopup}
+                    onToggleAutoscale={handleToggleAutoscale}
+                    userActionLoading={userActionLoading}
+                  />
+                )}
+                {sidebarSection === 'config'   && (
+                  <ConfigSection
+                    user={user}
+                    setUser={setUser}
+                    hostings={hostings}
+                    onStart={(id) => start.mutate(id)}
+                    onStop={(id) => stop.mutate(id)}
+                    onRestart={(id) => restart.mutate(id)}
+                    actionLoading={activeHostingActionId}
+                  />
+                )}
+              </div>
             ) : (
               <>
                 {/* STATUS COMMAND BAR — always-visible, no loading state */}
