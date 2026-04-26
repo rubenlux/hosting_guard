@@ -165,6 +165,43 @@ function PixelSetupCard({ onSetup }) {
   );
 }
 
+/* ─── Pixel pending install (site registered but no events yet) ──────── */
+function PixelPendingInstall({ ownSite }) {
+  const [copied, setCopied] = React.useState(false);
+  const siteId = ownSite?.site_id || '';
+  const snippet = `<script src="https://api.hostingguard.lat/pixel.js?id=${siteId}" defer></script>`;
+
+  const copy = () => {
+    navigator.clipboard.writeText(snippet);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="bg-[#111] rounded-xl border border-white/8 p-8 max-w-xl mx-auto text-center">
+      <div className="w-12 h-12 rounded-full bg-[#00ff88]/10 border border-[#00ff88]/20 flex items-center justify-center mx-auto mb-4">
+        <Terminal className="w-6 h-6 text-[#00ff88]" />
+      </div>
+      <div className="text-sm font-bold text-white mb-1">Sitio registrado — falta instalar el script</div>
+      <div className="text-[11px] text-gray-500 mb-5 leading-relaxed">
+        Pegá este script en el <code className="text-gray-300">&lt;head&gt;</code> de <span className="text-[#00ff88]">hostingguard.lat</span> para activar el tracking.
+      </div>
+      <div className="bg-[#0a0a0c] border border-white/10 rounded-lg p-3 text-left mb-4 font-mono text-[11px] text-emerald-400 break-all select-all">
+        {snippet}
+      </div>
+      <button
+        onClick={copy}
+        className="flex items-center gap-2 mx-auto px-4 py-2 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20 text-[#00ff88] text-[11px] font-semibold hover:bg-[#00ff88]/20 transition-all"
+      >
+        {copied ? <><CheckCircle2 className="w-3.5 h-3.5" /> Copiado!</> : <><Terminal className="w-3.5 h-3.5" /> Copiar script</>}
+      </button>
+      <div className="mt-5 text-[10px] text-gray-600">
+        Una vez instalado, los datos aparecerán aquí automáticamente con las próximas visitas.
+      </div>
+    </div>
+  );
+}
+
 /* ─── Bar chart (CSS) ─────────────────────────────────────── */
 function HBar({ data, color = '#00ff88', labelWidth = 'w-28' }) {
   const max = Math.max(...data.map(d => d.value), 1);
@@ -1137,10 +1174,7 @@ export default function AdminDashboard() {
                   </Section>
                 </div>
               </>) : (
-                <div className="bg-[#111] rounded-xl border border-white/5 p-12 text-center text-gray-500">
-                  <BarChart3 className="w-8 h-8 mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">Sitio registrado. Esperando primeras visitas en <span className="text-[#00ff88] font-mono">hostingguard.lat</span>.</p>
-                </div>
+                <PixelPendingInstall ownSite={ownSite} />
               )
             )}
 
