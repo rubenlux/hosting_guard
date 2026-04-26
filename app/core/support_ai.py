@@ -65,6 +65,7 @@ REGLAS:
 6. Nunca inventés información que no esté en los datos del hosting.
 7. No prometás tiempos de resolución.
 8. Para problemas de billing: solo informar, no hacer cambios.
+9. REGLA CRÍTICA — SITIO FUNCIONANDO SEGÚN SISTEMAS: Si la VERIFICACIÓN EN TIEMPO REAL muestra contenedor "running" Y sitio respondiendo HTTP correctamente, decile al cliente de forma directa y sin rodeos: "Nuestros sistemas confirman que tu sitio está funcionando en este momento." Explicá que el problema es probablemente local: limpiar caché del navegador, probar en modo incógnito, revisar si tiene una VPN o extensión activa. NO sugieras reiniciar, diagnosticar ni hacer cambios en el servidor — el servidor está bien. Si el cliente insiste en que "está caído", reiterá que los datos en tiempo real muestran lo contrario y pedile que verifique desde otro dispositivo o red.
 """
 
 
@@ -150,7 +151,6 @@ def _check_live_status(hosting_data: Dict) -> Dict:
     result: Dict = {}
 
     container_name = hosting_data.get("container_name")
-    subdomain = hosting_data.get("subdomain", "")
 
     # Live container state via docker inspect
     if container_name:
@@ -164,19 +164,26 @@ def _check_live_status(hosting_data: Dict) -> Dict:
         except Exception as exc:
             logger.debug("support_ai: docker inspect failed for %s: %s", container_name, exc)
 
-    # HTTP check — does the site actually respond?
-    if subdomain:
+    # HTTP check — run curl inside the container to avoid Docker networking limitations.
+    # External subdomain DNS is unreachable from inside the app container; localhost:80 always works.
+    if container_name:
         try:
-            import urllib.request
-            import ssl
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            url = f"https://{subdomain}"
-            req = urllib.request.Request(url, method="HEAD")
-            with urllib.request.urlopen(req, timeout=4, context=ctx) as resp:
-                result["http_status"] = resp.status
-                result["http_ok"] = resp.status < 400
+            r = subprocess.run(
+                [
+                    "docker", "exec", container_name,
+                    "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                    "--max-time", "4", "http://localhost",
+                ],
+                capture_output=True, text=True, timeout=8,
+            )
+            code_str = r.stdout.strip()
+            if r.returncode == 0 and code_str.isdigit():
+                code = int(code_str)
+                result["http_status"] = code
+                result["http_ok"] = code < 400
+            else:
+                result["http_status"] = f"no_responde (exit {r.returncode})"
+                result["http_ok"] = False
         except Exception as exc:
             result["http_status"] = f"no_responde ({type(exc).__name__})"
             result["http_ok"] = False
