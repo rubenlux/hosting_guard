@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -302,6 +302,7 @@ export default function AdminDashboard() {
   const [containerHistory, setContainerHistory] = useState(null);
   const [loading, setLoading]           = useState(true);
   const [tab, setTab]                   = useState('users');
+  const tabBarRef = useRef(null);
   const [pixelFilter, setPixelFilter]   = useState('all');
 
   const fetchAll = async () => {
@@ -1063,9 +1064,9 @@ export default function AdminDashboard() {
               </div>
 
               {/* Tabs: Users / Hostings / Pixel */}
-              <div className="flex gap-1 border-b border-white/5">
+              <div ref={tabBarRef} className="flex gap-1 border-b border-white/5">
                 {[{ id:'users', label:`Users (${users.length})` }, { id:'hostings', label:`Hostings (${hostings.length})` }, { id:'pixel', label:`Pixel (${pixelEvents.length})` }].map(t => (
-                  <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 text-[11px] font-medium border-b-2 -mb-px transition-all ${tab===t.id ? 'border-[#00ff88] text-[#00ff88]' : 'border-transparent text-gray-500 hover:text-white'}`}>{t.label}</button>
+                  <button key={t.id} onClick={() => { setTab(t.id); tabBarRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} className={`px-4 py-2 text-[11px] font-medium border-b-2 -mb-px transition-all ${tab===t.id ? 'border-[#00ff88] text-[#00ff88]' : 'border-transparent text-gray-500 hover:text-white'}`}>{t.label}</button>
                 ))}
               </div>
               {tab === 'users'    && <UsersTable    users={users}       loading={loading} navigate={navigate} onReloadUsers={fetchAll} />}
