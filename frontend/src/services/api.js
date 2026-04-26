@@ -220,6 +220,11 @@ export const getAdminPixelSiteByDomain = async (domain) => {
     return response.data;
 };
 
+export const setupAdminOwnPixelSite = async () => {
+    const response = await api.post('/admin/pixel/setup-own-site');
+    return response.data;
+};
+
 export const getAdminPixelOverview = async (siteId = null) => {
     const url = siteId ? `/admin/pixel/overview?site_id=${siteId}` : '/admin/pixel/overview';
     const response = await api.get(url);

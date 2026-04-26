@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
-  getAdminPixelEvents, getAdminPixelSiteByDomain, getAdminHostingsMetrics,
+  getAdminPixelEvents, getAdminPixelSiteByDomain, setupAdminOwnPixelSite, getAdminHostingsMetrics,
   getAdminOrchestratorEvents, getAdminFinanceSummary,
   getSystemHealth, getAdminOpsSummary, getCapacityMetrics, getNodeMetrics,
   getTenantResourceUsage, getJobsSummary, getUnitEconomics, getContainerHistory,
@@ -88,6 +88,79 @@ function Initials({ email, size = 7 }) {
   return (
     <div className={`w-${size} h-${size} rounded-full ${color} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
       {letters}
+    </div>
+  );
+}
+
+/* ─── Pixel setup card (shown when hostingguard.lat has no pixel site) ── */
+function PixelSetupCard({ onSetup }) {
+  const [loading, setLoading] = React.useState(false);
+  const [result, setResult]   = React.useState(null);
+  const [error, setError]     = React.useState(null);
+  const [copied, setCopied]   = React.useState(false);
+
+  const handleSetup = async () => {
+    setLoading(true); setError(null);
+    try {
+      const r = await onSetup();
+      setResult(r);
+    } catch (e) {
+      setError('Error al registrar el sitio. Intentá de nuevo.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copySnippet = () => {
+    if (result?.snippet) {
+      navigator.clipboard.writeText(result.snippet);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  if (result) return (
+    <div className="bg-[#111] rounded-xl border border-[#00ff88]/20 p-8 max-w-xl mx-auto text-center">
+      <div className="w-12 h-12 rounded-full bg-[#00ff88]/10 flex items-center justify-center mx-auto mb-4">
+        <CheckCircle2 className="w-6 h-6 text-[#00ff88]" />
+      </div>
+      <div className="text-sm font-bold text-white mb-1">Sitio registrado</div>
+      <div className="text-[11px] text-gray-500 mb-6">
+        Pegá este script en el <code className="text-gray-300">&lt;head&gt;</code> de <span className="text-[#00ff88]">hostingguard.lat</span>
+      </div>
+      <div className="bg-[#0a0a0c] border border-white/10 rounded-lg p-3 text-left mb-4 font-mono text-[11px] text-emerald-400 break-all select-all">
+        {result.snippet}
+      </div>
+      <button
+        onClick={copySnippet}
+        className="flex items-center gap-2 mx-auto px-4 py-2 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20 text-[#00ff88] text-[11px] font-semibold hover:bg-[#00ff88]/20 transition-all"
+      >
+        {copied ? <><CheckCircle2 className="w-3.5 h-3.5" /> Copiado!</> : <><Terminal className="w-3.5 h-3.5" /> Copiar script</>}
+      </button>
+      <div className="mt-4 text-[10px] text-gray-600">
+        Una vez instalado, los datos de <span className="text-gray-400">hostingguard.lat</span> aparecerán aquí. Recargá la página.
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="bg-[#111] rounded-xl border border-white/8 p-12 text-center max-w-lg mx-auto">
+      <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto mb-5">
+        <Globe className="w-7 h-7 text-amber-400" />
+      </div>
+      <div className="text-sm font-bold text-white mb-2">Pixel no instalado en hostingguard.lat</div>
+      <div className="text-[11px] text-gray-500 leading-relaxed mb-6">
+        Esta sección muestra el tráfico de tu propia web. Registrá el sitio para obtener el script de tracking e instalarlo en el <code className="text-gray-300">&lt;head&gt;</code>.
+      </div>
+      {error && <div className="text-[11px] text-red-400 mb-4">{error}</div>}
+      <button
+        onClick={handleSetup}
+        disabled={loading}
+        className="flex items-center gap-2 mx-auto px-5 py-2.5 rounded-lg bg-[#00ff88]/10 border border-[#00ff88]/20 text-[#00ff88] text-[12px] font-semibold hover:bg-[#00ff88]/20 transition-all disabled:opacity-50"
+      >
+        {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
+        {loading ? 'Registrando...' : 'Registrar hostingguard.lat'}
+      </button>
     </div>
   );
 }
@@ -971,19 +1044,21 @@ export default function AdminDashboard() {
 
             {/* ══ PIXEL ANALYTICS ══ */}
             {section === 'pixel' && (
+              !ownSite ? (
+                <PixelSetupCard onSetup={async () => {
+                  try {
+                    const result = await setupAdminOwnPixelSite();
+                    setOwnSite({ site_id: result.site_id, domain: result.domain, name: 'HostingGuard' });
+                    return result;
+                  } catch (e) { throw e; }
+                }} />
+              ) :
               pixelAnalytics ? (<>
                 {/* Site source badge */}
                 <div className="flex items-center gap-2 mb-4 px-1">
                   <Globe className="w-3.5 h-3.5 text-[#00ff88]" />
                   <span className="text-[11px] text-gray-400">Mostrando datos de</span>
-                  <span className="text-[11px] font-mono font-bold text-[#00ff88]">
-                    {ownSite ? (ownSite.name || ownSite.domain || 'hostingguard.lat') : 'hostingguard.lat'}
-                  </span>
-                  {!ownSite && (
-                    <span className="text-[9px] text-amber-500/70 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
-                      sitio no registrado en pixel
-                    </span>
-                  )}
+                  <span className="text-[11px] font-mono font-bold text-[#00ff88]">{ownSite.name || ownSite.domain}</span>
                 </div>
                 {/* Overview stats */}
                 <div className="grid grid-cols-6 gap-3">
@@ -1064,7 +1139,7 @@ export default function AdminDashboard() {
               </>) : (
                 <div className="bg-[#111] rounded-xl border border-white/5 p-12 text-center text-gray-500">
                   <BarChart3 className="w-8 h-8 mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">Sin datos de pixel. Asegúrate de que el script de tracking está instalado en los sitios de clientes.</p>
+                  <p className="text-sm">Sitio registrado. Esperando primeras visitas en <span className="text-[#00ff88] font-mono">hostingguard.lat</span>.</p>
                 </div>
               )
             )}

@@ -170,6 +170,24 @@ def pixel_site_by_domain(domain: str, _: dict = Depends(require_role("admin"))):
     return site
 
 
+@router.post("/pixel/setup-own-site")
+def pixel_setup_own_site(admin: dict = Depends(require_role("admin"))):
+    """Create (or return existing) pixel site for hostingguard.lat.
+    Idempotent — safe to call multiple times."""
+    domain = "hostingguard.lat"
+    existing = _pixel_repo.get_site_by_domain(domain)
+    if existing:
+        site_id = existing["site_id"]
+    else:
+        site_id = _pixel_repo.create_site(
+            user_id=admin["user_id"],
+            name="HostingGuard",
+            domain=domain,
+        )
+    snippet = f'<script src="https://api.hostingguard.lat/pixel.js?id={site_id}" defer></script>'
+    return {"site_id": site_id, "domain": domain, "snippet": snippet, "created": not existing}
+
+
 @router.get("/pixel/overview")
 def pixel_overview(site_id: str = None, _: dict = Depends(require_role("admin"))):
     if site_id:
