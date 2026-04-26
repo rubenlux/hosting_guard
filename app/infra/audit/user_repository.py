@@ -178,6 +178,9 @@ class UserRepository:
             # Remove all FK-referencing rows before deleting the user.
             # hostings should already be gone (admin_delete_hosting called upstream),
             # but we delete any remaining rows as a safety net against FK violations.
+            # Delete in FK-safe order (children before parents)
+            cursor.execute("DELETE FROM import_jobs WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM site_alerts WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM orchestrator_events WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM support_sessions WHERE user_id = %s OR impersonated_user_id = %s", (user_id, user_id))
             cursor.execute("DELETE FROM auth_tokens WHERE user_id = %s", (user_id,))
