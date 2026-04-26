@@ -113,16 +113,27 @@ async def create_ticket(
     ai_prompt_hint = cat_info.get("ai_prompt_hint", "") if cat_info else ""
     priority = (cat_info.get("priority_default") if cat_info else None) or get_ticket_priority(body.category)
 
-    # Obtener datos del hosting si se especificó
+    # Obtener datos del hosting — usar el especificado o auto-detectar
     hosting_data = None
     if body.hosting_id:
         try:
             hosting_data = _hosting_repo.get_hosting_any(body.hosting_id)
-            # Validar que pertenece al usuario
             if hosting_data and hosting_data.get("user_id") != user_id:
                 hosting_data = None
         except Exception:
             hosting_data = None
+
+    if hosting_data is None:
+        # Auto-detectar: usar el primer hosting activo del usuario
+        try:
+            user_hostings = [
+                h for h in _hosting_repo.get_user_hostings(user_id)
+                if h.get("status") == "active"
+            ]
+            if user_hostings:
+                hosting_data = user_hostings[0]
+        except Exception:
+            pass
 
     # Título por defecto
     title = body.title or f"{body.category}: {body.description[:60]}"
