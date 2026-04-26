@@ -261,7 +261,9 @@ class HostingRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM hostings ORDER BY created_at DESC")
+            cursor.execute(
+                "SELECT * FROM hostings WHERE status != 'deleted' ORDER BY created_at DESC"
+            )
             return [dict(row) for row in cursor.fetchall()]
         finally:
             release_connection(conn)

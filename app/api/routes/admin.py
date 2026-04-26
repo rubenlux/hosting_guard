@@ -1211,28 +1211,50 @@ async def admin_upgrade_plan(
 
 
 @router.delete("/users/{user_id}")
-def admin_delete_user(user_id: int, admin: dict = Depends(require_role("admin"))):
-    """Hard-delete a user account. Blocked if the user is admin or has active hostings."""
+async def admin_delete_user(user_id: int, admin: dict = Depends(require_role("admin"))):
+    """
+    Hard-delete a user account and ALL their data (hostings, containers, events, sessions).
+
+    Cascade order:
+      1. docker rm -f each hosting container + DB container (silent on 'no such container')
+      2. admin_delete_hosting: removes all child DB records + hosting row
+      3. delete_user: removes orchestrator_events, support_sessions, user row
+    """
     target = _user_repo.get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     if target.get("role") == "admin":
         raise HTTPException(status_code=403, detail="No se puede eliminar una cuenta admin")
 
-    active_hostings = [
-        h for h in _hosting_repo.get_user_hostings(user_id)
-        if h.get("status") not in ("deleted", "terminated")
-    ]
-    if active_hostings:
-        raise HTTPException(
-            status_code=409,
-            detail=f"El usuario tiene {len(active_hostings)} hosting(s) activo(s). Elimínalos primero."
-        )
+    hostings = _hosting_repo.get_user_hostings(user_id)
+    docker_errors = []
 
+    for h in hostings:
+        container    = h["container_name"]
+        db_container = container.replace("_wp_", "_db_", 1) if "_wp_" in container else None
+        targets      = [container] + ([db_container] if db_container else [])
+
+        # 1. Remove Docker containers (ignore 'no such container')
+        for cname in targets:
+            r = await _run_docker("docker", "rm", "-f", cname, timeout=15)
+            if r.returncode != 0 and "No such container" not in (r.stderr or ""):
+                docker_errors.append(f"{cname}: {(r.stderr or '').strip()[:80]}")
+
+        # 2. Hard-delete hosting + all child records
+        _hosting_repo.admin_delete_hosting(h["hosting_id"], db_container=db_container)
+
+    # 3. Delete user (clears orchestrator_events, support_sessions, user row)
     deleted = _user_repo.delete_user(user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return {"ok": True, "deleted_user_id": user_id, "email": target["email"]}
+
+    return {
+        "ok": True,
+        "deleted_user_id": user_id,
+        "email": target["email"],
+        "hostings_removed": len(hostings),
+        "docker_errors": docker_errors,
+    }
 
 
 @router.get("/metrics/containers/history")
