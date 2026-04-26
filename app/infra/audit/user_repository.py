@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, Dict, List
+import json
 import logging
 from app.infra.db import get_connection, release_connection
 
@@ -76,12 +77,21 @@ class UserRepository:
             cursor.execute(
                 "SELECT user_id, email, password_hash, role, plan, plan_expires_at, "
                 "first_name, last_name, phone, email_verified, "
-                "balance, has_payment_method, autoscale_enabled, created_at "
+                "balance, has_payment_method, autoscale_enabled, created_at, "
+                "timezone, company, avatar_url, notification_prefs "
                 "FROM users WHERE email = %s",
                 (email,)
             )
             row = cursor.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            d = dict(row)
+            if d.get("notification_prefs"):
+                try:
+                    d["notification_prefs"] = json.loads(d["notification_prefs"])
+                except Exception:
+                    d["notification_prefs"] = None
+            return d
         finally:
             release_connection(conn)
 
@@ -89,15 +99,23 @@ class UserRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            # password_hash intentionally excluded — not needed for identity resolution
             cursor.execute(
                 "SELECT user_id, email, role, plan, plan_expires_at, first_name, last_name, phone, "
-                "balance, has_payment_method, autoscale_enabled, created_at "
+                "balance, has_payment_method, autoscale_enabled, created_at, "
+                "timezone, company, avatar_url, notification_prefs "
                 "FROM users WHERE user_id = %s",
                 (user_id,)
             )
             row = cursor.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            d = dict(row)
+            if d.get("notification_prefs"):
+                try:
+                    d["notification_prefs"] = json.loads(d["notification_prefs"])
+                except Exception:
+                    d["notification_prefs"] = None
+            return d
         finally:
             release_connection(conn)
 
@@ -188,6 +206,50 @@ class UserRepository:
             cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
             conn.commit()
             return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            release_connection(conn)
+
+    def update_profile(self, user_id: int, first_name: str, last_name: str, phone: str,
+                       timezone: Optional[str], company: Optional[str]) -> None:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET first_name=%s, last_name=%s, phone=%s, timezone=%s, company=%s "
+                "WHERE user_id=%s",
+                (first_name, last_name, phone, timezone, company, user_id),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            release_connection(conn)
+
+    def update_avatar_url(self, user_id: int, avatar_url: str) -> None:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET avatar_url=%s WHERE user_id=%s", (avatar_url, user_id))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            release_connection(conn)
+
+    def update_notification_prefs(self, user_id: int, prefs: dict) -> None:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET notification_prefs=%s WHERE user_id=%s",
+                (json.dumps(prefs), user_id),
+            )
+            conn.commit()
         except Exception:
             conn.rollback()
             raise

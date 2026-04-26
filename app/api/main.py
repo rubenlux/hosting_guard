@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 
 from typing import Optional
-from fastapi import Depends, FastAPI, Request, HTTPException, Response
+from fastapi import Depends, FastAPI, Request, HTTPException, Response, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import generate_latest
 from fastapi.middleware.cors import CORSMiddleware
@@ -411,6 +411,14 @@ def get_me(user: dict = Depends(verify_token)):
         "email_verified": bool(user_db.get("email_verified", 1)),
         "status": "authenticated",
         "is_support_session": user.get("is_support_session", False),
+        # Profile fields
+        "first_name": user_db.get("first_name"),
+        "last_name": user_db.get("last_name"),
+        "phone": user_db.get("phone"),
+        "timezone": user_db.get("timezone"),
+        "company": user_db.get("company"),
+        "avatar_url": user_db.get("avatar_url"),
+        "notification_prefs": user_db.get("notification_prefs"),
     }
     # Expose support metadata so the frontend can render the SupportBanner
     if user.get("is_support_session"):
@@ -460,6 +468,78 @@ def update_user_config(config: UserConfigRequest, user=Depends(verify_token)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class ProfileRequest(BaseModel):
+    first_name: Optional[str] = None
+    last_name:  Optional[str] = None
+    phone:      Optional[str] = None
+    timezone:   Optional[str] = None
+    company:    Optional[str] = None
+
+@app.patch("/user/profile")
+def update_profile(body: ProfileRequest, user=Depends(verify_token)):
+    user_repo.update_profile(
+        user["user_id"],
+        first_name=(body.first_name or "").strip(),
+        last_name=(body.last_name or "").strip(),
+        phone=(body.phone or "").strip(),
+        timezone=body.timezone,
+        company=(body.company or "").strip() or None,
+    )
+    return {"status": "ok"}
+
+
+class NotificationPrefsRequest(BaseModel):
+    prefs: dict
+
+@app.post("/user/notifications")
+def update_notifications(body: NotificationPrefsRequest, user=Depends(verify_token)):
+    user_repo.update_notification_prefs(user["user_id"], body.prefs)
+    return {"status": "ok"}
+
+
+_AVATARS_DIR = "/opt/data/avatars"
+_ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp"}
+_MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2 MB
+
+@app.post("/user/avatar")
+async def upload_avatar(file: UploadFile, user=Depends(verify_token)):
+    import os, pathlib
+
+    if file.content_type not in _ALLOWED_AVATAR_TYPES:
+        raise HTTPException(status_code=400, detail="Formato no permitido. Usa JPG, PNG o WebP.")
+
+    data = await file.read((_MAX_AVATAR_BYTES + 1))
+    if len(data) > _MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=413, detail="Imagen demasiado grande. Máximo 2 MB.")
+
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[file.content_type]
+    pathlib.Path(_AVATARS_DIR).mkdir(parents=True, exist_ok=True)
+    dest = f"{_AVATARS_DIR}/{user['user_id']}.{ext}"
+    # Remove any old avatar files for this user (different extension)
+    for old_ext in ("jpg", "png", "webp"):
+        old = f"{_AVATARS_DIR}/{user['user_id']}.{old_ext}"
+        if old != dest and os.path.exists(old):
+            os.unlink(old)
+    with open(dest, "wb") as f:
+        f.write(data)
+
+    url = f"/user/avatar-image/{user['user_id']}.{ext}"
+    user_repo.update_avatar_url(user["user_id"], url)
+    return {"url": url}
+
+
+@app.get("/user/avatar-image/{filename}")
+def get_avatar(filename: str):
+    from fastapi.responses import FileResponse
+    import os, re
+    if not re.fullmatch(r'\d+\.(jpg|png|webp)', filename):
+        raise HTTPException(status_code=404)
+    path = f"{_AVATARS_DIR}/{filename}"
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404)
+    return FileResponse(path)
+
 
 from pydantic import field_validator
 

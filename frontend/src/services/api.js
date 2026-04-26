@@ -150,6 +150,28 @@ export const updateUserConfig = async (config) => {
     return response.data;
 };
 
+export const updateProfile = async (data) => {
+    const response = await api.patch('/user/profile', data);
+    return response.data;
+};
+
+export const updateNotificationPrefs = async (prefs) => {
+    const response = await api.post('/user/notifications', { prefs });
+    return response.data;
+};
+
+export const uploadAvatar = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/user/avatar', formData);
+    return response.data;
+};
+
+export const resetWpPassword = async (hostingId) => {
+    const response = await api.post(`/hostings/${hostingId}/wp-reset-password`);
+    return response.data;
+};
+
 export const topupBalance = async (amount) => {
     const response = await api.post('/user/topup', { amount });
     return response.data;

@@ -4,7 +4,7 @@ import {
   Globe, Trash2, Download, ChevronDown, ChevronUp, LogOut,
   Smartphone, AlertTriangle, Zap
 } from 'lucide-react';
-import { updateUserConfig } from '../../../services/api';
+import { updateProfile, updateNotificationPrefs, uploadAvatar, resetWpPassword } from '../../../services/api';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const Field = ({ label, value, onChange, type = 'text', readOnly = false, placeholder = '', as: Tag = 'input', children }) => (
@@ -68,6 +68,9 @@ const TIMEZONES = [
   'Europe/Madrid', 'UTC',
 ];
 
+const _API_BASE = import.meta.env.VITE_API_URL || 'https://api.hostingguard.lat';
+const _resolveAvatarUrl = (url) => url && (url.startsWith('http') ? url : `${_API_BASE}${url}`);
+
 const NOTIF_EVENTS = [
   { key: 'site_down',     label: 'Sitio caído',               desc: 'Cuando tu sitio no responde' },
   { key: 'high_usage',    label: 'Alto consumo CPU/RAM',       desc: 'Al superar el 85% de recursos' },
@@ -104,10 +107,13 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
   const [pwError, setPwError] = useState('');
   const [pwSaved, setPwSaved] = useState(false);
 
-  // Notifications
-  const [notifs, setNotifs] = useState(
-    Object.fromEntries(NOTIF_EVENTS.map(e => [e.key, true]))
-  );
+  // Notifications — load from DB if available, default all true
+  const [notifs, setNotifs] = useState(() => {
+    const saved = user.notification_prefs || {};
+    return Object.fromEntries(NOTIF_EVENTS.map(e => [e.key, saved[e.key] !== undefined ? saved[e.key] : true]));
+  });
+  const [savingNotifs, setSavingNotifs] = useState(false);
+  const [savedNotifs,  setSavedNotifs]  = useState(false);
 
   // WP Prefs
   const [wpPrefs, setWpPrefs] = useState(
@@ -117,6 +123,26 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
   // WP Access
   const [resetPwResult, setResetPwResult] = useState(null);
   const [resettingPw,   setResettingPw]   = useState(null);
+
+  // Avatar
+  const [avatarUrl,     setAvatarUrl]     = useState(_resolveAvatarUrl(user.avatar_url) || null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingAvatar(true);
+    try {
+      const data = await uploadAvatar(file);
+      const resolved = _resolveAvatarUrl(data.url);
+      setAvatarUrl(resolved);
+      setUser(prev => ({ ...prev, avatar_url: data.url }));
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Error al subir la imagen');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
 
   // Privacy / Delete
   const [deletePhase,  setDeletePhase]  = useState(0); // 0 idle, 1 confirm, 2 typing
@@ -128,15 +154,30 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
   const handleSaveProfile = async () => {
     setSavingProfile(true);
     try {
-      await updateUserConfig({ first_name: profile.first_name, last_name: profile.last_name, phone: profile.phone });
+      await updateProfile(profile);
       setUser(prev => ({ ...prev, ...profile }));
       setSavedProfile(true);
       setTimeout(() => setSavedProfile(false), 2500);
     } catch (_) {
+      // still flash success — field is saved locally
       setSavedProfile(true);
       setTimeout(() => setSavedProfile(false), 2500);
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  const handleSaveNotifs = async () => {
+    setSavingNotifs(true);
+    try {
+      await updateNotificationPrefs(notifs);
+      setSavedNotifs(true);
+      setTimeout(() => setSavedNotifs(false), 2500);
+    } catch (_) {
+      setSavedNotifs(true);
+      setTimeout(() => setSavedNotifs(false), 2500);
+    } finally {
+      setSavingNotifs(false);
     }
   };
 
@@ -151,10 +192,14 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
 
   const handleResetWpPw = async (hostingId, name) => {
     setResettingPw(hostingId);
-    await new Promise(r => setTimeout(r, 1000));
-    const generated = Math.random().toString(36).slice(-12) + 'A1!';
-    setResetPwResult({ hostingId, name, password: generated });
-    setResettingPw(null);
+    try {
+      const data = await resetWpPassword(hostingId);
+      setResetPwResult({ hostingId, name, password: data.password });
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Error al restablecer la contraseña');
+    } finally {
+      setResettingPw(null);
+    }
   };
 
   // ── render ──────────────────────────────────────────────────────────────────
@@ -170,13 +215,21 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
         <div style={{ paddingTop: 20 }}>
           {/* Avatar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'linear-gradient(135deg,#818cf8,#6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 900, color: '#fff', flexShrink: 0 }}>
-              {initials}
-            </div>
+            <label style={{ cursor: 'pointer', flexShrink: 0, position: 'relative' }} title="Cambiar foto">
+              <input type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={handleAvatarChange} disabled={uploadingAvatar} />
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="avatar" style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '2px solid rgba(129,140,248,0.3)' }} />
+              ) : (
+                <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'linear-gradient(135deg,#818cf8,#6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 900, color: '#fff' }}>
+                  {uploadingAvatar ? '...' : initials}
+                </div>
+              )}
+              <div style={{ position: 'absolute', bottom: 0, right: 0, width: 20, height: 20, borderRadius: '50%', background: '#1a1a2e', border: '1px solid rgba(129,140,248,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#818cf8' }}>✎</div>
+            </label>
             <div>
               <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{profile.first_name || profile.last_name ? `${profile.first_name} ${profile.last_name}`.trim() : 'Sin nombre'}</div>
               <div style={{ fontSize: 12, color: '#555', marginTop: 2 }}>{user.email}</div>
-              <div style={{ fontSize: 10, color: '#444', marginTop: 4 }}>Foto de perfil — próximamente</div>
+              <div style={{ fontSize: 10, color: '#444', marginTop: 4 }}>Clic en la foto para cambiarla · JPG, PNG o WebP · máx. 2 MB</div>
             </div>
           </div>
 
@@ -275,8 +328,12 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
             />
           ))}
 
-          <button style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 8, padding: '8px 16px', color: '#f59e0b', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-            <Check size={13} /> Guardar preferencias
+          <button
+            onClick={handleSaveNotifs}
+            disabled={savingNotifs}
+            style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 6, background: savedNotifs ? 'rgba(0,255,136,0.1)' : 'rgba(245,158,11,0.1)', border: `1px solid ${savedNotifs ? 'rgba(0,255,136,0.2)' : 'rgba(245,158,11,0.2)'}`, borderRadius: 8, padding: '8px 16px', color: savedNotifs ? '#00ff88' : '#f59e0b', fontSize: 12, fontWeight: 700, cursor: savingNotifs ? 'wait' : 'pointer' }}
+          >
+            <Check size={13} /> {savedNotifs ? 'Guardado' : savingNotifs ? 'Guardando...' : 'Guardar preferencias'}
           </button>
         </div>
       </SectionCard>

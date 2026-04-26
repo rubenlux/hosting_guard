@@ -471,6 +471,12 @@ _INDEXES = [
       END IF;
     END $$
     """,
+    # User profile extended fields
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS company TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT",
+    # Notification preferences stored as JSON (e.g. {"site_down": true, "payment": false})
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_prefs TEXT",
 ]
 
 def ensure_monthly_partitions(cursor):

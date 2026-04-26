@@ -1059,6 +1059,33 @@ async def apply_fix(data: ApplyFixRequest, request: Request, user: dict = Depend
     return result.model_dump()
 
 
+@router.post("/hostings/{hosting_id}/wp-reset-password")
+def wp_reset_password(hosting_id: int, user: dict = Depends(verify_token)):
+    hosting = hosting_repo.get_hosting(hosting_id, user["user_id"])
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting no encontrado.")
+    if hosting["status"] not in ("active", "running"):
+        raise HTTPException(status_code=409, detail="El sitio debe estar activo para restablecer la contraseña.")
+
+    new_password = secrets.token_urlsafe(14)
+    container = hosting["container_name"]
+
+    result = subprocess.run(
+        ["docker", "exec", container,
+         "wp", "--allow-root", "user", "update", "admin",
+         f"--user_pass={new_password}", "--skip-email"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        logger.error("[wp-reset-pw] %s stderr: %s", container, result.stderr)
+        raise HTTPException(status_code=500, detail="No se pudo restablecer la contraseña en WordPress.")
+
+    # Persist new password so the hosting list can show it
+    hosting_repo.set_wp_credentials(hosting_id, new_password)
+
+    return {"password": new_password}
+
+
 @router.get("/{hosting_id}/health/history")
 async def get_health_history_legacy(hosting_id: int, user: dict = Depends(verify_token)):
     """Endpoint solicitado por la guía de implementación."""
