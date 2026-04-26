@@ -262,3 +262,10 @@ def check_and_expire_free_hostings():
         f"expirados: {expired_count}, limpiados: {cleaned_count}, "
         f"advertencias: {warned_count}, errores: {error_count}"
     )
+
+    # Record that this job ran so admin "Jobs & Errores" panel shows activity.
+    hosting_repo.log_orchestrator_event(
+        "system", 0, "expire",
+        f"expiration_job: expired={expired_count} cleaned={cleaned_count} warned={warned_count}",
+        simulated=False,
+    )

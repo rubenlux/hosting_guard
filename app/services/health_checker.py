@@ -166,6 +166,14 @@ def check_all_hostings() -> None:
                 alert_message=alert["message"] if alert else None
             )
 
+            # 6. Log resource snapshot so admin panel "Jobs & Errores" and
+            #    "Top Tenants por Recursos" have data to query.
+            _hosting_repo.log_orchestrator_event(
+                container, user_id, "health_check",
+                f"score={health_result['score']} cpu={stats['cpu']}% ram={stats['ram']}%",
+                cpu_pct=stats["cpu"], mem_pct=stats["ram"], simulated=False,
+            )
+
         except Exception as exc:
             logger.error("health_checker: failed for %s — %s", container, exc)
 

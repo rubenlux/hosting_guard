@@ -74,3 +74,9 @@ def collect_traffic() -> None:
             logger.warning("traffic_collector: timeout reading logs for %s", container)
         except Exception as exc:
             logger.error("traffic_collector: error for %s — %s", container, exc)
+
+    # Record that this job ran so admin "Jobs & Errores" panel shows activity.
+    _hosting_repo.log_orchestrator_event(
+        "system", 0, "traffic",
+        f"traffic_collector: {len(active)} hostings processed", simulated=False,
+    )

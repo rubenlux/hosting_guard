@@ -69,3 +69,10 @@ async def reconcile_containers() -> None:
                 "reconciler: failed to update status for hosting_id=%s",
                 zombie["hosting_id"],
             )
+
+    # Record that this job ran so admin "Jobs & Errores" panel shows activity.
+    hosting_repo.log_orchestrator_event(
+        "system", 0, "reconcile",
+        f"reconciler: {len(db_running)} containers checked, {len(zombies)} zombies found",
+        simulated=False,
+    )
