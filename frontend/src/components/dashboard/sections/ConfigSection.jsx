@@ -341,11 +341,14 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
       {/* ── 4. Acceso WordPress ── */}
       <SectionCard icon={Key} iconColor="#f59e0b" title="Acceso WordPress" defaultOpen={false}>
         <div style={{ paddingTop: 16 }}>
-          {hostings.length === 0 ? (
-            <div style={{ color: '#555', fontSize: 13, textAlign: 'center', padding: '2rem' }}>No tenés sitios WordPress activos.</div>
-          ) : (
+          {(() => {
+            const wpHostings = hostings.filter(h => h.wp_admin_password);
+            if (wpHostings.length === 0) return (
+              <div style={{ color: '#555', fontSize: 13, textAlign: 'center', padding: '2rem' }}>No tenés sitios WordPress activos.</div>
+            );
+            return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {hostings.map(h => {
+              {wpHostings.map(h => {
                 const subdomain = h.subdomain || '';
                 const wpUrl = subdomain.includes('.') ? `https://${subdomain}/wp-admin` : `https://${subdomain}.hostingguard.lat/wp-admin`;
                 const isResetting = resettingPw === h.hosting_id;
@@ -393,7 +396,8 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
                 );
               })}
             </div>
-          )}
+            );
+          })()}
         </div>
       </SectionCard>
 

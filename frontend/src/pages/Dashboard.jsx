@@ -12,8 +12,9 @@ import {
   Globe, Loader, RefreshCw, ShieldCheck, Activity,
   Database, Zap, CreditCard, Settings,
   Key, Lock, Mail, BarChart3, Headset,
-  ChevronLeft, ChevronRight, Bot, X, AlertTriangle,
+  ChevronLeft, ChevronRight, Bot, X, AlertTriangle, Bell,
 } from 'lucide-react';
+import NotificationsPage           from './Notifications';
 import '../Dashboard.css';
 import HostingList          from '../components/dashboard/HostingList';
 import ActivityFeed         from '../components/dashboard/ActivityFeed';
@@ -271,6 +272,10 @@ const Dashboard = () => {
             </div>
 
             <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Cuenta'}</div>
+            <div className={`nav-item-dash ${sidebarSection === 'notifications' ? 'active' : ''}`} onClick={() => { setSidebarSection('notifications'); setShowCreate(false); navigate('/dashboard'); }}>
+              <div className="nav-icon-dash" style={{ color: '#60a5fa' }}><Bell size={18} /></div>
+              {!isSidebarCollapsed && <span>Notificaciones</span>}
+            </div>
             <div className="nav-item-dash" onClick={() => { setShowSupport(true); setSupportView('history'); setOpenTicketId(null); }}>
               <div className="nav-icon-dash" style={{ color: '#818cf8' }}><Headset size={18} /></div>
               {!isSidebarCollapsed && <span>Soporte</span>}
@@ -315,8 +320,9 @@ const Dashboard = () => {
                 : sidebarSection === 'backups'  ? 'Backups'
                 : sidebarSection === 'ssl'      ? 'SSL / HTTPS'
                 : sidebarSection === 'email'    ? 'Email / SMTP'
-                : sidebarSection === 'billing'  ? 'Facturación'
-                : sidebarSection === 'config'   ? 'Configuración'
+                : sidebarSection === 'billing'        ? 'Facturación'
+                : sidebarSection === 'notifications'  ? 'Notificaciones'
+                : sidebarSection === 'config'         ? 'Configuración'
                 : activeView === 'pixel'    ? 'Pixel Analytics'
                 : activeView === 'admin'    ? 'Panel de Administración'
                 : activeView === 'sites'    ? 'Mis Sitios (Operaciones)'
@@ -372,10 +378,11 @@ const Dashboard = () => {
               />
             ) : sidebarSection ? (
               <div style={{ paddingBottom: '3rem' }}>
-                {sidebarSection === 'domains'  && <DomainsSection hostings={hostings} />}
-                {sidebarSection === 'backups'  && <BackupsSection hostings={hostings} />}
-                {sidebarSection === 'ssl'      && <SSLSection hostings={hostings} />}
-                {sidebarSection === 'email'    && <EmailSection hostings={hostings} />}
+                {sidebarSection === 'domains'        && <DomainsSection hostings={hostings} />}
+                {sidebarSection === 'backups'        && <BackupsSection hostings={hostings} />}
+                {sidebarSection === 'ssl'            && <SSLSection hostings={hostings} />}
+                {sidebarSection === 'email'          && <EmailSection hostings={hostings} />}
+                {sidebarSection === 'notifications'  && <NotificationsPage embedded />}
                 {sidebarSection === 'billing'  && (
                   <BillingSection
                     user={user}

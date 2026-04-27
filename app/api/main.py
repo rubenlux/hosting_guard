@@ -838,7 +838,7 @@ def update_notifications(body: NotificationPrefsRequest, user=Depends(verify_tok
     return {"status": "ok"}
 
 
-_AVATARS_DIR = "/opt/data/avatars"
+_AVATARS_DIR = os.getenv("AVATARS_DIR", "/app/data/avatars")
 _ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp"}
 _MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2 MB
 

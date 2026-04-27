@@ -177,7 +177,7 @@ function NotifCard({ item, onRead, onArchive }) {
 }
 
 /* ── main page ───────────────────────────────────────────────────────────── */
-export default function Notifications() {
+export default function Notifications({ embedded = false }) {
   const navigate  = useNavigate();
   const [items,   setItems]    = useState([]);
   const [loading, setLoading]  = useState(true);
@@ -242,8 +242,9 @@ export default function Notifications() {
   const unreadCt = visible.filter(n => n.status === 'unread').length;
 
   return (
-    <div className="min-h-screen bg-[#0d0d0f] text-white">
-      {/* ── top bar ── */}
+    <div className={embedded ? 'text-white' : 'min-h-screen bg-[#0d0d0f] text-white'}>
+      {/* ── top bar — hidden when embedded in dashboard sidebar ── */}
+      {!embedded && (
       <div className="sticky top-0 z-20 bg-[#0d0d0f]/90 backdrop-blur border-b border-white/6">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
@@ -279,8 +280,40 @@ export default function Notifications() {
           </div>
         </div>
       </div>
+      )}
 
-      <div className="max-w-3xl mx-auto px-4 py-6">
+      <div className={embedded ? 'px-0 py-0' : 'max-w-3xl mx-auto px-4 py-6'}>
+        {/* ── embedded header ── */}
+        {embedded && (
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <span className="text-[22px] font-black text-white">Notificaciones</span>
+              {unreadCt > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400 font-medium border border-red-500/20">
+                  {unreadCt}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {unreadCt > 0 && (
+                <button
+                  onClick={handleMarkAll}
+                  className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white/70 transition-colors px-2.5 py-1.5 rounded-lg bg-white/4 border border-white/8 hover:bg-white/8"
+                >
+                  <CheckCheck className="w-3.5 h-3.5" />
+                  Leer todo
+                </button>
+              )}
+              <button
+                onClick={() => load(true)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/4 border border-white/8 hover:bg-white/8 transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-white/40 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ── filter bar ── */}
         <div className="mb-5 space-y-3">
           {/* status tabs */}
