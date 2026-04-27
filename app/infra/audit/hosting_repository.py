@@ -280,7 +280,7 @@ class HostingRepository:
                    cpu_pct, mem_pct, risk_level, simulated)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (container_name, user_id, event_type, message, datetime.now(timezone.utc).isoformat(),
+                (container_name, user_id or None, event_type, message, datetime.now(timezone.utc).isoformat(),
                  cpu_pct, mem_pct, risk_level, 1 if simulated else 0),
             )
             # Limpieza automática (últimos 500 eventos por usuario)

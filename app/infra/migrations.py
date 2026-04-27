@@ -541,6 +541,8 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_backups_hosting ON backups(hosting_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_backups_user ON backups(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_ssl_checks_hosting ON ssl_checks(hosting_id, checked_at DESC)",
+    # Allow user_id=NULL for system-level orchestrator events (expiration_job summary, traffic_collector)
+    "ALTER TABLE orchestrator_events ALTER COLUMN user_id DROP NOT NULL",
 ]
 
 def ensure_monthly_partitions(cursor):
