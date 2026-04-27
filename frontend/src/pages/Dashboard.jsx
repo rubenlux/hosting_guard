@@ -12,7 +12,7 @@ import {
   Globe, Loader, RefreshCw, ShieldCheck, Activity,
   Database, Zap, CreditCard, Settings,
   Key, Lock, Mail, BarChart3, Headset,
-  ChevronLeft, ChevronRight, Bot, X, AlertTriangle, Bell,
+  ChevronLeft, ChevronRight, Bot, X, AlertTriangle, Bell, Search,
 } from 'lucide-react';
 import NotificationsPage           from './Notifications';
 import '../Dashboard.css';
@@ -40,6 +40,7 @@ import EmailSection         from '../components/dashboard/sections/EmailSection'
 import BillingSection       from '../components/dashboard/sections/BillingSection';
 import ConfigSection        from '../components/dashboard/sections/ConfigSection';
 import NotificationBell    from '../components/dashboard/NotificationBell';
+import DashboardOverview   from '../components/dashboard/DashboardOverview';
 const BusinessOverview = lazy(() => import('../components/dashboard/BusinessOverview'));
 
 const Dashboard = () => {
@@ -314,22 +315,38 @@ const Dashboard = () => {
         {/* ── MAIN ── */}
         <main className="main-dash">
           <div className="topbar-dash">
-            <div className="text-[15px] font-medium flex-1">
-              {showCreate ? 'Nuevo Proyecto'
-                : sidebarSection === 'domains'  ? 'Dominios'
-                : sidebarSection === 'backups'  ? 'Backups'
-                : sidebarSection === 'ssl'      ? 'SSL / HTTPS'
-                : sidebarSection === 'email'    ? 'Email / SMTP'
-                : sidebarSection === 'billing'        ? 'Facturación'
-                : sidebarSection === 'notifications'  ? 'Notificaciones'
-                : sidebarSection === 'config'         ? 'Configuración'
-                : activeView === 'pixel'    ? 'Pixel Analytics'
-                : activeView === 'admin'    ? 'Panel de Administración'
-                : activeView === 'sites'    ? 'Mis Sitios (Operaciones)'
-                : activeView === 'advisory' ? 'AI Advisory Center'
-                : 'Dashboard Overview'}
-            </div>
-            <div className="hidden md:flex items-center gap-2 bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-500/20 text-xs font-medium">
+            {/* Dashboard overview: breadcrumb + search */}
+            {activeView === 'dashboard' && !showCreate && !sidebarSection ? (
+              <>
+                <div className="flex items-center gap-2 text-[13px] text-white/40 shrink-0">
+                  <span className="text-white/25">{user?.email?.split('@')[0] ?? 'cuenta'}</span>
+                  <ChevronRight size={12} className="text-white/20" />
+                  <span className="text-white/80 font-medium">Dashboard</span>
+                </div>
+                <div className="hidden md:flex flex-1 max-w-xs mx-4 items-center gap-2 bg-[#131313] border border-[#1f1f1f] rounded-lg px-3 py-1.5 text-[12px] text-white/30 cursor-text">
+                  <Search size={13} className="shrink-0 text-white/25" />
+                  <span>Buscar sitios, dominios, métricas…</span>
+                  <span className="ml-auto text-[10px] font-mono px-1.5 py-0.5 border border-[#2a2a2a] rounded text-white/20">⌘K</span>
+                </div>
+              </>
+            ) : (
+              <div className="text-[15px] font-medium flex-1">
+                {showCreate ? 'Nuevo Proyecto'
+                  : sidebarSection === 'domains'  ? 'Dominios'
+                  : sidebarSection === 'backups'  ? 'Backups'
+                  : sidebarSection === 'ssl'      ? 'SSL / HTTPS'
+                  : sidebarSection === 'email'    ? 'Email / SMTP'
+                  : sidebarSection === 'billing'        ? 'Facturación'
+                  : sidebarSection === 'notifications'  ? 'Notificaciones'
+                  : sidebarSection === 'config'         ? 'Configuración'
+                  : activeView === 'pixel'    ? 'Pixel Analytics'
+                  : activeView === 'admin'    ? 'Panel de Administración'
+                  : activeView === 'sites'    ? 'Mis Sitios (Operaciones)'
+                  : activeView === 'advisory' ? 'AI Advisory Center'
+                  : 'Dashboard Overview'}
+              </div>
+            )}
+            <div className="hidden md:flex items-center gap-2 bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-500/20 text-xs font-medium shrink-0">
               <div className="pulse-dash" /> Servicios Operativos
             </div>
             {activeView !== 'admin' && !sidebarSection && (
@@ -338,16 +355,16 @@ const Dashboard = () => {
                   if (showCreate) { setShowCreate(false); }
                   else { navigate(activeView === 'sites' ? '/sites' : '/dashboard'); setShowCreate(true); }
                 }}
-                className="px-3 py-2 text-sm font-medium rounded-lg border border-white/10 bg-[#121214] hover:bg-white/5 transition"
+                className="px-3 py-2 text-sm font-medium rounded-lg border border-white/10 bg-[#121214] hover:bg-white/5 transition shrink-0"
               >
                 {showCreate ? 'Volver' : '+ Nuevo sitio'}
               </button>
             )}
             <NotificationBell />
-            {!sidebarSection && <button className="btn-dash btn-primary-dash">Upgrade</button>}
+            {!sidebarSection && <button className="btn-dash btn-primary-dash shrink-0">Upgrade</button>}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 lg:p-10 bg-[#0a0a0c]">
+          <div className="flex-1 overflow-y-auto bg-[#0a0a0a]" style={{ padding: activeView === 'dashboard' && !showCreate && !sidebarSection ? 0 : undefined }}>
             {showCreate ? (
               <div className="max-w-4xl mx-auto">
                 <HostingCreationForm onSuccess={() => { setShowCreate(false); refresh(); }} />
@@ -401,191 +418,25 @@ const Dashboard = () => {
                 )}
               </div>
             ) : (
-              <>
-                {/* STATUS COMMAND BAR — always-visible, no loading state */}
-                <StatusCommandBar
-                  hostings={hostings}
-                  healthData={healthData}
-                  advisories={advisories}
-                  alerts={alerts}
-                />
-
-                {/* EXPIRATION WARNINGS */}
-                {expiringHostings.map(h => (
-                  <div key={h.hosting_id} className={`flex items-center justify-between gap-4 px-5 py-3 rounded-2xl border mb-3 mt-4 ${
-                    h.expires_in_days === 0 ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-500'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      <AlertTriangle className="w-4 h-4 shrink-0" />
-                      <span className="text-xs font-medium">
-                        {h.expires_in_days === 0
-                          ? `Tu sitio "${h.name}" ha expirado. Actualizá tu plan para reactivarlo.`
-                          : `Tu sitio "${h.name}" vence en ${h.expires_in_days} día${h.expires_in_days === 1 ? '' : 's'}. ¡Actualizá tu plan!`}
-                      </span>
-                    </div>
-                    <button className="text-[10px] font-black uppercase tracking-wider bg-warn/20 hover:bg-warn/30 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap">
-                      Upgrade →
-                    </button>
-                  </div>
-                ))}
-
-                {/* ── KPI STRIP ─────────────────────────────────────────── */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
-                  {/* Sitios activos */}
-                  {(() => {
-                    const active = hostings.filter(h => h.status === 'active').length;
-                    const total  = hostings.length;
-                    const pct    = total > 0 ? Math.round((active / total) * 100) : 0;
-                    return (
-                      <div className="bg-[#121214] border border-white/8 rounded-2xl p-5 relative overflow-hidden" style={{ borderTop: '2px solid #00ff88' }}>
-                        <div className="absolute top-4 right-4 opacity-[0.06]"><Activity className="w-12 h-12 text-emerald-400" /></div>
-                        <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">Sitios activos</div>
-                        <div className="text-4xl font-black text-white tracking-tight mb-1">
-                          {active}<span className="text-xl text-gray-600">/{total}</span>
-                        </div>
-                        <div className="w-full h-1.5 bg-white/5 rounded-full mt-3 overflow-hidden">
-                          <div className="h-full rounded-full transition-all duration-700 bg-emerald-500" style={{ width: `${pct}%` }} />
-                        </div>
-                        <div className="text-[10px] text-gray-500 mt-2">{pct}% operativos</div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Salud general */}
-                  <div className="bg-[#121214] border border-white/8 rounded-2xl p-5 relative overflow-hidden" style={{ borderTop: '2px solid #818cf8' }}>
-                    <div className="absolute top-4 right-4 opacity-[0.06]"><ShieldCheck className="w-12 h-12 text-indigo-400" /></div>
-                    <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">Salud general</div>
-                    <div className="text-4xl font-black text-white tracking-tight mb-1">
-                      {avgHealthScore ?? '—'}<span className="text-xl text-gray-600">/100</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-white/5 rounded-full mt-3 overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-700" style={{ width: `${avgHealthScore ?? 0}%`, background: (avgHealthScore ?? 0) >= 85 ? '#818cf8' : (avgHealthScore ?? 0) >= 60 ? '#f59e0b' : '#ef4444' }} />
-                    </div>
-                    <div className="flex items-center gap-1 mt-2">
-                      <span className="text-[10px] font-medium" style={{ color: healthTrend.color }}>{healthTrend.arrow} {healthTrend.label}</span>
-                      <TrendLine data={primaryHostingHistory} />
-                    </div>
-                  </div>
-
-                  {/* CPU */}
-                  {(() => {
-                    const cpu = parseFloat(avgCpu) || 0;
-                    const cpuColor = cpu > 85 ? '#ef4444' : cpu > 60 ? '#f59e0b' : '#3b82f6';
-                    return (
-                      <div className="bg-[#121214] border border-white/8 rounded-2xl p-5 relative overflow-hidden" style={{ borderTop: '2px solid #3b82f6' }}>
-                        <div className="absolute top-4 right-4 opacity-[0.06]"><Zap className="w-12 h-12 text-blue-400" /></div>
-                        <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">CPU promedio</div>
-                        <div className="text-4xl font-black text-white tracking-tight mb-1">
-                          {avgCpu}<span className="text-xl text-gray-600">%</span>
-                        </div>
-                        <div className="w-full h-1.5 bg-white/5 rounded-full mt-3 overflow-hidden">
-                          <div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.min(cpu, 100)}%`, background: cpuColor }} />
-                        </div>
-                        <div className="text-[10px] mt-2" style={{ color: cpuColor }}>
-                          {cpu > 85 ? 'Carga alta' : cpu > 60 ? 'Carga moderada' : 'Carga normal'}
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Alertas */}
-                  {(() => {
-                    const hasAlerts = unresolved > 0;
-                    return (
-                      <div className="bg-[#121214] border border-white/8 rounded-2xl p-5 relative overflow-hidden" style={{ borderTop: `2px solid ${hasAlerts ? '#ef4444' : '#00ff88'}` }}>
-                        <div className="absolute top-4 right-4 opacity-[0.06]"><AlertTriangle className="w-12 h-12" style={{ color: hasAlerts ? '#ef4444' : '#00ff88' }} /></div>
-                        <div className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-3">Alertas activas</div>
-                        <div className="text-4xl font-black tracking-tight mb-1" style={{ color: hasAlerts ? '#ef4444' : '#00ff88' }}>
-                          {unresolved}
-                        </div>
-                        <div className="mt-3">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${hasAlerts ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
-                            {hasAlerts ? `${unresolved} sin resolver` : '● Todo normal'}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-gray-600 mt-2">RAM: {totalRam}</div>
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                {/* ── MAIN GRID: Hostings + AI Advisory ─────────────────── */}
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-6">
-                  {/* Hosting list — takes 2/3 */}
-                  <div className="xl:col-span-2">
-                    <HostingList
-                      hostings={hostings}
-                      loading={loading}
-                      healthData={healthData}
-                      isSupportSession={isSupportSession}
-                      actionLoading={activeHostingActionId}
-                      onRefresh={refresh}
-                      onStart={(id)   => start.mutate(id)}
-                      onStop={(id)    => stop.mutate(id)}
-                      onRestart={(id) => restart.mutate(id)}
-                      onOpenLogs={handleOpenLogs}
-                      onDelete={handleDelete}
-                      onUploadZip={(h) => { setSelectedUploadHosting(h); setShowUpload(true); }}
-                      onOpenFiles={(h) => { setSelectedFilesHosting(h); setShowFiles(true); }}
-                      onImportBackup={(h) => setImportModal(h)}
-                    />
-                  </div>
-
-                  {/* Right column: AI Advisory + balance widget */}
-                  <div className="flex flex-col gap-6">
-                    <AIAdvisoryPanel advisories={advisories} onDiagnose={handleDiagnose} />
-
-                    {/* Compact balance widget */}
-                    <div className="bg-[#121214] border border-white/8 rounded-2xl p-5 relative overflow-hidden">
-                      <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-indigo-500 to-purple-500" />
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-[10px] font-bold tracking-widest text-gray-500 uppercase">Tu cuenta</span>
-                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${user?.has_payment_method ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-                          {user?.has_payment_method ? 'Tarjeta vinculada' : 'Sin tarjeta'}
-                        </span>
-                      </div>
-                      <div className="flex items-end gap-3 mb-4">
-                        <div>
-                          <div className="text-[10px] text-gray-600 mb-0.5">Saldo</div>
-                          <div className="text-2xl font-black text-white">${(user?.balance || 0).toFixed(2)}</div>
-                        </div>
-                        <div className="mb-0.5 pb-0.5">
-                          <div className="text-[10px] text-gray-600 mb-0.5">Plan</div>
-                          <div className="text-sm font-bold text-indigo-400 uppercase">{user?.plan || 'Free'}</div>
-                        </div>
-                      </div>
-                      {!user?.has_payment_method && user?.balance <= 0 && (
-                        <div className="text-[10px] bg-red-500/8 text-red-400 p-2.5 rounded-xl border border-red-500/15 flex items-center gap-2 mb-3">
-                          <AlertTriangle className="w-3 h-3 shrink-0" /> Recargá saldo para evitar suspensiones.
-                        </div>
-                      )}
-                      <button
-                        onClick={handleTopup}
-                        disabled={userActionLoading}
-                        className="w-full py-2.5 rounded-xl text-xs font-black text-white transition-all disabled:opacity-50"
-                        style={{ background: 'linear-gradient(135deg, #6366f1, #818cf8)' }}
-                      >
-                        {userActionLoading ? 'Procesando...' : 'Recargar +$10'}
-                      </button>
-                      <button onClick={() => setSidebarSection('billing')} className="w-full mt-2 py-2 rounded-xl text-[10px] font-semibold text-gray-500 hover:text-gray-300 transition-colors bg-transparent border-none cursor-pointer">
-                        Ver facturación →
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* ── BOTTOM: Traffic + Activity ─────────────────────────── */}
-                <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 mt-6 pb-6">
-                  <div className="xl:col-span-3">
-                    <Suspense fallback={<div className="p-6 bg-[#121214] border border-white/8 rounded-2xl text-xs text-gray-500">Cargando tráfico...</div>}>
-                      <BusinessOverview />
-                    </Suspense>
-                  </div>
-                  <div className="xl:col-span-2">
-                    <ActivityFeed events={events} onRefresh={refresh} />
-                  </div>
-                </div>
-              </>
+              <DashboardOverview
+                hostings={hostings}
+                healthData={healthData}
+                healthHistory={healthHistory}
+                alerts={alerts}
+                events={events}
+                advisories={advisories}
+                avgHealthScore={avgHealthScore}
+                avgCpu={avgCpu}
+                unresolved={unresolved}
+                user={user}
+                onTopup={handleTopup}
+                onRefresh={refresh}
+                onOpenLogs={handleOpenLogs}
+                onOpenFiles={(h) => { setSelectedFilesHosting(h); setShowFiles(true); }}
+                onUpload={(h) => { setSelectedUploadHosting(h); setShowUpload(true); }}
+                onRestart={(id) => restart.mutate(id)}
+                userActionLoading={userActionLoading}
+              />
             )}
           </div>
         </main>
