@@ -271,7 +271,8 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
             _log(job_id, "WARN: sin DB container — fix de dominio omitido")
 
         # ── Post-import optimization ──────────────────────────────────────
-        _post_import_optimize(job_id, container)
+        site_name = hosting.get("name") or str(hosting_id)
+        _post_import_optimize(job_id, container, user_id=user_id, site_name=site_name)
 
         # ── Verify site is actually accessible ────────────────────────────
         site_ok = _verify_site_accessible(job_id, new_domain)
@@ -290,7 +291,6 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
 
         _import_repo.set_status(job_id, "completed")
         _log(job_id, f"✓ Importación completada. Sitio disponible en https://{new_domain}")
-        site_name = hosting.get("name") or str(hosting_id)
         notify(
             user_id,
             f"Importación completada: {site_name}",
@@ -527,9 +527,9 @@ def _fix_domain(job_id: int, db_container: str, old_domain: str, new_domain: str
 
 # ── post-import optimization ──────────────────────────────────────────────────
 
-def _post_import_optimize(job_id: int, container: str):
+def _post_import_optimize(job_id: int, container: str, user_id: int = 0, site_name: str = ""):
     """Delegate to shared optimize_wordpress — logs are forwarded to the import job."""
-    optimize_wordpress(container, log=lambda msg: _log(job_id, msg))
+    optimize_wordpress(container, log=lambda msg: _log(job_id, msg), user_id=user_id, site_name=site_name)
 
 
 # ── post-import site verification ────────────────────────────────────────────

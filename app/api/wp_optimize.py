@@ -85,6 +85,8 @@ def optimize_wordpress(
     install_title: str = "Mi Sitio",
     install_email: str = "",
     admin_password: str = "",
+    user_id: int = 0,
+    site_name: str = "",
 ) -> dict:
     """
     Idempotent optimization for any WordPress container.
@@ -109,6 +111,18 @@ def optimize_wordpress(
         msg = "WordPress no respondió en 120s — optimización omitida"
         _log(f"  WARN: {msg}")
         result["errors"].append(msg)
+        if user_id:
+            try:
+                from app.services.notification_service import notify as _notify
+                _notify(
+                    user_id,
+                    f"Optimización no completada: {site_name or container}",
+                    "WordPress no respondió a tiempo durante la configuración inicial. "
+                    "El sitio puede tardar unos minutos más en estar listo.",
+                    category="wordpress", severity="warning", channel="dashboard",
+                )
+            except Exception:
+                pass
         return result
     _log("  ✓ WordPress listo")
 
@@ -170,6 +184,18 @@ def optimize_wordpress(
         _docker_exec(container, "wp", "--allow-root", "redis", "enable", timeout=30)
         _log("  ✓ Redis Object Cache activado")
         result["redis_ok"] = True
+        if user_id:
+            try:
+                from app.services.notification_service import notify as _notify
+                _notify(
+                    user_id,
+                    f"Redis activado: {site_name or container}",
+                    f"El caché de objetos Redis fue activado en '{site_name or container}'. "
+                    "Esto mejora significativamente el rendimiento de tu sitio.",
+                    category="wordpress", severity="success", channel="dashboard",
+                )
+            except Exception:
+                pass
     else:
         err = r.stderr.strip()[:80]
         _log(f"  WARN redis-cache: {err}")
@@ -190,6 +216,18 @@ def optimize_wordpress(
             _docker_exec(container, "wp", "--allow-root", "option", "update", opt, val, timeout=10)
         _log("  ✓ WP Super Cache activado y configurado")
         result["supercache_ok"] = True
+        if user_id:
+            try:
+                from app.services.notification_service import notify as _notify
+                _notify(
+                    user_id,
+                    f"WP Super Cache activado: {site_name or container}",
+                    f"El caché de páginas WP Super Cache fue activado en '{site_name or container}'. "
+                    "Las páginas se sirven ahora como archivos estáticos.",
+                    category="wordpress", severity="success", channel="dashboard",
+                )
+            except Exception:
+                pass
     else:
         err = r.stderr.strip()[:80]
         _log(f"  WARN wp-super-cache: {err}")
@@ -224,4 +262,21 @@ def optimize_wordpress(
         _log(f"  WARN db optimize: {r.stderr.strip()[:80]}")
 
     _log("Optimización completada")
+    if user_id:
+        try:
+            from app.services.notification_service import notify as _notify
+            activated = []
+            if result["redis_ok"]:      activated.append("Redis")
+            if result["supercache_ok"]: activated.append("WP Super Cache")
+            extras = f" ({', '.join(activated)} activo)" if activated else ""
+            _notify(
+                user_id,
+                f"WordPress listo: {site_name or container}",
+                f"La configuración de '{site_name or container}' fue completada.{extras} "
+                "Tu sitio está optimizado y disponible.",
+                category="wordpress", severity="success", channel="dashboard",
+                action_url="/dashboard",
+            )
+        except Exception:
+            pass
     return result

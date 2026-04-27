@@ -57,13 +57,13 @@ def _expire_single(hosting):
     container = hosting["container_name"]
     # 1. Marcar en DB como en progreso (operación segura y reversible)
     hosting_repo.update_hosting_status(hosting["hosting_id"], "expiring")
-    
+
     # 2. Ejecutar acción real en Docker
     result = subprocess.run(
         ["docker", "stop", container],
         capture_output=True, timeout=10
     )
-    
+
     if result.returncode == 0:
         hosting_repo.update_hosting_status(hosting["hosting_id"], "expired")
         hosting_repo.log_orchestrator_event(
@@ -72,6 +72,19 @@ def _expire_single(hosting):
             event_type="PLAN_EXPIRED",
             message="Tu plan gratuito de 14 días ha expirado. Actualizá tu plan para reactivar el sitio."
         )
+        try:
+            from app.services.notification_service import notify as _notify
+            site = hosting.get("name") or container
+            _notify(
+                hosting["user_id"],
+                f"Sitio suspendido: {site}",
+                f"Tu plan gratuito de {FREE_PLAN_DAYS} días ha expirado y el sitio '{site}' fue desactivado. "
+                "Actualizá tu plan para reactivarlo.",
+                category="billing", severity="critical", channel="both",
+                action_url="/dashboard",
+            )
+        except Exception:
+            pass
         return hosting, True
     else:
         # Revertir si Docker falló
@@ -222,6 +235,20 @@ def check_and_expire_free_hostings():
                             event_type="PLAN_EXPIRING_SOON",
                             message=f"Tu plan gratuito vence en {max(1, int(days_remaining))} día(s). Actualizá tu plan para no perder tu sitio."
                         )
+                        try:
+                            from app.services.notification_service import notify as _notify
+                            days_left = max(1, int(days_remaining))
+                            site = hosting.get("name") or hosting["container_name"]
+                            _notify(
+                                hosting["user_id"],
+                                f"Tu plan vence en {days_left} día{'s' if days_left != 1 else ''}",
+                                f"El sitio '{site}' se desactivará automáticamente en {days_left} "
+                                f"día{'s' if days_left != 1 else ''}. Actualizá tu plan para conservarlo.",
+                                category="billing", severity="warning", channel="both",
+                                action_url="/dashboard",
+                            )
+                        except Exception:
+                            pass
                         logger.info(f"Hosting {hosting['hosting_id']} expira en {max(1, int(days_remaining))} días — aviso enviado.")
                         warned_count += 1
 

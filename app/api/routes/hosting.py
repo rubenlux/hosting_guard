@@ -300,6 +300,15 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
     except HTTPException:
         raise
     except Exception as e:
+        try:
+            notify(
+                user.get("user_id") or 0,
+                f"Error al crear sitio: {data.name}",
+                f"No se pudo crear el sitio '{data.name}'. Nuestro equipo fue notificado.",
+                category="hosting", severity="critical", channel="dashboard",
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -607,6 +616,8 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
 
         # Run optimization in background — WP needs ~60s to initialize before WP-CLI works.
         loop = asyncio.get_running_loop()
+        _uid = user_id or 0
+        _sname = data.name
         loop.run_in_executor(
             None,
             lambda: optimize_wordpress(
@@ -614,9 +625,11 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
                 log=lambda msg: logger.info("[wp_new:%s] %s", wp_container, msg),
                 auto_install=True,
                 install_url=f"https://{subdomain}",
-                install_title=data.name,
+                install_title=_sname,
                 install_email=user_email,
                 admin_password=wp_admin_pass,
+                user_id=_uid,
+                site_name=_sname,
             ),
         )
 
