@@ -726,3 +726,18 @@ export const adminGetNotificationLog = async (params = {}) => {
   const response = await api.get('/admin/notifications/log', { params });
   return response.data;
 };
+
+export const verify2FALogin = async (token) => {
+  const response = await api.post('/auth/2fa/verify-login', { token });
+  return response.data;
+};
+
+export const getHostingBackups = async (hostingId) => {
+  const response = await api.get(`/hosting/hostings/${hostingId}/backups`);
+  return response.data;
+};
+
+export const triggerBackup = async (hostingId) => {
+  const response = await api.post(`/hosting/hostings/${hostingId}/backup`);
+  return response.data;
+};

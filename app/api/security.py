@@ -93,19 +93,21 @@ def _get_staff_cached(staff_id: int):
 
 
 def create_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    import time as _time
     payload = data.copy()
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-    payload.update({"jti": str(uuid.uuid4()), "exp": expire, "type": "access"})
+    payload.update({"jti": str(uuid.uuid4()), "exp": expire, "iat": int(_time.time()), "type": "access"})
     return jwt.encode(payload, SECRET, algorithm=ALGO)
 
 
 def create_refresh_token(data: dict) -> str:
+    import time as _time
     payload = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=7)
-    payload.update({"jti": str(uuid.uuid4()), "exp": expire, "type": "refresh"})
+    payload.update({"jti": str(uuid.uuid4()), "exp": expire, "iat": int(_time.time()), "type": "refresh"})
     return jwt.encode(payload, SECRET, algorithm=ALGO)
 
 
@@ -132,6 +134,18 @@ def _decode_and_validate(token: str) -> dict:
 
     if _is_revoked(jti):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revocado")
+
+    # Check revoke-all: if user called /auth/revoke-sessions, tokens issued before that moment are invalid
+    user_id = payload.get("user_id")
+    iat = payload.get("iat")
+    if user_id and iat and _redis is not None:
+        revoked_all_ts = _redis.get(f"revoked_all:{user_id}")
+        if revoked_all_ts:
+            try:
+                if iat < float(revoked_all_ts):
+                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesión revocada")
+            except (ValueError, TypeError):
+                pass
 
     return payload
 

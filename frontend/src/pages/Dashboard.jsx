@@ -373,7 +373,7 @@ const Dashboard = () => {
             ) : sidebarSection ? (
               <div style={{ paddingBottom: '3rem' }}>
                 {sidebarSection === 'domains'  && <DomainsSection hostings={hostings} />}
-                {sidebarSection === 'backups'  && <BackupsSection />}
+                {sidebarSection === 'backups'  && <BackupsSection hostings={hostings} />}
                 {sidebarSection === 'ssl'      && <SSLSection hostings={hostings} />}
                 {sidebarSection === 'email'    && <EmailSection hostings={hostings} />}
                 {sidebarSection === 'billing'  && (

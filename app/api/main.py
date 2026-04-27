@@ -335,9 +335,8 @@ def revoke_sessions(user: dict = Depends(verify_token)):
     r = get_redis()
     user_id = user["user_id"]
     if r:
-        r.set(f"revoked_all:{user_id}",
-              datetime.now(timezone.utc).isoformat(),
-              ex=86400 * 30)
+        import time as _time_mod
+        r.set(f"revoked_all:{user_id}", str(_time_mod.time()), ex=86400 * 30)
     try:
         from app.services.notification_service import notify
         notify(user_id, "Todas las sesiones cerradas",
@@ -484,6 +483,64 @@ def disable_2fa(request: Request, body: TotpDisableRequest, user: dict = Depends
     return {"status": "ok", "detail": "2FA desactivado"}
 
 
+@app.post("/auth/2fa/verify-login")
+@limiter.limit("5/minute")
+def verify_2fa_login(request: Request, response: Response, body: TotpVerifyRequest):
+    """Second step of login when 2FA is enabled. Exchanges pending_2fa cookie for real session."""
+    pending = request.cookies.get("pending_2fa")
+    if not pending:
+        raise HTTPException(status_code=400, detail="No hay verificación 2FA pendiente")
+    try:
+        payload = jwt.decode(pending, SECRET, algorithms=[ALGO])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Sesión 2FA expirada, iniciá sesión de nuevo")
+    if payload.get("type") != "2fa_pending":
+        raise HTTPException(status_code=401, detail="Token inválido")
+
+    user_id = payload["user_id"]
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT totp_secret, totp_backup_codes, totp_enabled FROM users WHERE user_id=%s", (user_id,))
+        row = cur.fetchone()
+    finally:
+        release_connection(conn)
+
+    if not row or not row.get("totp_enabled") or not row.get("totp_secret"):
+        raise HTTPException(status_code=400, detail="2FA no activo en esta cuenta")
+
+    try:
+        import pyotp
+    except ImportError:
+        raise HTTPException(status_code=501, detail="2FA no disponible en este servidor")
+
+    totp = pyotp.TOTP(row["totp_secret"])
+    valid = totp.verify(body.token, valid_window=1)
+    if not valid:
+        # Try backup codes
+        backup_codes = (row.get("totp_backup_codes") or "").split(",")
+        if body.token in backup_codes:
+            remaining = [c for c in backup_codes if c != body.token]
+            conn2 = get_connection()
+            try:
+                conn2.cursor().execute(
+                    "UPDATE users SET totp_backup_codes=%s WHERE user_id=%s",
+                    (",".join(remaining), user_id)
+                )
+                conn2.commit()
+            finally:
+                release_connection(conn2)
+            valid = True
+    if not valid:
+        raise HTTPException(status_code=401, detail="Código incorrecto")
+
+    # Clear pending cookie, issue real session
+    response.delete_cookie("pending_2fa", path="/")
+    claims = {"user_id": payload["user_id"], "email": payload["email"], "role": payload.get("role", "user")}
+    _set_auth_cookies(response, create_token(claims), create_refresh_token(claims))
+    return {"status": "ok", "account_type": "user"}
+
+
 @app.post("/login")
 @limiter.limit("5/minute")
 def login(request: Request, response: Response, body: LoginRequest):
@@ -531,6 +588,25 @@ def login(request: Request, response: Response, body: LoginRequest):
                 )
             except Exception:
                 pass
+            # 2FA gate: if enabled, issue a short-lived pending token instead of full session
+            if user.get("totp_enabled"):
+                _pending_payload = {
+                    "user_id": user["user_id"],
+                    "email":   user["email"],
+                    "role":    user.get("role", "user"),
+                    "jti":     str(uuid.uuid4()),
+                    "exp":     datetime.now(timezone.utc) + timedelta(minutes=3),
+                    "type":    "2fa_pending",
+                }
+                _pending_token = jwt.encode(_pending_payload, SECRET, algorithm=ALGO)
+                _secure = APP_ENV == "production"
+                response.set_cookie(
+                    key="pending_2fa", value=_pending_token,
+                    httponly=True, secure=_secure, samesite="lax",
+                    max_age=180, path="/",
+                )
+                return {"status": "2fa_required"}
+
             claims = {"user_id": user["user_id"], "email": user["email"], "role": user.get("role", "user")}
             _set_auth_cookies(response, create_token(claims), create_refresh_token(claims))
             return {"status": "ok", "account_type": "user"}

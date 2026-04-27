@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Eye, EyeOff, User, Mail, Phone, Lock, ArrowLeft, CheckCircle2, Send } from 'lucide-react';
-import { login, register, forgotPassword, resendVerification } from '../services/api';
+import { login, register, forgotPassword, resendVerification, verify2FALogin } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 
 // ── Shared input field ────────────────────────────────────────────────────────
@@ -36,7 +36,7 @@ function Field({ label, icon: Icon, type = 'text', placeholder, value, onChange,
   );
 }
 
-// ── Modes: 'login' | 'register' | 'forgot' | 'forgot_sent' | 'registered'
+// ── Modes: 'login' | 'register' | 'forgot' | 'forgot_sent' | 'registered' | '2fa'
 const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
   const { loginAction } = useAuth();
 
@@ -46,6 +46,7 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName]   = useState('');
   const [phone, setPhone]         = useState('');
+  const [otp, setOtp]             = useState('');
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState('');
   const [resending, setResending] = useState(false);
@@ -66,7 +67,9 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
     setLoading(true); setError('');
     try {
       const data = await login(email, password);
-      if (data?.status === 'ok') {
+      if (data?.status === '2fa_required') {
+        setOtp(''); setError(''); setMode('2fa');
+      } else if (data?.status === 'ok') {
         if (data?.account_type === 'staff') { onClose(); window.location.href = '/staff/dashboard'; return; }
         await loginAction();
         onLoginSuccess();
@@ -77,6 +80,23 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
       if (d === 'Invalid credentials')   setError('Email o contraseña incorrectos');
       else if (err.response?.status === 429) setError('Demasiados intentos. Esperá un momento.');
       else setError(d || 'Error al conectar con el servidor');
+    } finally { setLoading(false); }
+  };
+
+  const handle2FA = async (e) => {
+    e.preventDefault();
+    setLoading(true); setError('');
+    try {
+      const data = await verify2FALogin(otp.trim());
+      if (data?.status === 'ok') {
+        await loginAction();
+        onLoginSuccess();
+        onClose();
+      }
+    } catch (err) {
+      const d = err.response?.data?.detail;
+      if (err.response?.status === 429) setError('Demasiados intentos. Esperá un momento.');
+      else setError(d || 'Código incorrecto');
     } finally { setLoading(false); }
   };
 
@@ -213,6 +233,44 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
                   value={email} onChange={e => setEmail(e.target.value)} autoFocus />
                 <ErrorBox msg={error} />
                 <SubmitBtn loading={loading} label="ENVIAR ENLACE" />
+              </form>
+            </>
+          )}
+
+          {/* ── 2FA ── */}
+          {mode === '2fa' && (
+            <>
+              <div className="flex items-center gap-3 mb-6">
+                <button onClick={() => go('login')} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-gray-500 hover:text-white">
+                  <ArrowLeft size={16} />
+                </button>
+                <div>
+                  <h2 className="text-white text-xl font-black">Verificación en dos pasos</h2>
+                  <p className="text-gray-500 text-xs mt-0.5">Ingresá el código de tu app de autenticación</p>
+                </div>
+                <button onClick={onClose} className="ml-auto p-1.5 rounded-lg hover:bg-white/10 transition-colors text-gray-500">
+                  <X size={18} />
+                </button>
+              </div>
+              <form onSubmit={handle2FA} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Código de 6 dígitos</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="123456"
+                    maxLength={8}
+                    value={otp}
+                    onChange={e => setOtp(e.target.value.replace(/[^0-9]/g, ''))}
+                    autoFocus
+                    className="w-full py-3 px-4 rounded-lg bg-black/60 border border-gray-800 text-white text-center text-2xl tracking-[0.4em] font-mono
+                      focus:border-green-500 focus:outline-none transition-colors placeholder:text-gray-700 placeholder:text-base placeholder:tracking-normal"
+                  />
+                  <p className="text-[10px] text-gray-600">También podés ingresar un código de respaldo de 8 caracteres.</p>
+                </div>
+                <ErrorBox msg={error} />
+                <SubmitBtn loading={loading} label="VERIFICAR" />
               </form>
             </>
           )}
