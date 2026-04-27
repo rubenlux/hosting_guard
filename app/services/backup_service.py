@@ -32,6 +32,52 @@ def _get_db_env(db_container: str) -> dict:
         return {}
 
 
+def _find_wp_root(container: str) -> Optional[str]:
+    """
+    Detects the WordPress installation directory inside the container.
+    Tries wp-cli first, then falls back to find.
+    Returns None if WordPress is not found.
+    """
+    # WP-CLI: fastest and most reliable
+    r = subprocess.run(
+        ["docker", "exec", container, "wp", "--allow-root", "eval", "echo ABSPATH;"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip().rstrip("/")
+
+    # Fallback: find wp-config.php (up to depth 4)
+    r2 = subprocess.run(
+        ["docker", "exec", container,
+         "find", "/", "-maxdepth", "4", "-name", "wp-config.php",
+         "-not", "-path", "*/wp-admin/*", "-print"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if r2.returncode == 0 and r2.stdout.strip():
+        return os.path.dirname(r2.stdout.strip().splitlines()[0])
+
+    return None
+
+
+def _resolve_db_container(container: str) -> Optional[str]:
+    """
+    Derives the MariaDB container name from the WP container.
+    Supports both naming conventions:
+      - New: user_{id}_wp_{name}_{uid} → user_{id}_db_{name}_{uid}
+      - Old: any name → reads WORDPRESS_DB_HOST from container env
+    """
+    if "_wp_" in container:
+        return container.replace("_wp_", "_db_", 1)
+
+    # Old naming convention: read DB host from WP container environment
+    env = _get_db_env(container)
+    db_host = env.get("WORDPRESS_DB_HOST") or env.get("MYSQL_HOST")
+    if db_host:
+        return db_host.split(":")[0]  # strip port if present
+
+    return None
+
+
 def create_backup(hosting_id: int, user_id: int, container: str, db_container: Optional[str],
                   site_name: str, subdomain: str) -> dict:
     """
@@ -45,6 +91,24 @@ def create_backup(hosting_id: int, user_id: int, container: str, db_container: O
     errors = []
     db_size = 0
     files_size = 0
+
+    # Detect WordPress root — required for both DB credential extraction and files backup
+    wp_root = _find_wp_root(container)
+    if not wp_root:
+        errors.append("WordPress no encontrado en este contenedor")
+        backup_id = _save_backup_record(
+            hosting_id=hosting_id, user_id=user_id,
+            site_name=site_name, ts=ts,
+            db_path=None, files_path=None,
+            size_bytes=0, status="failed",
+            errors="; ".join(errors),
+        )
+        return {"backup_id": backup_id, "ts": ts, "db_path": None, "files_path": None,
+                "size_bytes": 0, "errors": errors, "status": "failed"}
+
+    # Resolve DB container if not provided
+    if not db_container:
+        db_container = _resolve_db_container(container)
 
     # 1. DB dump
     db_path = None
@@ -66,13 +130,15 @@ def create_backup(hosting_id: int, user_id: int, container: str, db_container: O
             db_path = str(dump_path)
         else:
             errors.append(f"DB dump failed: {r.stderr.decode(errors='replace')[:120]}")
+    else:
+        errors.append("DB container no encontrado — solo se respaldarán los archivos")
 
-    # 2. wp-content tar
+    # 2. wp-content tar — use detected wp_root instead of hardcoded path
     files_path = None
     content_tar = backup_dir / "wp-content.tar.gz"
     r2 = subprocess.run(
         ["docker", "exec", container,
-         "tar", "-czf", "-", "-C", "/var/www/html", "wp-content"],
+         "tar", "-czf", "-", "-C", wp_root, "wp-content"],
         capture_output=True, timeout=180,
     )
     if r2.returncode == 0 and r2.stdout:
@@ -160,7 +226,6 @@ def auto_backup_all() -> None:
         hosting_id = hosting["hosting_id"]
         user_id = hosting["user_id"]
         container = hosting["container_name"]
-        db_container = hosting.get("db_container_name") or container.replace("_wp_", "_db_")
         site_name = hosting.get("name") or str(hosting_id)
         subdomain = hosting.get("subdomain", "")
 
@@ -169,7 +234,7 @@ def auto_backup_all() -> None:
                    f"El backup automático de '{site_name}' fue iniciado.",
                    category="backup", severity="info", channel="dashboard")
 
-            result = create_backup(hosting_id, user_id, container, db_container, site_name, subdomain)
+            result = create_backup(hosting_id, user_id, container, None, site_name, subdomain)
 
             if result["status"] == "completed":
                 size_mb = result["size_bytes"] / (1024 * 1024)

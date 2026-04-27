@@ -22,7 +22,6 @@ async def create_backup(hosting_id: int, user: dict = Depends(verify_token)):
         raise HTTPException(status_code=400, detail="El sitio debe estar activo para crear un backup")
 
     container = hosting["container_name"]
-    db_container = hosting.get("db_container_name") or container.replace("_wp_", "_db_")
     site_name = hosting.get("name") or str(hosting_id)
 
     try:
@@ -30,7 +29,7 @@ async def create_backup(hosting_id: int, user: dict = Depends(verify_token)):
                f"Se está creando un backup de '{site_name}'...",
                category="backup", severity="info", channel="dashboard")
         from app.services.backup_service import create_backup as _create
-        result = _create(hosting_id, user_id, container, db_container,
+        result = _create(hosting_id, user_id, container, None,
                          site_name, hosting.get("subdomain", ""))
         if result["status"] == "completed":
             size_mb = result["size_bytes"] / (1024 * 1024)
