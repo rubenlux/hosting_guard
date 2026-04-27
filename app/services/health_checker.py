@@ -12,12 +12,16 @@ from app.infra.audit.metrics_repository import MetricsRepository
 from app.infra.audit.health_repository import HealthRepository
 from app.core.health_engine import calculate_health_score
 from app.core.alert_engine import process_alerts
+from app.services.notification_service import notify
 
 logger = logging.getLogger(__name__)
 
 _hosting_repo = HostingRepository()
 _metrics_repo = MetricsRepository()
 _health_repo = HealthRepository()
+
+_CPU_WARN_THRESHOLD = 85.0
+_RAM_WARN_THRESHOLD = 90.0
 
 def _get_docker_stats(container_name: str) -> dict:
     """Obtiene CPU y RAM real de un contenedor."""
@@ -115,6 +119,8 @@ def check_all_hostings() -> None:
             last_alert = _health_repo.get_last_alert(hosting_id)
             alert = process_alerts(health_result, last_alert)
 
+            site_name = hosting.get("name") or container
+
             if alert:
                 _health_repo.create_alert(
                     user_id=user_id,
@@ -122,6 +128,43 @@ def check_all_hostings() -> None:
                     level="warning" if health_result["status"] == "warning" else "critical",
                     message=alert["message"]
                 )
+                # Notify user — site down vs performance alert
+                if not is_up:
+                    notify(
+                        user_id,
+                        f"Sitio caído: {site_name}",
+                        f"El contenedor de '{site_name}' no está activo. "
+                        f"Revisá el estado desde el panel.",
+                        category="hosting", severity="critical", channel="both",
+                        action_url="/dashboard",
+                    )
+                elif alert["type"] == "critical":
+                    notify(
+                        user_id,
+                        f"Error crítico en {site_name}",
+                        alert["message"],
+                        category="hosting", severity="critical", channel="both",
+                        action_url="/dashboard",
+                    )
+                elif alert["type"] == "warning":
+                    cpu, ram = stats["cpu"], stats["ram"]
+                    if cpu > _CPU_WARN_THRESHOLD or ram > _RAM_WARN_THRESHOLD:
+                        notify(
+                            user_id,
+                            f"Recursos altos: {site_name}",
+                            f"Tu sitio '{site_name}' usó CPU {cpu:.0f}% y RAM {ram:.0f}% "
+                            f"en el último ciclo de monitoreo.",
+                            category="performance", severity="warning", channel="dashboard",
+                            action_url="/dashboard",
+                        )
+                    else:
+                        notify(
+                            user_id,
+                            f"Alerta de rendimiento: {site_name}",
+                            alert["message"],
+                            category="hosting", severity="warning", channel="dashboard",
+                            action_url="/dashboard",
+                        )
 
             # 4c. Recovery detection — fires exactly once on the bad → good transition.
             # previous_health.alert_type is set on cycles that triggered an alert.
@@ -150,6 +193,13 @@ def check_all_hostings() -> None:
                     site_id=hosting_id,
                     level="recovery",
                     message="El sitio se ha estabilizado. Los errores han sido resueltos.",
+                )
+                notify(
+                    user_id,
+                    f"Sitio recuperado: {site_name}",
+                    f"'{site_name}' volvió a funcionar correctamente.",
+                    category="hosting", severity="success", channel="both",
+                    action_url="/dashboard",
                 )
 
             # 5. Persistencia Histórica

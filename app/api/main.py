@@ -195,6 +195,17 @@ def verify_email(request: Request, token: str):
         raise HTTPException(status_code=400, detail="Token inválido o expirado")
     repo.mark_used(token)
     user_repo.set_email_verified(record["user_id"])
+    try:
+        from app.services.notification_service import notify
+        notify(
+            record["user_id"],
+            "Email verificado",
+            "Tu dirección de correo fue verificada correctamente. "
+            "Ya podés acceder a todas las funciones de tu cuenta.",
+            category="account", severity="success", channel="dashboard",
+        )
+    except Exception:
+        pass
     return {"status": "verified"}
 
 
@@ -235,6 +246,17 @@ def reset_password(request: Request, body: ResetPasswordRequest):
     repo.mark_used(body.token)
     new_hash = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
     user_repo.update_password(record["user_id"], new_hash)
+    try:
+        from app.services.notification_service import notify
+        notify(
+            record["user_id"],
+            "Contraseña restablecida",
+            "Tu contraseña fue cambiada exitosamente. Si no realizaste este cambio, "
+            "contactá soporte de inmediato.",
+            category="security", severity="warning", channel="both",
+        )
+    except Exception:
+        pass
     return {"status": "ok", "detail": "Contraseña actualizada. Ya podés iniciar sesión."}
 
 
@@ -269,6 +291,17 @@ def login(request: Request, response: Response, body: LoginRequest):
                 user_repo.log_login_attempt(body.email, ip, success=True)
             except Exception as _log_err:
                 logger.warning("log_login_attempt failed (non-fatal): %s", _log_err)
+            try:
+                from app.services.notification_service import notify
+                notify(
+                    user["user_id"],
+                    "Nuevo inicio de sesión",
+                    f"Se inició sesión en tu cuenta desde la IP {ip}. "
+                    "Si no fuiste vos, cambiá tu contraseña de inmediato.",
+                    category="security", severity="info", channel="dashboard",
+                )
+            except Exception:
+                pass
             claims = {"user_id": user["user_id"], "email": user["email"], "role": user.get("role", "user")}
             _set_auth_cookies(response, create_token(claims), create_refresh_token(claims))
             return {"status": "ok", "account_type": "user"}

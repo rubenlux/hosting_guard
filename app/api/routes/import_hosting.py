@@ -29,6 +29,7 @@ from app.api.security import verify_token
 from app.api.wp_optimize import optimize_wordpress
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.import_repository import ImportRepository
+from app.services.notification_service import notify
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +290,15 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
 
         _import_repo.set_status(job_id, "completed")
         _log(job_id, f"✓ Importación completada. Sitio disponible en https://{new_domain}")
+        site_name = hosting.get("name") or str(hosting_id)
+        notify(
+            user_id,
+            f"Importación completada: {site_name}",
+            f"Tu sitio '{site_name}' fue importado exitosamente. "
+            f"Disponible en https://{new_domain}",
+            category="migration", severity="success", channel="both",
+            action_url="/dashboard",
+        )
 
     except Exception as exc:
         logger.exception("[import:%d] pipeline failed", job_id)
@@ -300,6 +310,13 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
             )
         except Exception:
             pass
+        notify(
+            user_id,
+            "Importación fallida",
+            f"Ocurrió un error durante la importación: {str(exc)[:200]}",
+            category="migration", severity="critical", channel="both",
+            action_url="/dashboard",
+        )
     finally:
         try:
             file_path.unlink(missing_ok=True)
@@ -641,6 +658,14 @@ async def import_site(
             raise HTTPException(status_code=500, detail=f"Error al guardar SQL: {exc}")
 
     _log(job_id, "Iniciando pipeline...")
+    notify(
+        user_id,
+        f"Importación iniciada: {hosting['name']}",
+        f"El archivo fue recibido correctamente. La importación de "
+        f"'{hosting['name']}' está en progreso.",
+        category="migration", severity="info", channel="dashboard",
+        action_url="/dashboard",
+    )
 
     from app.infra.arq_pool import get_arq_pool
     pool = get_arq_pool()

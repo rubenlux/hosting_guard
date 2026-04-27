@@ -27,6 +27,7 @@ from app.core.alert_engine import check_alerts
 from app.infra.docker_client import run_docker_command_async
 from app.infra.container_locks import container_lock
 from app.api.wp_optimize import optimize_wordpress
+from app.services.notification_service import notify
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +281,14 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
             ip_address=ip_address
         )
 
+        notify(
+            user_id or 0,
+            f"Sitio creado: {data.name}",
+            f"Tu sitio '{data.name}' está activo en https://{subdomain}",
+            category="hosting", severity="success", channel="dashboard",
+            action_url="/dashboard",
+        )
+
         return {
             "status":     "created",
             "hosting_id": hosting_id,
@@ -350,10 +359,17 @@ async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
         raise HTTPException(status_code=500, detail=detail)
 
     # ── 3. Hard-delete: cascade-clean all child records + remove hosting row ────
+    site_name = hosting.get("name") or str(hosting_id)
     hosting_repo.delete_hosting(hosting_id, user_id, db_container=db_container)
     logger.info(
         "hosting_deleted hosting_id=%s container=%s db_container=%s",
         hosting_id, container_name, db_container,
+    )
+    notify(
+        user_id or 0,
+        f"Sitio eliminado: {site_name}",
+        f"El sitio '{site_name}' fue eliminado correctamente.",
+        category="hosting", severity="info", channel="dashboard",
     )
 
     # ── 4. Invalidate the Redis list cache for this user ─────────────────────
@@ -405,6 +421,13 @@ async def restart_hosting(hosting_id: int, request: Request, user: dict = Depend
                            "returncode": code, "stderr": stderr},
                 )
             final_state = await _verify_container_state(name, expected="running")
+    notify(
+        user_id or 0,
+        f"Sitio reiniciado: {hosting.get('name') or hosting_id}",
+        f"El sitio '{hosting.get('name') or hosting_id}' fue reiniciado.",
+        category="hosting", severity="info", channel="dashboard",
+        action_url="/dashboard",
+    )
     return {"status": "restarting", "container_state": final_state}
 
 
@@ -428,6 +451,13 @@ async def stop_hosting(hosting_id: int, request: Request, user: dict = Depends(v
                     extra={"operation": "stop", "container": name,
                            "returncode": code, "stderr": stderr},
                 )
+    notify(
+        user_id or 0,
+        f"Sitio detenido: {hosting.get('name') or hosting_id}",
+        f"El sitio '{hosting.get('name') or hosting_id}' fue detenido.",
+        category="hosting", severity="warning", channel="dashboard",
+        action_url="/dashboard",
+    )
     return {"status": "stopped"}
 
 
@@ -452,6 +482,13 @@ async def start_hosting(hosting_id: int, request: Request, user: dict = Depends(
                            "returncode": code, "stderr": stderr},
                 )
             final_state = await _verify_container_state(name, expected="running")
+    notify(
+        user_id or 0,
+        f"Sitio iniciado: {hosting.get('name') or hosting_id}",
+        f"El sitio '{hosting.get('name') or hosting_id}' fue iniciado correctamente.",
+        category="hosting", severity="success", channel="dashboard",
+        action_url="/dashboard",
+    )
     return {"status": "starting", "container_state": final_state}
 
 from app.services.hosting.logs_service import get_hosting_logs
@@ -581,6 +618,15 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
                 install_email=user_email,
                 admin_password=wp_admin_pass,
             ),
+        )
+
+        notify(
+            user_id or 0,
+            f"WordPress creado: {data.name}",
+            f"Tu sitio WordPress '{data.name}' está siendo configurado. "
+            f"Estará disponible en https://{subdomain} en 30-60 segundos.",
+            category="wordpress", severity="success", channel="dashboard",
+            action_url="/dashboard",
         )
 
         return {
