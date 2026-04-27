@@ -20,8 +20,56 @@ _hosting_repo = HostingRepository()
 _metrics_repo = MetricsRepository()
 _health_repo = HealthRepository()
 
+# Module-level dedup state
+_disk_alerted: dict = {}
+_slow_response: dict = {}
+_wp_admin_down: set = set()
+_http_last_check: dict = {}
+
 _CPU_WARN_THRESHOLD = 85.0
 _RAM_WARN_THRESHOLD = 90.0
+_DISK_WARN_THRESHOLD = 85.0
+_RESPONSE_WARN_MS = 3000.0
+_HTTP_CHECK_INTERVAL = 900  # 15 minutes per site
+
+
+def _get_disk_pct(container: str) -> float:
+    """Runs df -P /var/www/html inside container and returns Use% as float."""
+    try:
+        result = subprocess.run(
+            ["docker", "exec", container, "df", "-P", "/var/www/html"],
+            capture_output=True, text=True, timeout=8,
+        )
+        if result.returncode == 0:
+            lines = result.stdout.strip().splitlines()
+            if len(lines) >= 2:
+                parts = lines[1].split()
+                if len(parts) >= 5:
+                    use_pct = parts[4].replace("%", "")
+                    return float(use_pct)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _http_check(url: str) -> tuple:
+    """Returns (http_code: int, time_ms: float). Returns (0, -1.0) on any error."""
+    try:
+        result = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null",
+             "-w", "%{http_code}|%{time_total}",
+             "--max-time", "8", "--connect-timeout", "4", "-L", url],
+            capture_output=True, text=True, timeout=12,
+        )
+        if result.returncode == 0:
+            parts = result.stdout.strip().split("|")
+            if len(parts) == 2:
+                code = int(parts[0])
+                time_ms = float(parts[1]) * 1000.0
+                return (code, time_ms)
+    except Exception:
+        pass
+    return (0, -1.0)
 
 def _get_docker_stats(container_name: str) -> dict:
     """Obtiene CPU y RAM real de un contenedor."""
@@ -86,6 +134,8 @@ def check_all_hostings() -> None:
         user_id    = hosting["user_id"]
         
         try:
+            site_name = hosting.get("name") or container
+
             # 1. Uptime Check (Legacy compatible)
             t0 = time.monotonic()
             res_inspect = subprocess.run(
@@ -101,6 +151,58 @@ def check_all_hostings() -> None:
             # 2. Collect Extended Metrics
             stats = _get_docker_stats(container)
             errors = _get_recent_errors(container)
+
+            # 2a. Disk check (running containers only)
+            disk_pct = 0.0
+            if is_up:
+                disk_pct = _get_disk_pct(container)
+                _now_ts = time.monotonic()
+                if disk_pct > _DISK_WARN_THRESHOLD:
+                    if _now_ts - _disk_alerted.get(hosting_id, 0) > 21600:  # 6h dedup
+                        _disk_alerted[hosting_id] = _now_ts
+                        try:
+                            notify(user_id, f"Disco casi lleno: {site_name}",
+                                   f"El disco de '{site_name}' está al {disk_pct:.0f}%. Limpiá archivos o actualizá tu plan.",
+                                   category="performance", severity="warning", channel="both", action_url="/dashboard")
+                        except Exception:
+                            pass
+                else:
+                    _disk_alerted.pop(hosting_id, None)
+
+            # 2b. HTTP checks for WP sites (throttled to _HTTP_CHECK_INTERVAL)
+            if is_up and "_wp_" in container:
+                subdomain = hosting.get("subdomain", "")
+                _now_ts = time.monotonic()
+                if subdomain and _now_ts - _http_last_check.get(hosting_id, 0) > _HTTP_CHECK_INTERVAL:
+                    _http_last_check[hosting_id] = _now_ts
+                    http_code, resp_ms = _http_check(f"https://{subdomain}")
+                    # Response time check
+                    if resp_ms > _RESPONSE_WARN_MS:
+                        if _now_ts - _slow_response.get(hosting_id, 0) > 7200:
+                            _slow_response[hosting_id] = _now_ts
+                            try:
+                                notify(user_id, f"Respuesta lenta: {site_name}",
+                                       f"'{site_name}' tardó {resp_ms:.0f}ms en responder (umbral: {_RESPONSE_WARN_MS:.0f}ms).",
+                                       category="performance", severity="warning", channel="dashboard", action_url="/dashboard")
+                            except Exception:
+                                pass
+                    else:
+                        _slow_response.pop(hosting_id, None)
+                    # wp-admin check
+                    wp_code, _ = _http_check(f"https://{subdomain}/wp-admin/")
+                    wp_ok = 200 <= wp_code < 400
+                    if not wp_ok and wp_code != 0:
+                        if hosting_id not in _wp_admin_down:
+                            _wp_admin_down.add(hosting_id)
+                            try:
+                                notify(user_id, f"wp-admin inaccesible: {site_name}",
+                                       f"El panel admin de '{site_name}' no responde (HTTP {wp_code}). "
+                                       "Verificá que WordPress esté funcionando.",
+                                       category="wordpress", severity="warning", channel="both", action_url="/dashboard")
+                            except Exception:
+                                pass
+                    else:
+                        _wp_admin_down.discard(hosting_id)
 
             # 3. Calculation Engine
             health_input = {
@@ -118,8 +220,6 @@ def check_all_hostings() -> None:
             # 4b. Alert Engine — dedup handled inside process_alerts
             last_alert = _health_repo.get_last_alert(hosting_id)
             alert = process_alerts(health_result, last_alert)
-
-            site_name = hosting.get("name") or container
 
             if alert:
                 _health_repo.create_alert(
@@ -139,13 +239,23 @@ def check_all_hostings() -> None:
                         action_url="/dashboard",
                     )
                 elif alert["type"] == "critical":
-                    notify(
-                        user_id,
-                        f"Error crítico en {site_name}",
-                        alert["message"],
-                        category="hosting", severity="critical", channel="both",
-                        action_url="/dashboard",
-                    )
+                    http_5xx = next((e for e in errors if e["type"] == "http_5xx"), None)
+                    if http_5xx:
+                        notify(
+                            user_id,
+                            f"Errores HTTP 5xx: {site_name}",
+                            f"Se detectaron {http_5xx['count']} errores HTTP 5xx en '{site_name}' en la última hora.",
+                            category="hosting", severity="critical", channel="both",
+                            action_url="/dashboard",
+                        )
+                    else:
+                        notify(
+                            user_id,
+                            f"Error crítico en {site_name}",
+                            alert["message"],
+                            category="hosting", severity="critical", channel="both",
+                            action_url="/dashboard",
+                        )
                 elif alert["type"] == "warning":
                     cpu, ram = stats["cpu"], stats["ram"]
                     if cpu > _CPU_WARN_THRESHOLD or ram > _RAM_WARN_THRESHOLD:

@@ -247,6 +247,14 @@ def optimize_wordpress(
     # ── 7. Fix ownership ──────────────────────────────────────────────────────
     _docker_exec(container, "chown", "-R", "www-data:www-data", "/var/www/html", timeout=30)
     _log("  ✓ Permisos ok")
+    if user_id:
+        try:
+            from app.services.notification_service import notify as _notify
+            _notify(user_id, f"Permisos corregidos: {site_name or container}",
+                    f"Los permisos de archivos de '{site_name or container}' fueron corregidos (www-data).",
+                    category="wordpress", severity="success", channel="dashboard")
+        except Exception:
+            pass
 
     # ── 8. DB optimize — skip-ssl because MariaDB containers run without SSL ─
     _log("Optimizando base de datos...")

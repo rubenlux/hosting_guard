@@ -254,6 +254,32 @@ _MIGRATIONS_PG = [
       END IF;
     END $$
     """,
+    """CREATE TABLE IF NOT EXISTS backups (
+        backup_id SERIAL PRIMARY KEY,
+        hosting_id INTEGER NOT NULL REFERENCES hostings(hosting_id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        site_name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        db_path TEXT,
+        files_path TEXT,
+        size_bytes BIGINT DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        error_message TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS ssl_checks (
+        check_id SERIAL PRIMARY KEY,
+        hosting_id INTEGER NOT NULL REFERENCES hostings(hosting_id) ON DELETE CASCADE,
+        subdomain TEXT NOT NULL,
+        checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        is_valid BOOLEAN,
+        days_remaining INTEGER,
+        expires_at TIMESTAMPTZ,
+        error TEXT
+    )""",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_backup_codes TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_prefs JSONB",
 ]
 
 _INDEXES = [
@@ -512,6 +538,9 @@ _INDEXES = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_admin_audit_admin ON admin_audit_log(admin_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_backups_hosting ON backups(hosting_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_backups_user ON backups(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ssl_checks_hosting ON ssl_checks(hosting_id, checked_at DESC)",
 ]
 
 def ensure_monthly_partitions(cursor):

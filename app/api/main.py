@@ -72,6 +72,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.alerts import router as alerts_router
 from app.api.routes.import_hosting import router as import_router
 from app.api.routes.notifications import router as notifications_router
+from app.api.routes.backup import router as backup_router
 app.include_router(pixel_router)
 app.include_router(files_router)
 app.include_router(impersonate_router)
@@ -81,6 +82,7 @@ app.include_router(health_router)
 app.include_router(alerts_router)
 app.include_router(import_router)
 app.include_router(notifications_router)
+app.include_router(backup_router)
 
 
 _IS_PRODUCTION = APP_ENV == "production"
@@ -260,6 +262,53 @@ def reset_password(request: Request, body: ResetPasswordRequest):
     return {"status": "ok", "detail": "Contraseña actualizada. Ya podés iniciar sesión."}
 
 
+class ChangeEmailRequest(BaseModel):
+    new_email: EmailStr
+    password: str
+
+@app.post("/auth/change-email")
+@limiter.limit("3/minute")
+def change_email(request: Request, body: ChangeEmailRequest, user: dict = Depends(verify_token)):
+    user_db = user_repo.get_user_by_id(user["user_id"])
+    if not user_db or not bcrypt.checkpw(body.password.encode(), user_db["password_hash"].encode()):
+        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+    existing = user_repo.get_user_by_email(body.new_email)
+    if existing and existing["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=400, detail="El email ya está en uso")
+    old_email = user["email"]
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET email=%s, email_verified=0 WHERE user_id=%s",
+                    (body.new_email, user["user_id"]))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail="Error al actualizar email")
+    finally:
+        release_connection(conn)
+    # Send verification to new email
+    try:
+        from app.infra.auth_token_repository import AuthTokenRepository
+        from app.services.mailer import send_verification_email
+        token = AuthTokenRepository().create_token(user["user_id"], "email_verification", expires_minutes=1440)
+        first = user_db.get("first_name") or body.new_email.split("@")[0]
+        send_verification_email(body.new_email, first, token)
+    except Exception as exc:
+        logger.error("Email change verification send failed: %s", exc)
+    # Notify about the change
+    try:
+        from app.services.notification_service import notify
+        notify(user["user_id"], "Email de cuenta cambiado",
+               f"El email de tu cuenta cambió de '{old_email}' a '{body.new_email}'. "
+               "Si no realizaste este cambio, contactá soporte de inmediato.",
+               category="security", severity="warning", channel="both")
+    except Exception:
+        pass
+    return {"status": "ok", "detail": "Email actualizado. Revisá tu nueva casilla para verificar."}
+
+
 class ResendVerificationRequest(BaseModel):
     email: EmailStr
 
@@ -278,6 +327,163 @@ def resend_verification(request: Request, body: ResendVerificationRequest):
             logger.error("Failed to resend verification to %s: %s", body.email, exc)
     return {"status": "ok", "detail": "Si el email existe y no está verificado, recibirás el enlace."}
 
+
+@app.post("/auth/revoke-sessions")
+def revoke_sessions(user: dict = Depends(verify_token)):
+    """Invalidates all sessions for this user (except current request)."""
+    from app.infra.redis_client import get_redis
+    r = get_redis()
+    user_id = user["user_id"]
+    if r:
+        r.set(f"revoked_all:{user_id}",
+              datetime.now(timezone.utc).isoformat(),
+              ex=86400 * 30)
+    try:
+        from app.services.notification_service import notify
+        notify(user_id, "Todas las sesiones cerradas",
+               "Todas las sesiones activas de tu cuenta fueron cerradas. "
+               "Si no realizaste esta acción, cambiá tu contraseña de inmediato.",
+               category="security", severity="warning", channel="both")
+    except Exception:
+        pass
+    return {"status": "ok", "detail": "Todas las sesiones han sido cerradas."}
+
+
+import secrets as _secrets_mod
+import base64
+
+
+class TotpSetupResponse(BaseModel):
+    secret: str
+    qr_url: str
+    backup_codes: list
+
+
+class TotpVerifyRequest(BaseModel):
+    token: str
+
+
+class TotpDisableRequest(BaseModel):
+    token: str
+
+
+@app.post("/auth/2fa/setup")
+@limiter.limit("5/minute")
+def setup_2fa(request: Request, user: dict = Depends(verify_token)):
+    """Generate a TOTP secret and return setup info. Does NOT enable 2FA yet."""
+    try:
+        import pyotp
+    except ImportError:
+        raise HTTPException(status_code=501, detail="2FA no disponible en este servidor")
+    secret = pyotp.random_base32()
+    email = user["email"]
+    totp = pyotp.TOTP(secret)
+    qr_url = totp.provisioning_uri(name=email, issuer_name="HostingGuard")
+    backup_codes = [_secrets_mod.token_hex(4).upper() for _ in range(8)]
+    # Store secret temporarily in user record (not enabled yet)
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        import json
+        cur.execute(
+            "UPDATE users SET totp_secret=%s, totp_backup_codes=%s WHERE user_id=%s",
+            (secret, json.dumps(backup_codes), user["user_id"])
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail="Error guardando configuración 2FA")
+    finally:
+        release_connection(conn)
+    return {"secret": secret, "qr_url": qr_url, "backup_codes": backup_codes}
+
+
+@app.post("/auth/2fa/enable")
+@limiter.limit("10/minute")
+def enable_2fa(request: Request, body: TotpVerifyRequest, user: dict = Depends(verify_token)):
+    """Verify OTP token and enable 2FA for this account."""
+    try:
+        import pyotp
+    except ImportError:
+        raise HTTPException(status_code=501, detail="2FA no disponible en este servidor")
+    user_db = user_repo.get_user_by_id(user["user_id"])
+    if not user_db:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    secret = user_db.get("totp_secret")
+    if not secret:
+        raise HTTPException(status_code=400, detail="Primero configurá el 2FA (/auth/2fa/setup)")
+    totp = pyotp.TOTP(secret)
+    if not totp.verify(body.token, valid_window=1):
+        raise HTTPException(status_code=400, detail="Código inválido")
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET totp_enabled=1 WHERE user_id=%s", (user["user_id"],))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        release_connection(conn)
+    try:
+        from app.services.notification_service import notify
+        notify(user["user_id"], "Autenticación de dos factores activada",
+               "El 2FA fue activado en tu cuenta. Ahora necesitarás tu app autenticadora para iniciar sesión.",
+               category="security", severity="success", channel="both")
+    except Exception:
+        pass
+    return {"status": "ok", "detail": "2FA activado correctamente"}
+
+
+@app.post("/auth/2fa/disable")
+@limiter.limit("5/minute")
+def disable_2fa(request: Request, body: TotpDisableRequest, user: dict = Depends(verify_token)):
+    """Disable 2FA after verifying current OTP."""
+    try:
+        import pyotp
+    except ImportError:
+        raise HTTPException(status_code=501, detail="2FA no disponible en este servidor")
+    user_db = user_repo.get_user_by_id(user["user_id"])
+    if not user_db:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    secret = user_db.get("totp_secret")
+    if not secret or not user_db.get("totp_enabled"):
+        raise HTTPException(status_code=400, detail="2FA no está activado")
+    # Check OTP or backup code
+    totp = pyotp.TOTP(secret)
+    valid = totp.verify(body.token, valid_window=1)
+    if not valid:
+        import json
+        backup_codes = user_db.get("totp_backup_codes")
+        if backup_codes:
+            codes = json.loads(backup_codes) if isinstance(backup_codes, str) else backup_codes
+            valid = body.token.upper() in codes
+    if not valid:
+        raise HTTPException(status_code=400, detail="Código inválido")
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET totp_enabled=0, totp_secret=NULL, totp_backup_codes=NULL WHERE user_id=%s",
+                    (user["user_id"],))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        release_connection(conn)
+    try:
+        from app.services.notification_service import notify
+        notify(user["user_id"], "Autenticación de dos factores desactivada",
+               "El 2FA fue desactivado en tu cuenta. Te recomendamos reactivarlo para mayor seguridad.",
+               category="security", severity="warning", channel="both")
+    except Exception:
+        pass
+    return {"status": "ok", "detail": "2FA desactivado"}
+
+
 @app.post("/login")
 @limiter.limit("5/minute")
 def login(request: Request, response: Response, body: LoginRequest):
@@ -291,6 +497,29 @@ def login(request: Request, response: Response, body: LoginRequest):
                 user_repo.log_login_attempt(body.email, ip, success=True)
             except Exception as _log_err:
                 logger.warning("log_login_attempt failed (non-fatal): %s", _log_err)
+            # Detect suspicious login: N failed attempts before this success
+            try:
+                from app.infra.db import get_connection, release_connection as _rc
+                from datetime import datetime as _dt_cls, timezone as _tz_cls, timedelta as _td_cls
+                _conn = get_connection()
+                _cur = _conn.cursor()
+                _cutoff = (_dt_cls.now(_tz_cls.utc) - _td_cls(minutes=15)).isoformat()
+                _cur.execute(
+                    "SELECT COUNT(*) AS cnt FROM login_audit WHERE email=%s AND success=0 AND created_at>%s",
+                    (body.email, _cutoff)
+                )
+                _row = _cur.fetchone()
+                _rc(_conn)
+                _failed = _row["cnt"] if _row else 0
+                if _failed >= 3:
+                    from app.services.notification_service import notify as _notify
+                    _notify(user["user_id"], "Inicio de sesión sospechoso",
+                            f"Se detectaron {_failed} intentos fallidos en los últimos 15 minutos "
+                            f"antes de este inicio de sesión desde IP {ip}. "
+                            "Si no fuiste vos, cambiá tu contraseña.",
+                            category="security", severity="warning", channel="both")
+            except Exception:
+                pass
             try:
                 from app.services.notification_service import notify
                 notify(

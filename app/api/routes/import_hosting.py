@@ -229,8 +229,27 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
             _log(job_id, "WARN: No se pudo determinar el container DB (nombre WP sin '_wp_')")
 
         # ── Detect backup type ────────────────────────────────────────────
+        site_name = hosting.get("name") or str(hosting_id)
         btype = _detect_type(file_path)
         _log(job_id, f"Tipo de backup detectado: {btype}")
+
+        # Notify about detected format
+        if btype and btype != "UNKNOWN":
+            try:
+                notify(user_id, f"Archivo detectado: {site_name}",
+                       f"Formato '{btype}' detectado. Iniciando restauración de '{site_name}'.",
+                       category="migration", severity="info", channel="dashboard")
+            except Exception:
+                pass
+        else:
+            try:
+                notify(user_id, f"Formato no reconocido: {site_name}",
+                       "El archivo subido no tiene un formato de backup reconocido. "
+                       "Intentá con otro archivo (.wpress, .zip, .sql).",
+                       category="migration", severity="warning", channel="both")
+            except Exception:
+                pass
+
         _import_repo.set_status(job_id, "restoring_files")
 
         if btype == "WPRESS":
@@ -267,11 +286,17 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
                         f"UPDATE wp_options SET option_value='https://{new_domain}' WHERE option_name='{opt}';",
                         timeout=15,
                     )
+            if old_domain and old_domain != new_domain:
+                try:
+                    notify(user_id, f"URLs actualizadas: {site_name}",
+                           f"El dominio fue reemplazado de '{old_domain}' → '{new_domain}' en toda la base de datos.",
+                           category="migration", severity="success", channel="dashboard")
+                except Exception:
+                    pass
         else:
             _log(job_id, "WARN: sin DB container — fix de dominio omitido")
 
         # ── Post-import optimization ──────────────────────────────────────
-        site_name = hosting.get("name") or str(hosting_id)
         _post_import_optimize(job_id, container, user_id=user_id, site_name=site_name)
 
         # ── Verify site is actually accessible ────────────────────────────

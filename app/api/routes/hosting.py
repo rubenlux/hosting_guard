@@ -158,6 +158,16 @@ def _enforce_plan_container_limit(user_id: int, plan_name: str) -> None:
         return  # unlimited (agencia)
     active = hosting_repo.count_active_hostings(user_id)
     if active >= max_sites:
+        try:
+            notify(
+                user_id,
+                "Límite de plan alcanzado",
+                f"Tu plan '{effective_plan}' permite {max_sites} sitio{'s' if max_sites != 1 else ''}. "
+                "Eliminá un sitio existente o actualizá tu plan para crear más.",
+                category="billing", severity="warning", channel="dashboard",
+            )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=403,
             detail=f"Límite de proyectos alcanzado para el plan '{plan_name}'. "
