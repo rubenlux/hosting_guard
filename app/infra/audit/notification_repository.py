@@ -204,3 +204,53 @@ class NotificationRepository:
             return [dict(r) for r in cur.fetchall()]
         finally:
             release_connection(conn)
+
+    def get_full_log(
+        self,
+        limit: int = 200,
+        category: Optional[str] = None,
+        severity: Optional[str] = None,
+        source: Optional[str] = None,   # 'auto' | 'admin' | None=all
+    ) -> List[Dict]:
+        """Full notification audit log with recipient email. Admin-only."""
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            wheres = ["1=1"]
+            params: list = []
+            if category:
+                wheres.append("n.category = %s")
+                params.append(category)
+            if severity:
+                wheres.append("n.severity = %s")
+                params.append(severity)
+            if source == "admin":
+                wheres.append("n.metadata::text LIKE '%sent_by_admin%'")
+            elif source == "auto":
+                wheres.append("(n.metadata IS NULL OR n.metadata::text NOT LIKE '%sent_by_admin%')")
+            params.append(limit)
+            cur.execute(
+                f"""SELECT n.notification_id, n.user_id, u.email AS user_email,
+                           n.title, n.message, n.category, n.severity,
+                           n.channel, n.status, n.action_url,
+                           n.metadata, n.created_at, n.read_at
+                    FROM notifications n
+                    LEFT JOIN users u ON u.user_id = n.user_id
+                    WHERE {' AND '.join(wheres)}
+                    ORDER BY n.created_at DESC LIMIT %s""",
+                params,
+            )
+            rows = cur.fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                if d.get("metadata") and isinstance(d["metadata"], str):
+                    try:
+                        import json as _json
+                        d["metadata"] = _json.loads(d["metadata"])
+                    except Exception:
+                        pass
+                result.append(d)
+            return result
+        finally:
+            release_connection(conn)

@@ -1447,6 +1447,24 @@ def admin_notification_history(admin: dict = Depends(require_role("admin"))):
     return {"items": _notif_repo.get_admin_history(limit=100)}
 
 
+@router.get("/notifications/log")
+def admin_notification_log(
+    limit:    int = 200,
+    category: Optional[str] = None,
+    severity: Optional[str] = None,
+    source:   Optional[str] = None,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Full notification audit log — all automatic + manual, with recipient email."""
+    items = _notif_repo.get_full_log(
+        limit=min(limit, 500),
+        category=category or None,
+        severity=severity or None,
+        source=source or None,
+    )
+    return {"items": items, "total": len(items)}
+
+
 @router.get("/audit-log")
 def admin_audit_log(
     limit: int = 100,

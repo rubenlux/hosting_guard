@@ -721,3 +721,8 @@ export const adminGetNotificationHistory = async () => {
   const response = await api.get('/admin/notifications/history');
   return response.data;
 };
+
+export const adminGetNotificationLog = async (params = {}) => {
+  const response = await api.get('/admin/notifications/log', { params });
+  return response.data;
+};

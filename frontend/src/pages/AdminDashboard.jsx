@@ -25,7 +25,7 @@ import {
   adminGetHostingLogs, adminTerminateHosting,
   adminExtendPlan, adminSetFreePlanForever, adminDeactivateFreePlan, adminUpgradePlan,
   adminDeleteUser, getAdminReport,
-  adminBroadcastNotification, adminGetNotificationHistory,
+  adminBroadcastNotification, adminGetNotificationHistory, adminGetNotificationLog,
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import StaffAnalytics from '../components/StaffAnalytics';
@@ -2721,24 +2721,185 @@ const TARGET_OPTIONS   = [
   { value: 'high_usage',      label: 'Con sitios activos' },
 ];
 
+const SEV_COLOR = {
+  info: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
+  success: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+  warning: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+  critical: 'text-red-400 bg-red-500/10 border-red-500/20',
+  security: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+  billing: 'text-purple-400 bg-purple-500/10 border-purple-500/20',
+  action_required: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
+};
+
+function NotificationLogTable() {
+  const [items,    setItems]    = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [filters,  setFilters]  = useState({ category: '', severity: '', source: '' });
+  const [expanded, setExpanded] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = {};
+      if (filters.category) params.category = filters.category;
+      if (filters.severity) params.severity = filters.severity;
+      if (filters.source)   params.source   = filters.source;
+      const d = await adminGetNotificationLog({ limit: 300, ...params });
+      setItems(d.items || []);
+    } catch { setItems([]); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, [filters]);
+
+  const filt = (key, val) => setFilters(f => ({ ...f, [key]: val }));
+
+  return (
+    <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+      {/* filters */}
+      <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 flex-wrap">
+        <span className="text-[12px] font-semibold text-white">Historial completo</span>
+        <span className="text-[10px] text-gray-500 font-mono">{items.length} registros</span>
+        <div className="flex gap-2 ml-auto flex-wrap">
+          <select value={filters.source} onChange={e => filt('source', e.target.value)}
+            className="bg-[#0d0d0d] border border-white/8 rounded px-2 py-1 text-[10px] text-white">
+            <option value="">Todas las fuentes</option>
+            <option value="auto">Automáticas</option>
+            <option value="admin">Manuales (admin)</option>
+          </select>
+          <select value={filters.category} onChange={e => filt('category', e.target.value)}
+            className="bg-[#0d0d0d] border border-white/8 rounded px-2 py-1 text-[10px] text-white">
+            <option value="">Todas las categorías</option>
+            {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select value={filters.severity} onChange={e => filt('severity', e.target.value)}
+            className="bg-[#0d0d0d] border border-white/8 rounded px-2 py-1 text-[10px] text-white">
+            <option value="">Todas las severidades</option>
+            {SEVERITY_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button onClick={load} className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-[10px] text-gray-400">
+            ↻ Recargar
+          </button>
+        </div>
+      </div>
+
+      {/* table */}
+      <div className="overflow-auto max-h-[600px]">
+        {loading ? (
+          <div className="py-12 text-center text-[11px] text-gray-500">Cargando...</div>
+        ) : items.length === 0 ? (
+          <div className="py-12 text-center text-[11px] text-gray-600">
+            Sin notificaciones registradas todavía.<br />
+            <span className="text-[10px] text-gray-700">Las notificaciones automáticas aparecen aquí una vez que ocurra el primer evento.</span>
+          </div>
+        ) : (
+          <table className="w-full text-[10px]">
+            <thead className="sticky top-0 bg-[#0d0d0d] border-b border-white/5">
+              <tr>
+                <th className="text-left px-4 py-2 text-gray-500 font-medium w-36">Fecha / hora</th>
+                <th className="text-left px-4 py-2 text-gray-500 font-medium w-44">Destinatario</th>
+                <th className="text-left px-4 py-2 text-gray-500 font-medium">Título / Mensaje</th>
+                <th className="text-left px-4 py-2 text-gray-500 font-medium w-24">Categoría</th>
+                <th className="text-left px-4 py-2 text-gray-500 font-medium w-20">Severidad</th>
+                <th className="text-left px-4 py-2 text-gray-500 font-medium w-20">Canal</th>
+                <th className="text-left px-4 py-2 text-gray-500 font-medium w-16">Estado</th>
+                <th className="text-left px-4 py-2 text-gray-500 font-medium w-16">Fuente</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((n) => {
+                const isAuto = !n.metadata?.sent_by_admin;
+                const sevCls = SEV_COLOR[n.severity] || SEV_COLOR.info;
+                const isExp  = expanded === n.notification_id;
+                return (
+                  <React.Fragment key={n.notification_id}>
+                    <tr
+                      className="border-b border-white/3 hover:bg-white/3 cursor-pointer transition-colors"
+                      onClick={() => setExpanded(isExp ? null : n.notification_id)}
+                    >
+                      <td className="px-4 py-2.5 text-gray-500 font-mono whitespace-nowrap">
+                        {new Date(n.created_at).toLocaleString('es-AR', {
+                          day: '2-digit', month: '2-digit', year: '2-digit',
+                          hour: '2-digit', minute: '2-digit'
+                        })}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="text-white/70 truncate max-w-[160px]" title={n.user_email}>
+                          {n.user_email || `user #${n.user_id}`}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="text-white font-medium truncate max-w-xs">{n.title}</div>
+                        <div className="text-gray-500 truncate max-w-xs mt-0.5">{n.message}</div>
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-400 font-mono">{n.category}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={`inline-block px-1.5 py-0.5 rounded border text-[9px] font-mono ${sevCls}`}>
+                          {n.severity}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-400 font-mono">{n.channel}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={`text-[9px] font-mono ${n.status === 'unread' ? 'text-blue-400' : n.status === 'read' ? 'text-gray-500' : 'text-gray-700'}`}>
+                          {n.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${isAuto ? 'text-[#00ff88] bg-[#00ff88]/10' : 'text-purple-400 bg-purple-500/10'}`}>
+                          {isAuto ? 'auto' : 'admin'}
+                        </span>
+                      </td>
+                    </tr>
+                    {isExp && (
+                      <tr className="border-b border-white/3 bg-white/2">
+                        <td colSpan={8} className="px-4 py-3">
+                          <div className="flex gap-8 text-[10px]">
+                            <div>
+                              <div className="text-gray-500 mb-1">Mensaje completo</div>
+                              <div className="text-white/80 max-w-lg leading-relaxed">{n.message}</div>
+                            </div>
+                            {n.action_url && (
+                              <div>
+                                <div className="text-gray-500 mb-1">URL de acción</div>
+                                <div className="text-blue-400 font-mono">{n.action_url}</div>
+                              </div>
+                            )}
+                            {n.read_at && (
+                              <div>
+                                <div className="text-gray-500 mb-1">Leída el</div>
+                                <div className="text-gray-400 font-mono">
+                                  {new Date(n.read_at).toLocaleString('es-AR')}
+                                </div>
+                              </div>
+                            )}
+                            <div>
+                              <div className="text-gray-500 mb-1">ID</div>
+                              <div className="text-gray-600 font-mono">#{n.notification_id}</div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BroadcastPanel() {
+  const [activeTab, setActiveTab] = useState('log');
   const [form, setForm] = useState({
     title: '', message: '', category: 'system', severity: 'info',
     channel: 'dashboard', action_url: '', target_type: 'all', target_value: '',
   });
-  const [loading,  setLoading]  = useState(false);
-  const [result,   setResult]   = useState(null);
-  const [error,    setError]    = useState(null);
-  const [history,  setHistory]  = useState([]);
-  const [histLoad, setHistLoad] = useState(false);
-
-  useEffect(() => {
-    setHistLoad(true);
-    adminGetNotificationHistory()
-      .then(d => setHistory(d.items || []))
-      .catch(() => {})
-      .finally(() => setHistLoad(false));
-  }, [result]);
+  const [loading, setLoading] = useState(false);
+  const [result,  setResult]  = useState(null);
+  const [error,   setError]   = useState(null);
 
   const send = async (e) => {
     e.preventDefault();
@@ -2756,6 +2917,7 @@ function BroadcastPanel() {
       const res = await adminBroadcastNotification(payload);
       setResult(res);
       setForm(f => ({ ...f, title: '', message: '', action_url: '' }));
+      setActiveTab('log');
     } catch (err) {
       setError(err?.response?.data?.detail || 'Error al enviar');
     } finally {
@@ -2765,164 +2927,111 @@ function BroadcastPanel() {
 
   const field = (key, val) => setForm(f => ({ ...f, [key]: val }));
 
-  const SEV_COLOR = {
-    info: 'text-blue-400', success: 'text-emerald-400', warning: 'text-amber-400',
-    critical: 'text-red-400', security: 'text-amber-400', billing: 'text-purple-400',
-    action_required: 'text-orange-400',
-  };
-
   return (
-    <div className="flex gap-6">
-      {/* ── compose form ── */}
-      <div className="flex-1 min-w-0">
-        <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-white/5 flex items-center gap-2">
-            <Send className="w-4 h-4 text-[#00ff88]" />
-            <span className="text-[12px] font-semibold text-white">Enviar Notificación</span>
-          </div>
-          <form onSubmit={send} className="p-5 flex flex-col gap-4">
-            {/* target */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[10px] text-gray-400 font-medium mb-1 block">Destinatario</label>
-                <select
-                  value={form.target_type}
-                  onChange={e => field('target_type', e.target.value)}
-                  className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white"
-                >
-                  {TARGET_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </div>
-              {(form.target_type === 'user' || form.target_type === 'plan') && (
+    <div className="flex flex-col gap-4">
+      {/* tabs */}
+      <div className="flex gap-1 border-b border-white/5">
+        {[
+          { id: 'log',  label: 'Historial completo' },
+          { id: 'send', label: 'Enviar notificación' },
+        ].map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
+            className={`px-4 py-2 text-[11px] font-medium border-b-2 -mb-px transition-all
+              ${activeTab === t.id ? 'border-[#00ff88] text-[#00ff88]' : 'border-transparent text-gray-500 hover:text-white'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* log tab */}
+      {activeTab === 'log' && <NotificationLogTable />}
+
+      {/* send tab */}
+      {activeTab === 'send' && (
+        <div className="max-w-xl">
+          <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-white/5 flex items-center gap-2">
+              <Send className="w-4 h-4 text-[#00ff88]" />
+              <span className="text-[12px] font-semibold text-white">Enviar Notificación Manual</span>
+            </div>
+            <form onSubmit={send} className="p-5 flex flex-col gap-4">
+              {/* target */}
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] text-gray-400 font-medium mb-1 block">
-                    {form.target_type === 'user' ? 'User ID' : 'Plan (free/personal/negocio…)'}
-                  </label>
-                  <input
-                    value={form.target_value}
-                    onChange={e => field('target_value', e.target.value)}
-                    placeholder={form.target_type === 'user' ? 'ej. 42' : 'ej. personal'}
-                    className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600"
-                  />
+                  <label className="text-[10px] text-gray-400 font-medium mb-1 block">Destinatario</label>
+                  <select value={form.target_type} onChange={e => field('target_type', e.target.value)}
+                    className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white">
+                    {TARGET_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                {(form.target_type === 'user' || form.target_type === 'plan') && (
+                  <div>
+                    <label className="text-[10px] text-gray-400 font-medium mb-1 block">
+                      {form.target_type === 'user' ? 'User ID' : 'Plan'}
+                    </label>
+                    <input value={form.target_value} onChange={e => field('target_value', e.target.value)}
+                      placeholder={form.target_type === 'user' ? 'ej. 42' : 'ej. personal'}
+                      className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600" />
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 font-medium mb-1 block">Título</label>
+                <input value={form.title} onChange={e => field('title', e.target.value)}
+                  placeholder="Título de la notificación" maxLength={200} required
+                  className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600" />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 font-medium mb-1 block">Mensaje</label>
+                <textarea value={form.message} onChange={e => field('message', e.target.value)}
+                  placeholder="Contenido de la notificación" maxLength={1000} rows={3} required
+                  className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600 resize-none" />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] text-gray-400 font-medium mb-1 block">Categoría</label>
+                  <select value={form.category} onChange={e => field('category', e.target.value)}
+                    className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white">
+                    {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-400 font-medium mb-1 block">Severidad</label>
+                  <select value={form.severity} onChange={e => field('severity', e.target.value)}
+                    className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white">
+                    {SEVERITY_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-400 font-medium mb-1 block">Canal</label>
+                  <select value={form.channel} onChange={e => field('channel', e.target.value)}
+                    className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white">
+                    {['dashboard', 'email', 'both'].map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 font-medium mb-1 block">URL de acción (opcional)</label>
+                <input value={form.action_url} onChange={e => field('action_url', e.target.value)}
+                  placeholder="/dashboard o https://..."
+                  className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600" />
+              </div>
+              {error && <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">{error}</div>}
+              {result && (
+                <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-400">
+                  Enviado a {result.sent} usuario{result.sent !== 1 && 's'} · target: {result.target_type}
                 </div>
               )}
-            </div>
-
-            {/* title */}
-            <div>
-              <label className="text-[10px] text-gray-400 font-medium mb-1 block">Título</label>
-              <input
-                value={form.title}
-                onChange={e => field('title', e.target.value)}
-                placeholder="Título de la notificación"
-                maxLength={200}
-                required
-                className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600"
-              />
-            </div>
-
-            {/* message */}
-            <div>
-              <label className="text-[10px] text-gray-400 font-medium mb-1 block">Mensaje</label>
-              <textarea
-                value={form.message}
-                onChange={e => field('message', e.target.value)}
-                placeholder="Contenido de la notificación"
-                maxLength={1000}
-                rows={3}
-                required
-                className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600 resize-none"
-              />
-            </div>
-
-            {/* category / severity / channel */}
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="text-[10px] text-gray-400 font-medium mb-1 block">Categoría</label>
-                <select value={form.category} onChange={e => field('category', e.target.value)}
-                  className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white">
-                  {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-gray-400 font-medium mb-1 block">Severidad</label>
-                <select value={form.severity} onChange={e => field('severity', e.target.value)}
-                  className={`w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] ${SEV_COLOR[form.severity] || 'text-white'}`}>
-                  {SEVERITY_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-gray-400 font-medium mb-1 block">Canal</label>
-                <select value={form.channel} onChange={e => field('channel', e.target.value)}
-                  className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white">
-                  {['dashboard', 'email', 'both'].map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {/* action_url */}
-            <div>
-              <label className="text-[10px] text-gray-400 font-medium mb-1 block">URL de acción (opcional)</label>
-              <input
-                value={form.action_url}
-                onChange={e => field('action_url', e.target.value)}
-                placeholder="/dashboard o https://..."
-                className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600"
-              />
-            </div>
-
-            {error && (
-              <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">{error}</div>
-            )}
-            {result && (
-              <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-400">
-                Enviado a {result.sent} usuario{result.sent !== 1 && 's'} ·{' '}
-                <span className="opacity-60">target: {result.target_type}</span>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading || !form.title.trim() || !form.message.trim()}
-              className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-[12px] font-semibold
-                bg-[#00ff88]/10 border border-[#00ff88]/20 text-[#00ff88]
-                hover:bg-[#00ff88]/15 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-            >
-              {loading ? <><span className="animate-spin">↻</span> Enviando...</>
-                       : <><Send className="w-3.5 h-3.5" /> Enviar notificación</>}
-            </button>
-          </form>
-        </div>
-      </div>
-
-      {/* ── history ── */}
-      <div className="w-80 shrink-0">
-        <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden h-full">
-          <div className="px-4 py-3 border-b border-white/5">
-            <span className="text-[12px] font-semibold text-white">Historial reciente</span>
-          </div>
-          <div className="overflow-y-auto max-h-[500px] p-3 flex flex-col gap-2">
-            {histLoad ? (
-              <div className="text-[10px] text-gray-600 py-4 text-center">Cargando...</div>
-            ) : history.length === 0 ? (
-              <div className="text-[10px] text-gray-600 py-8 text-center">Sin envíos recientes</div>
-            ) : history.map((h) => (
-              <div key={h.notification_id} className="flex flex-col gap-0.5 px-3 py-2.5 rounded-lg bg-white/3 border border-white/6">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-white truncate">{h.title}</span>
-                  <span className="text-[9px] text-gray-500 shrink-0 ml-2">{fmtDate(h.created_at)}</span>
-                </div>
-                <span className="text-[10px] text-gray-500 line-clamp-2">{h.message}</span>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[9px] text-gray-600 font-mono">{h.severity}</span>
-                  <span className="text-[9px] text-gray-600">·</span>
-                  <span className="text-[9px] text-gray-600 font-mono">{h.category}</span>
-                </div>
-              </div>
-            ))}
+              <button type="submit" disabled={loading || !form.title.trim() || !form.message.trim()}
+                className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-[12px] font-semibold
+                  bg-[#00ff88]/10 border border-[#00ff88]/20 text-[#00ff88]
+                  hover:bg-[#00ff88]/15 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+                {loading ? '↻ Enviando...' : <><Send className="w-3.5 h-3.5" /> Enviar notificación</>}
+              </button>
+            </form>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
