@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bell, X, Check, CheckCheck, Trash2, ExternalLink, AlertTriangle, Info, CheckCircle2, Zap, Shield, CreditCard, Server } from 'lucide-react';
+import { Bell, X, Check, CheckCheck, Trash2, ExternalLink, AlertTriangle, Info, CheckCircle2, Zap, Shield, CreditCard, Server, ArrowRight } from 'lucide-react';
 import {
   getNotifications,
   getUnreadCount,
@@ -115,6 +116,7 @@ function NotifRow({ item, onRead, onArchive }) {
 
 /* ── main component ──────────────────────────────────────────────────────── */
 export default function NotificationBell() {
+  const navigate  = useNavigate();
   const [open,    setOpen]    = useState(false);
   const [items,   setItems]   = useState([]);
   const [unread,  setUnread]  = useState(0);
@@ -275,13 +277,17 @@ export default function NotificationBell() {
             </div>
 
             {/* footer */}
-            {visible.length > 0 && (
-              <div className="border-t border-white/6 px-3 py-2 text-center">
-                <span className="text-[9px] text-white/20 font-mono">
-                  {visible.length} notificacion{visible.length !== 1 && 'es'} · últimas 30
-                </span>
-              </div>
-            )}
+            <div className="border-t border-white/6 px-3 py-2 flex items-center justify-between">
+              <span className="text-[9px] text-white/20 font-mono">
+                {visible.length} · últimas 40
+              </span>
+              <button
+                onClick={() => { setOpen(false); navigate('/notifications'); }}
+                className="flex items-center gap-1 text-[10px] text-white/40 hover:text-white/70 transition-colors"
+              >
+                Ver todas <ArrowRight className="w-2.5 h-2.5" />
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

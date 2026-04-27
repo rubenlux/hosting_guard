@@ -202,7 +202,7 @@ def verify_email(request: Request, token: str):
             "Email verificado",
             "Tu dirección de correo fue verificada correctamente. "
             "Ya podés acceder a todas las funciones de tu cuenta.",
-            category="account", severity="success", channel="dashboard",
+            category="account", severity="success", channel="both",
         )
     except Exception:
         pass
@@ -298,7 +298,7 @@ def login(request: Request, response: Response, body: LoginRequest):
                     "Nuevo inicio de sesión",
                     f"Se inició sesión en tu cuenta desde la IP {ip}. "
                     "Si no fuiste vos, cambiá tu contraseña de inmediato.",
-                    category="security", severity="info", channel="dashboard",
+                    category="security", severity="info", channel="both",
                 )
             except Exception:
                 pass

@@ -154,7 +154,7 @@ def check_all_hostings() -> None:
                             f"Recursos altos: {site_name}",
                             f"Tu sitio '{site_name}' usó CPU {cpu:.0f}% y RAM {ram:.0f}% "
                             f"en el último ciclo de monitoreo.",
-                            category="performance", severity="warning", channel="dashboard",
+                            category="performance", severity="warning", channel="both",
                             action_url="/dashboard",
                         )
                     else:

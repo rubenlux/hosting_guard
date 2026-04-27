@@ -285,7 +285,7 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
             user_id or 0,
             f"Sitio creado: {data.name}",
             f"Tu sitio '{data.name}' está activo en https://{subdomain}",
-            category="hosting", severity="success", channel="dashboard",
+            category="hosting", severity="success", channel="both",
             action_url="/dashboard",
         )
 
@@ -369,7 +369,7 @@ async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
         user_id or 0,
         f"Sitio eliminado: {site_name}",
         f"El sitio '{site_name}' fue eliminado correctamente.",
-        category="hosting", severity="info", channel="dashboard",
+        category="hosting", severity="info", channel="both",
     )
 
     # ── 4. Invalidate the Redis list cache for this user ─────────────────────
@@ -425,7 +425,7 @@ async def restart_hosting(hosting_id: int, request: Request, user: dict = Depend
         user_id or 0,
         f"Sitio reiniciado: {hosting.get('name') or hosting_id}",
         f"El sitio '{hosting.get('name') or hosting_id}' fue reiniciado.",
-        category="hosting", severity="info", channel="dashboard",
+        category="hosting", severity="info", channel="both",
         action_url="/dashboard",
     )
     return {"status": "restarting", "container_state": final_state}
@@ -455,7 +455,7 @@ async def stop_hosting(hosting_id: int, request: Request, user: dict = Depends(v
         user_id or 0,
         f"Sitio detenido: {hosting.get('name') or hosting_id}",
         f"El sitio '{hosting.get('name') or hosting_id}' fue detenido.",
-        category="hosting", severity="warning", channel="dashboard",
+        category="hosting", severity="warning", channel="both",
         action_url="/dashboard",
     )
     return {"status": "stopped"}
@@ -486,7 +486,7 @@ async def start_hosting(hosting_id: int, request: Request, user: dict = Depends(
         user_id or 0,
         f"Sitio iniciado: {hosting.get('name') or hosting_id}",
         f"El sitio '{hosting.get('name') or hosting_id}' fue iniciado correctamente.",
-        category="hosting", severity="success", channel="dashboard",
+        category="hosting", severity="success", channel="both",
         action_url="/dashboard",
     )
     return {"status": "starting", "container_state": final_state}
@@ -625,7 +625,7 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             f"WordPress creado: {data.name}",
             f"Tu sitio WordPress '{data.name}' está siendo configurado. "
             f"Estará disponible en https://{subdomain} en 30-60 segundos.",
-            category="wordpress", severity="success", channel="dashboard",
+            category="wordpress", severity="success", channel="both",
             action_url="/dashboard",
         )
 

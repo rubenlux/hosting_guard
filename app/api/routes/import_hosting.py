@@ -663,7 +663,7 @@ async def import_site(
         f"Importación iniciada: {hosting['name']}",
         f"El archivo fue recibido correctamente. La importación de "
         f"'{hosting['name']}' está en progreso.",
-        category="migration", severity="info", channel="dashboard",
+        category="migration", severity="info", channel="both",
         action_url="/dashboard",
     )
 

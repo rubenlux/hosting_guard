@@ -19,6 +19,7 @@ import TermsConditions from './pages/TermsConditions';
 import ApiDocs from './pages/ApiDocs';
 import VerifyEmail from './pages/VerifyEmail';
 import ResetPassword from './pages/ResetPassword';
+import Notifications from './pages/Notifications';
 import { useAuth } from './hooks/useAuth';
 
 const PrivateRoute = ({ children }) => {
@@ -69,7 +70,8 @@ function App() {
       <main className={!user ? "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" : ""}>
         <Routes>
           <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Home />} />
-          <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+          <Route path="/dashboard"      element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+          <Route path="/notifications"  element={<PrivateRoute><Notifications /></PrivateRoute>} />
           <Route path="/sites"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/pixel"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/advisory"  element={<PrivateRoute><Dashboard /></PrivateRoute>} />
