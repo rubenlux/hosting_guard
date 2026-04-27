@@ -1027,10 +1027,14 @@ app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 
 # Pixel CORS — outermost layer, handles /pixel/event and /pixel.js from any origin.
-# These endpoints are public (no credentials), designed to receive events from any
-# website that installs the tracking snippet. The main CORSMiddleware above is
-# intentionally restricted to hostingguard.lat with credentials; pixel is separate.
+#
+# Rule: origins already covered by the credentialed CORSMiddleware (hostingguard.lat,
+# www.hostingguard.lat) are passed through untouched — the inner CORSMiddleware returns
+# the specific origin, which is required when credentials mode is 'include'.
+# All other origins (*.hostingguard.lat subdomains, external sites) get Access-Control-
+# Allow-Origin: * because the pixel is a public, unauthenticated endpoint.
 _PIXEL_CORS_PATHS = {"/pixel/event", "/pixel.js"}
+_CREDENTIALED_ORIGINS = {b"https://hostingguard.lat", b"https://www.hostingguard.lat"}
 
 class _PixelCORSMiddleware:
     def __init__(self, app_):
@@ -1041,6 +1045,19 @@ class _PixelCORSMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Extract Origin header
+        origin = b""
+        for k, v in scope.get("headers", []):
+            if k.lower() == b"origin":
+                origin = v
+                break
+
+        # Dashboard origins already handled by inner CORSMiddleware with credentials
+        if origin in _CREDENTIALED_ORIGINS:
+            await self.app(scope, receive, send)
+            return
+
+        # External / subdomain origin → wildcard CORS, no credentials
         if scope.get("method") == "OPTIONS":
             await send({
                 "type": "http.response.start",
