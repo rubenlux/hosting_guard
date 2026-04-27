@@ -477,6 +477,41 @@ _INDEXES = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT",
     # Notification preferences stored as JSON (e.g. {"site_down": true, "payment": false})
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_prefs TEXT",
+
+    # ── Notifications system ─────────────────────────────────────────────────
+    """CREATE TABLE IF NOT EXISTS notifications (
+        notification_id SERIAL PRIMARY KEY,
+        user_id         INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        title           TEXT NOT NULL,
+        message         TEXT NOT NULL,
+        category        TEXT NOT NULL,
+        severity        TEXT NOT NULL DEFAULT 'info',
+        channel         TEXT NOT NULL DEFAULT 'dashboard',
+        status          TEXT NOT NULL DEFAULT 'unread',
+        action_url      TEXT,
+        metadata        JSONB,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        read_at         TIMESTAMPTZ
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_notifications_user_status ON notifications(user_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC)",
+
+    # ── Admin audit log ──────────────────────────────────────────────────────
+    """CREATE TABLE IF NOT EXISTS admin_audit_log (
+        audit_id        SERIAL PRIMARY KEY,
+        admin_id        INTEGER NOT NULL REFERENCES users(user_id),
+        admin_email     TEXT NOT NULL,
+        action          TEXT NOT NULL,
+        target_user_id  INTEGER REFERENCES users(user_id),
+        target_email    TEXT,
+        ip              TEXT,
+        user_agent      TEXT,
+        details         TEXT,
+        reason          TEXT,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_admin_audit_admin ON admin_audit_log(admin_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_admin_audit_target ON admin_audit_log(target_user_id, created_at DESC)",
 ]
 
 def ensure_monthly_partitions(cursor):

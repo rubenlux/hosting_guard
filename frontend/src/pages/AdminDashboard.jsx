@@ -11,7 +11,7 @@ import {
   Terminal, RotateCcw, Play, Square, KeyRound,
   Crown, Infinity, CalendarClock, ShieldOff, TrendingUp as Upgrade, X,
   Database, Cpu, MemoryStick, HardDrive, Trash, Gauge, Wifi, WifiOff,
-  Sparkles, Mail,
+  Sparkles, Mail, Send, BellRing,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
@@ -25,6 +25,7 @@ import {
   adminGetHostingLogs, adminTerminateHosting,
   adminExtendPlan, adminSetFreePlanForever, adminDeactivateFreePlan, adminUpgradePlan,
   adminDeleteUser, getAdminReport,
+  adminBroadcastNotification, adminGetNotificationHistory,
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import StaffAnalytics from '../components/StaffAnalytics';
@@ -62,7 +63,8 @@ const NAV = [
   { id: 'pixel-users',   label: 'Pixel Users',      icon: Users,     path: '/admin/pixel-users' },
   { id: 'orchestrator',  label: 'Orchestrator',     icon: Bot },
   { id: 'finance',       label: 'Finance',          icon: DollarSign },
-  { id: 'ai-report',    label: 'AI Report',        icon: Sparkles },
+  { id: 'ai-report',     label: 'AI Report',        icon: Sparkles },
+  { id: 'notifications', label: 'Notificaciones',   icon: BellRing },
   { id: 'equipo',        label: 'Equipo',           icon: UserCog },
   { id: 'audit',         label: 'Audit Log',        icon: FileText },
   { id: 'settings',      label: 'Settings',         icon: Settings },
@@ -1269,6 +1271,9 @@ export default function AdminDashboard() {
 
             {/* ══ AI REPORT ══ */}
             {section === 'ai-report' && <AIReportPanel />}
+
+            {/* ══ NOTIFICATIONS ══ */}
+            {section === 'notifications' && <BroadcastPanel />}
 
             {/* ══ SETTINGS ══ */}
             {section === 'settings' && (
@@ -2701,5 +2706,223 @@ function EditStaffRow({ staff, onSave, onCancel }) {
         Cancelar
       </button>
     </form>
+  );
+}
+
+/* ─── BroadcastPanel ──────────────────────────────────────── */
+const SEVERITY_OPTIONS = ['info', 'success', 'warning', 'critical', 'security', 'billing', 'action_required'];
+const CATEGORY_OPTIONS = ['system', 'hosting', 'wordpress', 'ssl', 'backup', 'billing', 'security', 'support', 'migration', 'account', 'performance'];
+const TARGET_OPTIONS   = [
+  { value: 'all',             label: 'Todos los usuarios' },
+  { value: 'user',            label: 'Usuario específico (por ID)' },
+  { value: 'plan',            label: 'Por plan' },
+  { value: 'site_down',       label: 'Con sitios caídos' },
+  { value: 'pending_payment', label: 'Con balance negativo' },
+  { value: 'high_usage',      label: 'Con sitios activos' },
+];
+
+function BroadcastPanel() {
+  const [form, setForm] = useState({
+    title: '', message: '', category: 'system', severity: 'info',
+    channel: 'dashboard', action_url: '', target_type: 'all', target_value: '',
+  });
+  const [loading,  setLoading]  = useState(false);
+  const [result,   setResult]   = useState(null);
+  const [error,    setError]    = useState(null);
+  const [history,  setHistory]  = useState([]);
+  const [histLoad, setHistLoad] = useState(false);
+
+  useEffect(() => {
+    setHistLoad(true);
+    adminGetNotificationHistory()
+      .then(d => setHistory(d.items || []))
+      .catch(() => {})
+      .finally(() => setHistLoad(false));
+  }, [result]);
+
+  const send = async (e) => {
+    e.preventDefault();
+    if (!form.title.trim() || !form.message.trim()) return;
+    setLoading(true); setError(null); setResult(null);
+    try {
+      const payload = {
+        title: form.title, message: form.message,
+        category: form.category, severity: form.severity,
+        channel: form.channel,
+        action_url: form.action_url || undefined,
+        target_type: form.target_type,
+        target_value: form.target_value || undefined,
+      };
+      const res = await adminBroadcastNotification(payload);
+      setResult(res);
+      setForm(f => ({ ...f, title: '', message: '', action_url: '' }));
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'Error al enviar');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const field = (key, val) => setForm(f => ({ ...f, [key]: val }));
+
+  const SEV_COLOR = {
+    info: 'text-blue-400', success: 'text-emerald-400', warning: 'text-amber-400',
+    critical: 'text-red-400', security: 'text-amber-400', billing: 'text-purple-400',
+    action_required: 'text-orange-400',
+  };
+
+  return (
+    <div className="flex gap-6">
+      {/* ── compose form ── */}
+      <div className="flex-1 min-w-0">
+        <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-white/5 flex items-center gap-2">
+            <Send className="w-4 h-4 text-[#00ff88]" />
+            <span className="text-[12px] font-semibold text-white">Enviar Notificación</span>
+          </div>
+          <form onSubmit={send} className="p-5 flex flex-col gap-4">
+            {/* target */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] text-gray-400 font-medium mb-1 block">Destinatario</label>
+                <select
+                  value={form.target_type}
+                  onChange={e => field('target_type', e.target.value)}
+                  className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white"
+                >
+                  {TARGET_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+              {(form.target_type === 'user' || form.target_type === 'plan') && (
+                <div>
+                  <label className="text-[10px] text-gray-400 font-medium mb-1 block">
+                    {form.target_type === 'user' ? 'User ID' : 'Plan (free/personal/negocio…)'}
+                  </label>
+                  <input
+                    value={form.target_value}
+                    onChange={e => field('target_value', e.target.value)}
+                    placeholder={form.target_type === 'user' ? 'ej. 42' : 'ej. personal'}
+                    className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* title */}
+            <div>
+              <label className="text-[10px] text-gray-400 font-medium mb-1 block">Título</label>
+              <input
+                value={form.title}
+                onChange={e => field('title', e.target.value)}
+                placeholder="Título de la notificación"
+                maxLength={200}
+                required
+                className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600"
+              />
+            </div>
+
+            {/* message */}
+            <div>
+              <label className="text-[10px] text-gray-400 font-medium mb-1 block">Mensaje</label>
+              <textarea
+                value={form.message}
+                onChange={e => field('message', e.target.value)}
+                placeholder="Contenido de la notificación"
+                maxLength={1000}
+                rows={3}
+                required
+                className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600 resize-none"
+              />
+            </div>
+
+            {/* category / severity / channel */}
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="text-[10px] text-gray-400 font-medium mb-1 block">Categoría</label>
+                <select value={form.category} onChange={e => field('category', e.target.value)}
+                  className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white">
+                  {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 font-medium mb-1 block">Severidad</label>
+                <select value={form.severity} onChange={e => field('severity', e.target.value)}
+                  className={`w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] ${SEV_COLOR[form.severity] || 'text-white'}`}>
+                  {SEVERITY_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 font-medium mb-1 block">Canal</label>
+                <select value={form.channel} onChange={e => field('channel', e.target.value)}
+                  className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white">
+                  {['dashboard', 'email', 'both'].map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* action_url */}
+            <div>
+              <label className="text-[10px] text-gray-400 font-medium mb-1 block">URL de acción (opcional)</label>
+              <input
+                value={form.action_url}
+                onChange={e => field('action_url', e.target.value)}
+                placeholder="/dashboard o https://..."
+                className="w-full bg-[#0d0d0d] border border-white/8 rounded-lg px-3 py-2 text-[11px] text-white placeholder-gray-600"
+              />
+            </div>
+
+            {error && (
+              <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-[11px] text-red-400">{error}</div>
+            )}
+            {result && (
+              <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-400">
+                Enviado a {result.sent} usuario{result.sent !== 1 && 's'} ·{' '}
+                <span className="opacity-60">target: {result.target_type}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || !form.title.trim() || !form.message.trim()}
+              className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-[12px] font-semibold
+                bg-[#00ff88]/10 border border-[#00ff88]/20 text-[#00ff88]
+                hover:bg-[#00ff88]/15 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              {loading ? <><span className="animate-spin">↻</span> Enviando...</>
+                       : <><Send className="w-3.5 h-3.5" /> Enviar notificación</>}
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* ── history ── */}
+      <div className="w-80 shrink-0">
+        <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden h-full">
+          <div className="px-4 py-3 border-b border-white/5">
+            <span className="text-[12px] font-semibold text-white">Historial reciente</span>
+          </div>
+          <div className="overflow-y-auto max-h-[500px] p-3 flex flex-col gap-2">
+            {histLoad ? (
+              <div className="text-[10px] text-gray-600 py-4 text-center">Cargando...</div>
+            ) : history.length === 0 ? (
+              <div className="text-[10px] text-gray-600 py-8 text-center">Sin envíos recientes</div>
+            ) : history.map((h) => (
+              <div key={h.notification_id} className="flex flex-col gap-0.5 px-3 py-2.5 rounded-lg bg-white/3 border border-white/6">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-white truncate">{h.title}</span>
+                  <span className="text-[9px] text-gray-500 shrink-0 ml-2">{fmtDate(h.created_at)}</span>
+                </div>
+                <span className="text-[10px] text-gray-500 line-clamp-2">{h.message}</span>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[9px] text-gray-600 font-mono">{h.severity}</span>
+                  <span className="text-[9px] text-gray-600">·</span>
+                  <span className="text-[9px] text-gray-600 font-mono">{h.category}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

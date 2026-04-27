@@ -38,6 +38,7 @@ import SSLSection           from '../components/dashboard/sections/SSLSection';
 import EmailSection         from '../components/dashboard/sections/EmailSection';
 import BillingSection       from '../components/dashboard/sections/BillingSection';
 import ConfigSection        from '../components/dashboard/sections/ConfigSection';
+import NotificationBell    from '../components/dashboard/NotificationBell';
 const BusinessOverview = lazy(() => import('../components/dashboard/BusinessOverview'));
 
 const Dashboard = () => {
@@ -336,6 +337,7 @@ const Dashboard = () => {
                 {showCreate ? 'Volver' : '+ Nuevo sitio'}
               </button>
             )}
+            <NotificationBell />
             {!sidebarSection && <button className="btn-dash btn-primary-dash">Upgrade</button>}
           </div>
 

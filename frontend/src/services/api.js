@@ -681,3 +681,43 @@ export const createSupportWebSocket = (ticketId) => {
     .replace('http://', 'ws://');
   return new WebSocket(`${wsBase}/ws/support/${ticketId}`);
 };
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+export const getNotifications = async (params = {}) => {
+  const response = await api.get('/notifications', { params });
+  return response.data;
+};
+
+export const getUnreadCount = async () => {
+  const response = await api.get('/notifications/count');
+  return response.data;
+};
+
+export const markNotificationRead = async (id) => {
+  const response = await api.patch(`/notifications/${id}/read`);
+  return response.data;
+};
+
+export const markAllNotificationsRead = async () => {
+  const response = await api.patch('/notifications/read-all');
+  return response.data;
+};
+
+export const archiveNotification = async (id) => {
+  const response = await api.delete(`/notifications/${id}`);
+  return response.data;
+};
+
+// Admin
+export const adminBroadcastNotification = async (data) => {
+  const response = await api.post('/admin/notifications/broadcast', data);
+  return response.data;
+};
+
+export const adminGetNotificationHistory = async () => {
+  const response = await api.get('/admin/notifications/history');
+  return response.data;
+};

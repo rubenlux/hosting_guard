@@ -71,6 +71,7 @@ from app.api.routes.staff_activity import router as staff_activity_router
 from app.api.routes.health import router as health_router
 from app.api.routes.alerts import router as alerts_router
 from app.api.routes.import_hosting import router as import_router
+from app.api.routes.notifications import router as notifications_router
 app.include_router(pixel_router)
 app.include_router(files_router)
 app.include_router(impersonate_router)
@@ -79,6 +80,7 @@ app.include_router(staff_activity_router)
 app.include_router(health_router)
 app.include_router(alerts_router)
 app.include_router(import_router)
+app.include_router(notifications_router)
 
 
 _IS_PRODUCTION = APP_ENV == "production"

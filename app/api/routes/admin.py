@@ -1,10 +1,10 @@
 import asyncio
 import subprocess
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import os
 from app.api.rate_limit import limiter
@@ -14,6 +14,8 @@ from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.pixel_repository import PixelRepository
 from app.infra.audit.metrics_repository import MetricsRepository
 from app.infra.audit.repository import AuditRepository
+from app.infra.audit.admin_audit_repository import AdminAuditRepository
+from app.infra.audit.notification_repository import NotificationRepository
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -22,6 +24,8 @@ _hosting_repo = HostingRepository()
 _audit_repo   = AuditRepository()
 _pixel_repo   = PixelRepository()
 _metrics_repo = MetricsRepository()
+_admin_audit  = AdminAuditRepository()
+_notif_repo   = NotificationRepository()
 
 
 # Container prefix used by HostingGuard (same as orchestrator.py)
@@ -1385,3 +1389,67 @@ async def admin_force_cleanup(
         "admin": admin["email"],
         "at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ── Admin notification broadcast ────────────────────────────────────────────
+
+class BroadcastRequest(BaseModel):
+    title:        str           = Field(..., min_length=1, max_length=200)
+    message:      str           = Field(..., min_length=1, max_length=1000)
+    category:     str           = Field(default="system")
+    severity:     str           = Field(default="info")
+    channel:      str           = Field(default="dashboard")
+    action_url:   Optional[str] = None
+    target_type:  str           = Field(default="all")
+    target_value: Optional[str] = None
+
+
+@router.post("/notifications/broadcast")
+def admin_broadcast_notification(
+    body: BroadcastRequest,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    from app.services.notification_service import get_target_user_ids, notify_bulk
+
+    valid_targets = {"all", "user", "plan", "site_down", "pending_payment", "high_usage"}
+    if body.target_type not in valid_targets:
+        raise HTTPException(status_code=422, detail=f"target_type must be one of {valid_targets}")
+
+    user_ids = get_target_user_ids(body.target_type, body.target_value)
+    if not user_ids:
+        return {"ok": True, "sent": 0, "message": "No users matched the target"}
+
+    count = notify_bulk(
+        user_ids=user_ids,
+        title=body.title,
+        message=body.message,
+        category=body.category,
+        severity=body.severity,
+        channel=body.channel,
+        action_url=body.action_url,
+        admin_id=admin["user_id"],
+    )
+
+    _admin_audit.log(
+        admin_id=admin["user_id"],
+        admin_email=admin["email"],
+        action="notification_broadcast",
+        ip=_get_ip(request),
+        details=f"target={body.target_type} sent={count} title={body.title[:60]!r}",
+    )
+
+    return {"ok": True, "sent": count, "target_type": body.target_type}
+
+
+@router.get("/notifications/history")
+def admin_notification_history(admin: dict = Depends(require_role("admin"))):
+    return {"items": _notif_repo.get_admin_history(limit=100)}
+
+
+@router.get("/audit-log")
+def admin_audit_log(
+    limit: int = 100,
+    admin: dict = Depends(require_role("admin")),
+):
+    return {"items": _admin_audit.get_recent(limit=min(limit, 500))}
