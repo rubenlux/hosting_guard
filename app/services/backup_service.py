@@ -32,13 +32,26 @@ def _get_db_env(db_container: str) -> dict:
         return {}
 
 
+_WEB_ROOT_CANDIDATES = ["/var/www/html", "/app", "/srv/www", "/var/www", "/usr/share/nginx/html"]
+
+
+def _find_web_root(container: str) -> Optional[str]:
+    """Returns the first existing candidate web root directory in the container."""
+    for path in _WEB_ROOT_CANDIDATES:
+        r = subprocess.run(
+            ["docker", "exec", container, "test", "-d", path],
+            capture_output=True, timeout=5,
+        )
+        if r.returncode == 0:
+            return path
+    return None
+
+
 def _find_wp_root(container: str) -> Optional[str]:
     """
-    Detects the WordPress installation directory inside the container.
-    Tries wp-cli first, then falls back to find.
-    Returns None if WordPress is not found.
+    Returns WordPress installation directory if this is a WP container, else None.
+    Tries wp-cli first (fastest), then searches for wp-config.php.
     """
-    # WP-CLI: fastest and most reliable
     r = subprocess.run(
         ["docker", "exec", container, "wp", "--allow-root", "eval", "echo ABSPATH;"],
         capture_output=True, text=True, timeout=10,
@@ -46,34 +59,31 @@ def _find_wp_root(container: str) -> Optional[str]:
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip().rstrip("/")
 
-    # Fallback: find wp-config.php (up to depth 4)
-    r2 = subprocess.run(
-        ["docker", "exec", container,
-         "find", "/", "-maxdepth", "4", "-name", "wp-config.php",
-         "-not", "-path", "*/wp-admin/*", "-print"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if r2.returncode == 0 and r2.stdout.strip():
-        return os.path.dirname(r2.stdout.strip().splitlines()[0])
+    # Fallback: look for wp-config.php in common web roots
+    for base in _WEB_ROOT_CANDIDATES:
+        r2 = subprocess.run(
+            ["docker", "exec", container, "test", "-f", f"{base}/wp-config.php"],
+            capture_output=True, timeout=5,
+        )
+        if r2.returncode == 0:
+            return base
 
     return None
 
 
 def _resolve_db_container(container: str) -> Optional[str]:
     """
-    Derives the MariaDB container name from the WP container.
-    Supports both naming conventions:
-      - New: user_{id}_wp_{name}_{uid} → user_{id}_db_{name}_{uid}
-      - Old: any name → reads WORDPRESS_DB_HOST from container env
+    Derives the MariaDB container name.
+    New naming: user_{id}_wp_{name}_{uid} → user_{id}_db_{name}_{uid}
+    Old naming: reads WORDPRESS_DB_HOST from container env.
     """
     if "_wp_" in container:
         return container.replace("_wp_", "_db_", 1)
 
-    # Old naming convention: read DB host from WP container environment
     env = _get_db_env(container)
     db_host = env.get("WORDPRESS_DB_HOST") or env.get("MYSQL_HOST")
     if db_host:
-        return db_host.split(":")[0]  # strip port if present
+        return db_host.split(":")[0]
 
     return None
 
@@ -81,8 +91,9 @@ def _resolve_db_container(container: str) -> Optional[str]:
 def create_backup(hosting_id: int, user_id: int, container: str, db_container: Optional[str],
                   site_name: str, subdomain: str) -> dict:
     """
-    Creates a backup of the WP site: DB dump + wp-content tar.
-    Returns dict with backup_id, db_path, files_path, size_bytes.
+    Creates a backup for any hosting container.
+    - WordPress containers: DB dump (mysqldump) + wp-content tar
+    - PHP/other containers: full web root tar (no DB)
     """
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     backup_dir = BACKUP_DIR / str(user_id) / str(hosting_id) / ts
@@ -92,10 +103,13 @@ def create_backup(hosting_id: int, user_id: int, container: str, db_container: O
     db_size = 0
     files_size = 0
 
-    # Detect WordPress root — required for both DB credential extraction and files backup
+    # Detect site type
     wp_root = _find_wp_root(container)
-    if not wp_root:
-        errors.append("WordPress no encontrado en este contenedor")
+    is_wordpress = wp_root is not None
+    web_root = wp_root if is_wordpress else _find_web_root(container)
+
+    if not web_root:
+        errors.append("No se encontró ningún directorio web en el contenedor")
         backup_id = _save_backup_record(
             hosting_id=hosting_id, user_id=user_id,
             site_name=site_name, ts=ts,
@@ -106,39 +120,41 @@ def create_backup(hosting_id: int, user_id: int, container: str, db_container: O
         return {"backup_id": backup_id, "ts": ts, "db_path": None, "files_path": None,
                 "size_bytes": 0, "errors": errors, "status": "failed"}
 
-    # Resolve DB container if not provided
-    if not db_container:
-        db_container = _resolve_db_container(container)
-
-    # 1. DB dump
+    # 1. DB dump — only for WordPress
     db_path = None
-    if db_container:
-        env = _get_db_env(db_container)
-        db_name = env.get("MYSQL_DATABASE", "wordpress")
-        db_user = env.get("MYSQL_USER", "wordpress")
-        db_pass = env.get("MYSQL_PASSWORD", "")
-        dump_path = backup_dir / "db.sql.gz"
-        r = subprocess.run(
-            ["docker", "exec", db_container,
-             "sh", "-c",
-             f"mysqldump -u{db_user} -p{db_pass} {db_name} | gzip"],
-            capture_output=True, timeout=120,
-        )
-        if r.returncode == 0 and r.stdout:
-            dump_path.write_bytes(r.stdout)
-            db_size = dump_path.stat().st_size
-            db_path = str(dump_path)
+    if is_wordpress:
+        if not db_container:
+            db_container = _resolve_db_container(container)
+        if db_container:
+            env = _get_db_env(db_container)
+            db_name = env.get("MYSQL_DATABASE", "wordpress")
+            db_user = env.get("MYSQL_USER", "wordpress")
+            db_pass = env.get("MYSQL_PASSWORD", "")
+            dump_path = backup_dir / "db.sql.gz"
+            r = subprocess.run(
+                ["docker", "exec", db_container,
+                 "sh", "-c", f"mysqldump -u{db_user} -p{db_pass} {db_name} | gzip"],
+                capture_output=True, timeout=120,
+            )
+            if r.returncode == 0 and r.stdout:
+                dump_path.write_bytes(r.stdout)
+                db_size = dump_path.stat().st_size
+                db_path = str(dump_path)
+            else:
+                errors.append(f"DB dump failed: {r.stderr.decode(errors='replace')[:120]}")
         else:
-            errors.append(f"DB dump failed: {r.stderr.decode(errors='replace')[:120]}")
-    else:
-        errors.append("DB container no encontrado — solo se respaldarán los archivos")
+            errors.append("DB container no encontrado — solo se respaldarán los archivos")
 
-    # 2. wp-content tar — use detected wp_root instead of hardcoded path
+    # 2. Files tar
+    # WordPress: only wp-content (themes, plugins, uploads)
+    # PHP hosting: full web root
     files_path = None
-    content_tar = backup_dir / "wp-content.tar.gz"
+    archive_name = "wp-content.tar.gz" if is_wordpress else "files.tar.gz"
+    tar_subdir = "wp-content" if is_wordpress else "."
+    content_tar = backup_dir / archive_name
     r2 = subprocess.run(
         ["docker", "exec", container,
-         "tar", "-czf", "-", "-C", wp_root, "wp-content"],
+         "tar", "-czf", "-", "-C", web_root, tar_subdir],
         capture_output=True, timeout=180,
     )
     if r2.returncode == 0 and r2.stdout:

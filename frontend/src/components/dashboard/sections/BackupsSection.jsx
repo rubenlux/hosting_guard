@@ -45,11 +45,7 @@ function BackupRow({ b }) {
 }
 
 const BackupsSection = ({ hostings = [] }) => {
-  // Only WordPress hostings have wp_admin_password set or _wp_ in container_name
-  const wpHostings = hostings.filter(h =>
-    h.status === 'active' &&
-    (h.wp_admin_password || (h.container_name || '').includes('_wp_'))
-  );
+  const wpHostings = hostings.filter(h => h.status === 'active');
   const [selectedId, setSelectedId] = useState(null);
   const [backups, setBackups] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -93,8 +89,7 @@ const BackupsSection = ({ hostings = [] }) => {
         </div>
         <div className="rounded-2xl border border-white/8 bg-[#111] px-8 py-12 text-center">
           <Database className="w-10 h-10 text-white/15 mx-auto mb-3" />
-          <div className="text-white/40 text-sm">Los backups están disponibles solo para sitios WordPress.</div>
-          <div className="text-white/25 text-xs mt-1">Creá un sitio WordPress desde "Mis Sitios" para acceder a esta función.</div>
+          <div className="text-white/40 text-sm">No tenés sitios activos.</div>
         </div>
       </div>
     );
