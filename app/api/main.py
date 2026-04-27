@@ -1026,6 +1026,48 @@ app.add_middleware(
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 
+# Pixel CORS — outermost layer, handles /pixel/event and /pixel.js from any origin.
+# These endpoints are public (no credentials), designed to receive events from any
+# website that installs the tracking snippet. The main CORSMiddleware above is
+# intentionally restricted to hostingguard.lat with credentials; pixel is separate.
+_PIXEL_CORS_PATHS = {"/pixel/event", "/pixel.js"}
+
+class _PixelCORSMiddleware:
+    def __init__(self, app_):
+        self.app = app_
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path", "") not in _PIXEL_CORS_PATHS:
+            await self.app(scope, receive, send)
+            return
+
+        if scope.get("method") == "OPTIONS":
+            await send({
+                "type": "http.response.start",
+                "status": 204,
+                "headers": [
+                    (b"access-control-allow-origin",  b"*"),
+                    (b"access-control-allow-methods", b"POST, GET, OPTIONS"),
+                    (b"access-control-allow-headers", b"Content-Type"),
+                    (b"access-control-max-age",       b"86400"),
+                    (b"content-length",               b"0"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        async def _send_with_acao(message):
+            if message["type"] == "http.response.start":
+                headers = [(k, v) for k, v in message.get("headers", [])
+                           if k.lower() != b"access-control-allow-origin"]
+                headers.append((b"access-control-allow-origin", b"*"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, _send_with_acao)
+
+app.add_middleware(_PixelCORSMiddleware)
+
 
 @app.exception_handler(RateLimitExceeded)
 def rate_limit_handler(request: Request, exc: RateLimitExceeded):
