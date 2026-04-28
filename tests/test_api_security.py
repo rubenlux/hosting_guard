@@ -30,8 +30,12 @@ def test_request_with_invalid_api_key_is_rejected(monkeypatch):
 
 
 def test_security_headers_are_present():
-    response = client.get("/health")
-    assert response.status_code == 200
+    # /health is intentionally excluded from security headers (Prometheus scraping).
+    # Use /login with an empty body — returns 422 but middleware still injects headers.
+    response = client.post("/login", json={})
+    assert response.status_code == 422
     assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert response.headers["X-Frame-Options"] == "DENY"
-    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+    assert response.headers["X-XSS-Protection"] == "1; mode=block"
+    assert "Content-Security-Policy" in response.headers

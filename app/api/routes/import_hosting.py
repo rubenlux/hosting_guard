@@ -63,19 +63,54 @@ def _log(job_id: int, line: str):
 
 
 _ZIP_MAGIC = b"PK\x03\x04"
+_EXECUTABLE_MAGIC = (
+    b"\x7fELF",        # ELF (Linux binary / shared lib)
+    b"MZ",             # PE (Windows .exe / .dll)
+    b"\xca\xfe\xba\xbe",  # Mach-O fat binary
+    b"\xce\xfa\xed\xfe",  # Mach-O 32-bit LE
+    b"\xcf\xfa\xed\xfe",  # Mach-O 64-bit LE
+)
+_BINARY_SNIFF_BYTES = 512
+
 
 def _validate_magic_bytes(path: Path, suffix: str) -> None:
-    """Raise HTTPException if the file's magic bytes don't match its declared type."""
+    """
+    Validate uploaded file content against its declared extension.
+
+    .zip  — must start with PK\\x03\\x04
+    .sql  — must be text (no null bytes; accepts UTF-8 and latin-1)
+    .wpress — All-in-One WP Migration custom binary format (not ZIP).
+              Exact magic bytes are not publicly specified and vary by plugin
+              version, so we only reject known executable signatures.
+              Full format validation is delegated to the AIWM plugin inside
+              the container during restore.
+    """
     with open(path, "rb") as f:
-        header = f.read(4)
-    if suffix in (".zip", ".wpress"):
-        if not header.startswith(_ZIP_MAGIC):
-            raise HTTPException(status_code=400, detail="El archivo no es un ZIP válido (firma incorrecta)")
+        header = f.read(_BINARY_SNIFF_BYTES)
+
+    if suffix == ".zip":
+        if not header[:4] == _ZIP_MAGIC:
+            raise HTTPException(
+                status_code=400,
+                detail="El archivo .zip no tiene firma ZIP válida (debe empezar con PK\\x03\\x04)",
+            )
+
+    elif suffix == ".wpress":
+        for magic in _EXECUTABLE_MAGIC:
+            if header[:len(magic)] == magic:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El archivo .wpress parece ser un ejecutable y fue rechazado",
+                )
+
     elif suffix == ".sql":
-        try:
-            header.decode("utf-8")
-        except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="El archivo SQL contiene bytes inválidos — debe ser texto UTF-8")
+        # Null bytes are the reliable indicator of binary content.
+        # Both UTF-8 and latin-1 text files are free of null bytes.
+        if b"\x00" in header:
+            raise HTTPException(
+                status_code=400,
+                detail="El archivo .sql contiene bytes nulos — debe ser un dump de texto (UTF-8 o latin-1)",
+            )
 
 
 def _detect_type(path: Path) -> str:
