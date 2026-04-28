@@ -62,6 +62,21 @@ def _log(job_id: int, line: str):
     logger.info("[import:%d] %s", job_id, line)
 
 
+def _log_upload_rejection(path, suffix: str, reason: str) -> None:
+    try:
+        from app.services.security_event_service import log_security_event
+        log_security_event(
+            severity="warning", category="upload",
+            event_type="magic_bytes_rejected",
+            title=f"Upload rechazado: {suffix} inválido ({reason})",
+            message=f"Archivo {path.name if hasattr(path, 'name') else path} rechazado por magic bytes ({reason}).",
+            source="import",
+            metadata={"suffix": suffix, "reason": reason},
+        )
+    except Exception:
+        pass
+
+
 _ZIP_MAGIC = b"PK\x03\x04"
 _EXECUTABLE_MAGIC = (
     b"\x7fELF",        # ELF (Linux binary / shared lib)
@@ -90,6 +105,7 @@ def _validate_magic_bytes(path: Path, suffix: str) -> None:
 
     if suffix == ".zip":
         if not header[:4] == _ZIP_MAGIC:
+            _log_upload_rejection(path, suffix, "invalid_zip_magic")
             raise HTTPException(
                 status_code=400,
                 detail="El archivo .zip no tiene firma ZIP válida (debe empezar con PK\\x03\\x04)",
@@ -98,6 +114,7 @@ def _validate_magic_bytes(path: Path, suffix: str) -> None:
     elif suffix == ".wpress":
         for magic in _EXECUTABLE_MAGIC:
             if header[:len(magic)] == magic:
+                _log_upload_rejection(path, suffix, "executable_magic_bytes")
                 raise HTTPException(
                     status_code=400,
                     detail="El archivo .wpress parece ser un ejecutable y fue rechazado",
@@ -107,6 +124,7 @@ def _validate_magic_bytes(path: Path, suffix: str) -> None:
         # Null bytes are the reliable indicator of binary content.
         # Both UTF-8 and latin-1 text files are free of null bytes.
         if b"\x00" in header:
+            _log_upload_rejection(path, suffix, "binary_sql")
             raise HTTPException(
                 status_code=400,
                 detail="El archivo .sql contiene bytes nulos — debe ser un dump de texto (UTF-8 o latin-1)",

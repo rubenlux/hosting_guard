@@ -12,6 +12,7 @@ Executes all periodic background jobs:
   - auto_backup_all  (MariaDB + files backup)                24 h
   - cleanup_old_events (prune orchestrator_events table)     24 h
   - daily_report     (AI admin report at 08:00 UTC)           1 h check
+  - detect_security   (attack detection, 10 rules)           60 s
   - cleanup_sessions  (expire/prune session rows)            24 h
   - capacity_forecast (optional, env-gated)                  10 min
 
@@ -79,6 +80,7 @@ async def _main() -> None:
     from app.services.ssl_checker import check_ssl_for_all_hostings
     from app.services.backup_service import auto_backup_all, cleanup_stale_backups
     from app.infra.audit.session_repository import cleanup_sessions
+    from app.services.detect_security_anomalies import detect_security_anomalies
     from app.api.config import ENABLE_CAPACITY_FORECAST
 
     # Single pass of the intelligent orchestrator (throttle / autoscale / restart).
@@ -103,6 +105,7 @@ async def _main() -> None:
     # ── Hot path — resource management (10 s) ────────────────────────────────
     schedule_job(_orchestrator_pass,             interval=10)      # throttle / autoscale / restart
     # ── Sub-minute ───────────────────────────────────────────────────────────
+    schedule_job(detect_security_anomalies,      interval=60)      # 60 s — attack detection
     schedule_job(poll_prometheus_alerts,         interval=60)      # 1 min
     # ── Every 5 minutes ──────────────────────────────────────────────────────
     schedule_job(collect_traffic,                interval=300)     # 5 min
@@ -118,7 +121,7 @@ async def _main() -> None:
     schedule_job(cleanup_sessions,               interval=86400)   # 24 h
     schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
-    base_count = 12
+    base_count = 13
     if ENABLE_CAPACITY_FORECAST:
         def _run_capacity_forecast():
             try:

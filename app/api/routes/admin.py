@@ -1682,3 +1682,245 @@ def admin_audit_log(
     admin: dict = Depends(require_role("admin")),
 ):
     return {"items": _admin_audit.get_recent(limit=min(limit, 500))}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Security Center
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/security/summary")
+def get_security_summary(admin: dict = Depends(require_role("admin"))):
+    """Dashboard cards data for the Security Center."""
+    from app.services.security_event_service import get_security_summary
+    from app.services.activity_service import mask_ip
+    summary = get_security_summary()
+    # Mask IPs in top_suspect_ips
+    for entry in summary.get("top_suspect_ips", []):
+        entry["ip"] = mask_ip(entry.get("ip"))
+    return summary
+
+
+@router.get("/security/events")
+def list_security_events(
+    severity:   Optional[str] = None,
+    category:   Optional[str] = None,
+    status:     Optional[str] = None,
+    user_id:    Optional[int] = None,
+    hosting_id: Optional[int] = None,
+    date_from:  Optional[str] = None,
+    date_to:    Optional[str] = None,
+    search:     Optional[str] = None,
+    limit:  int = 100,
+    offset: int = 0,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Filterable security event log."""
+    from app.services.security_event_service import query_security_events
+    from app.services.activity_service import mask_ip
+    events = query_security_events(
+        severity=severity, category=category, status=status,
+        user_id=user_id, hosting_id=hosting_id,
+        date_from=date_from, date_to=date_to, search=search,
+        limit=min(limit, 500), offset=offset,
+    )
+    for e in events:
+        e["ip"] = mask_ip(e.get("ip"))
+    return {"items": events, "limit": limit, "offset": offset}
+
+
+@router.post("/security/events/{event_id}/resolve")
+def resolve_security_event(
+    event_id: int,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Mark a security event as resolved."""
+    from app.services.security_event_service import resolve_security_event as _resolve
+    ok = _resolve(event_id, resolved_by=admin["user_id"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="Evento no encontrado o ya resuelto")
+    _admin_audit.log(
+        admin_id=admin["user_id"],
+        admin_email=admin.get("email", ""),
+        action="security_event_resolved",
+        ip=_get_ip(request),
+        details=f"event_id={event_id}",
+    )
+    return {"ok": True, "event_id": event_id}
+
+
+@router.get("/security/events/{event_id}/ai-summary")
+@limiter.limit("20/hour")
+async def security_event_ai_summary(
+    request: Request,
+    event_id: int,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Optional AI incident summary for a security event."""
+    from app.api.config import ENABLE_AI_ADVISORY
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM security_events WHERE event_id = %s", (event_id,))
+        row = cur.fetchone()
+    finally:
+        release_connection(conn)
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Evento no encontrado")
+
+    event = dict(row)
+
+    if not ENABLE_AI_ADVISORY:
+        return {
+            "ok": False,
+            "reason": "AI advisory is disabled (ENABLE_AI_ADVISORY=false)",
+            "event": event,
+        }
+
+    try:
+        from app.services.ai_advisor import get_client
+        import json as _json
+
+        client = get_client()
+        prompt = f"""Analiza este evento de seguridad de una plataforma SaaS de hosting:
+
+Tipo: {event['event_type']}
+Categoría: {event['category']}
+Severidad: {event['severity']}
+Título: {event['title']}
+Mensaje: {event.get('message', 'N/A')}
+IP: {event.get('ip', 'desconocida')}
+Metadata: {_json.dumps(event.get('metadata') or {}, ensure_ascii=False)}
+
+Responde en JSON con:
+- causa_probable: string
+- evidencia: string
+- impacto: string
+- acciones_recomendadas: string[]
+- notificar_cliente: bool
+- aplicar_proteccion: bool
+
+IMPORTANTE: La IA NO debe bloquear IPs ni suspender usuarios. Solo recomendar."""
+
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
+        # Extract JSON block
+        import re as _re
+        m = _re.search(r'\{.*\}', raw, _re.DOTALL)
+        summary = _json.loads(m.group()) if m else {"raw": raw}
+        return {"ok": True, "event_id": event_id, "summary": summary}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"AI summary failed: {exc}")
+
+
+class ProtectionModeBody(BaseModel):
+    enabled:              bool = True
+    block_xmlrpc:         bool = False
+    rate_limit_wp_login:  bool = False
+    block_scanner_paths:  bool = False
+    elevated_sensitivity: bool = False
+
+
+@router.post("/hostings/{hosting_id}/protection-mode")
+def set_protection_mode(
+    hosting_id: int,
+    body: ProtectionModeBody,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Enable/disable protection mode settings for a hosting."""
+    from app.infra.db import get_connection, release_connection
+    import json as _json
+    from datetime import datetime, timezone
+
+    settings = {
+        "enabled":              body.enabled,
+        "block_xmlrpc":         body.block_xmlrpc,
+        "rate_limit_wp_login":  body.rate_limit_wp_login,
+        "block_scanner_paths":  body.block_scanner_paths,
+        "elevated_sensitivity": body.elevated_sensitivity,
+        "set_at":               datetime.now(timezone.utc).isoformat(),
+        "set_by":               admin["user_id"],
+    }
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE hostings SET protection_mode = %s WHERE hosting_id = %s RETURNING hosting_id",
+            (_json.dumps(settings), hosting_id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Hosting no encontrado")
+        conn.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        release_connection(conn)
+
+    _admin_audit.log(
+        admin_id=admin["user_id"],
+        admin_email=admin.get("email", ""),
+        action="protection_mode_set",
+        ip=_get_ip(request),
+        details=f"hosting_id={hosting_id} enabled={body.enabled} settings={_json.dumps(settings)[:200]}",
+    )
+
+    from app.services.activity_service import log_event
+    log_event(
+        hosting_id=hosting_id,
+        actor_type="admin",
+        actor_user_id=admin["user_id"],
+        actor_email=admin.get("email"),
+        event_type="protection_mode_changed",
+        category="security",
+        severity="warning" if body.enabled else "info",
+        title=f"Modo protección {'activado' if body.enabled else 'desactivado'}",
+        source="admin",
+        metadata=settings,
+    )
+
+    return {"ok": True, "hosting_id": hosting_id, "protection_mode": settings}
+
+
+@router.get("/hostings/{hosting_id}/protection-mode")
+def get_protection_mode(
+    hosting_id: int,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Get current protection mode settings for a hosting."""
+    from app.infra.db import get_connection, release_connection
+    import json as _json
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT hosting_id, name, protection_mode FROM hostings WHERE hosting_id = %s",
+            (hosting_id,),
+        )
+        row = cur.fetchone()
+    finally:
+        release_connection(conn)
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Hosting no encontrado")
+
+    row = dict(row)
+    pm = row.get("protection_mode") or {}
+    if isinstance(pm, str):
+        try:
+            pm = _json.loads(pm)
+        except Exception:
+            pm = {}
+
+    return {"hosting_id": hosting_id, "name": row.get("name"), "protection_mode": pm}

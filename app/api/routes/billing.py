@@ -225,6 +225,18 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
 
     if not _verify_signature(body, signature):
         logger.warning("Webhook: invalid signature from %s", request.client)
+        try:
+            from app.services.security_event_service import log_security_event
+            log_security_event(
+                severity="warning", category="webhook",
+                event_type="invalid_webhook_signature",
+                title="Webhook con firma inválida rechazado",
+                ip=request.client.host if request.client else None,
+                source="billing",
+                metadata={"path": "/webhook"},
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     try:

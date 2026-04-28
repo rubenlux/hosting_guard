@@ -799,6 +799,40 @@ export const createBillingCheckout = async (plan) => {
 };
 
 // ---------------------------------------------------------------------------
+// Security Center
+// ---------------------------------------------------------------------------
+
+export const getSecuritySummary = async () => {
+  const response = await api.get('/admin/security/summary');
+  return response.data;
+};
+
+export const getSecurityEvents = async (params = {}) => {
+  const response = await api.get('/admin/security/events', { params });
+  return response.data;
+};
+
+export const resolveSecurityEvent = async (eventId) => {
+  const response = await api.post(`/admin/security/events/${eventId}/resolve`);
+  return response.data;
+};
+
+export const getSecurityEventAISummary = async (eventId) => {
+  const response = await api.get(`/admin/security/events/${eventId}/ai-summary`);
+  return response.data;
+};
+
+export const setProtectionMode = async (hostingId, settings) => {
+  const response = await api.post(`/admin/hostings/${hostingId}/protection-mode`, settings);
+  return response.data;
+};
+
+export const getProtectionMode = async (hostingId) => {
+  const response = await api.get(`/admin/hostings/${hostingId}/protection-mode`);
+  return response.data;
+};
+
+// ---------------------------------------------------------------------------
 // Presence & Activity
 // ---------------------------------------------------------------------------
 

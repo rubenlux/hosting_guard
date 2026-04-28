@@ -34,6 +34,7 @@ import SystemStatusBanner from '../components/dashboard/SystemStatusBanner';
 import ImportSiteModal from '../components/dashboard/ImportSiteModal';
 import OnlineUsersCard from '../components/admin/OnlineUsersCard';
 import ActivityTimeline from '../components/admin/ActivityTimeline';
+import SecurityCenter from '../components/admin/SecurityCenter';
 
 /* ─── helpers ─────────────────────────────────────────────── */
 function groupBy(arr, key) {
@@ -64,6 +65,7 @@ const NAV = [
   { id: 'pixel',         label: 'Pixel Analytics',  icon: BarChart3 },
   { id: 'pixel-users',   label: 'Pixel Users',      icon: Users,     path: '/admin/pixel-users' },
   { id: 'orchestrator',  label: 'Orchestrator',     icon: Bot },
+  { id: 'security',      label: 'Security Center',  icon: ShieldAlert },
   { id: 'presence',      label: 'Online Now',       icon: Wifi },
   { id: 'activity',      label: 'Activity Log',     icon: Activity },
   { id: 'finance',       label: 'Finance',          icon: DollarSign },
@@ -1221,6 +1223,9 @@ export default function AdminDashboard() {
                 )}
               </div>
             )}
+
+            {/* ══ SECURITY CENTER ══ */}
+            {section === 'security' && <SecurityCenter />}
 
             {/* ══ ONLINE USERS / PRESENCE ══ */}
             {section === 'presence' && <OnlineUsersCard />}

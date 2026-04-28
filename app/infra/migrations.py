@@ -604,6 +604,39 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ssl_checks_hosting ON ssl_checks(hosting_id, checked_at DESC)",
     # Allow user_id=NULL for system-level orchestrator events (expiration_job summary, traffic_collector)
     "ALTER TABLE orchestrator_events ALTER COLUMN user_id DROP NOT NULL",
+
+    # ── Security events — attack detection + incident tracking ────────────────
+    """CREATE TABLE IF NOT EXISTS security_events (
+        event_id      BIGSERIAL PRIMARY KEY,
+        user_id       INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+        hosting_id    INTEGER REFERENCES hostings(hosting_id) ON DELETE SET NULL,
+        severity      TEXT NOT NULL,
+        category      TEXT NOT NULL,
+        event_type    TEXT NOT NULL,
+        title         TEXT NOT NULL,
+        message       TEXT,
+        ip            TEXT,
+        user_agent    TEXT,
+        path          TEXT,
+        source        TEXT,
+        metadata      JSONB DEFAULT '{}',
+        status        TEXT NOT NULL DEFAULT 'open',
+        count         INTEGER NOT NULL DEFAULT 1,
+        last_seen     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        resolved_at   TIMESTAMPTZ,
+        resolved_by   INTEGER REFERENCES users(user_id) ON DELETE SET NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_sec_events_created   ON security_events(created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_sec_events_severity  ON security_events(severity, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_sec_events_category  ON security_events(category, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_sec_events_user      ON security_events(user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_sec_events_hosting   ON security_events(hosting_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_sec_events_status    ON security_events(status, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_sec_events_ip        ON security_events(ip, created_at DESC)",
+
+    # protection_mode per hosting — stores WAF/rate-limit settings as JSONB
+    "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS protection_mode JSONB DEFAULT '{}'",
 ]
 
 def ensure_monthly_partitions(cursor):
