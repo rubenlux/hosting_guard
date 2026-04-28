@@ -209,7 +209,7 @@ function SiteRow({ hosting, healthData, healthHistory, onOpenLogs, onOpenFiles, 
   const series = hist.length > 2 ? hist.map(h => h.score ?? 100) : genSeries((hosting.hosting_id || 1) * 17, 24, ram, 2);
   const scoreColor = score >= 90 ? T.good : score >= 60 ? T.warn : T.bad;
   const letter = hosting.name?.[0]?.toUpperCase() ?? '?';
-  const domain = hosting.subdomain ? `${hosting.subdomain}.hostingguard.lat` : hosting.name;
+  const domain = hosting.subdomain || hosting.name;
   const siteUrl = `https://${domain}`;
 
   return (

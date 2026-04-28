@@ -1,8 +1,18 @@
 """
 Standalone scheduler runner.
 
-Executes all periodic background jobs (health_checker, traffic_collector,
-expiration_job, reconcile_containers, poll_prometheus_alerts, capacity_forecast).
+Executes all periodic background jobs:
+  - orchestrator     (throttle / autoscale / restart)        10 s
+  - poll_prometheus  (alert polling)                          1 min
+  - health_checker   (health score + DB alerts)               5 min
+  - traffic_collector                                         5 min
+  - reconcile_containers (exited/zombie recovery)             5 min
+  - expiration_job   (free plan suspension + cleanup)        12 h
+  - ssl_checker      (cert expiry warnings)                  24 h
+  - auto_backup_all  (MariaDB + files backup)                24 h
+  - cleanup_old_events (prune orchestrator_events table)     24 h
+  - daily_report     (AI admin report at 08:00 UTC)           1 h check
+  - capacity_forecast (optional, env-gated)                  10 min
 
 Designed to run as a SINGLE instance in docker-compose so jobs are never
 duplicated across Uvicorn workers.
@@ -65,7 +75,21 @@ async def _main() -> None:
     from app.services.reconciler import reconcile_containers
     from app.services.scheduler import schedule_job
     from app.services.prometheus_alert_poller import poll_prometheus_alerts
+    from app.services.ssl_checker import check_ssl_for_all_hostings
+    from app.services.backup_service import auto_backup_all
     from app.api.config import ENABLE_CAPACITY_FORECAST
+
+    # Single pass of the intelligent orchestrator (throttle / autoscale / restart).
+    # The orchestrator.py module exposes get_container_stats() + handle_container()
+    # but its run_orchestrator() is a blocking loop — we call one iteration here so
+    # schedule_job controls the interval instead.
+    def _orchestrator_pass() -> None:
+        try:
+            from app.services.orchestrator import get_container_stats, handle_container
+            for c in get_container_stats():
+                handle_container(c)
+        except Exception as exc:
+            logger.warning("orchestrator_pass failed: %s", exc)
 
     def _daily_report_job() -> None:
         from datetime import datetime, timezone
@@ -74,14 +98,23 @@ async def _main() -> None:
         from app.services.admin_ai_reporter import run_daily_report
         run_daily_report()
 
-    schedule_job(check_and_expire_free_hostings, interval=43200)  # 12 h
+    # ── Hot path — resource management (10 s) ────────────────────────────────
+    schedule_job(_orchestrator_pass,             interval=10)      # throttle / autoscale / restart
+    # ── Sub-minute ───────────────────────────────────────────────────────────
+    schedule_job(poll_prometheus_alerts,         interval=60)      # 1 min
+    # ── Every 5 minutes ──────────────────────────────────────────────────────
     schedule_job(collect_traffic,                interval=300)     # 5 min
     schedule_job(check_all_hostings,             interval=300)     # 5 min
     schedule_job(reconcile_containers,           interval=300)     # 5 min
-    schedule_job(poll_prometheus_alerts,         interval=60)      # 1 min
+    # ── Every 12 hours ───────────────────────────────────────────────────────
+    schedule_job(check_and_expire_free_hostings, interval=43200)   # 12 h
+    # ── Daily ────────────────────────────────────────────────────────────────
+    schedule_job(check_ssl_for_all_hostings,     interval=86400)   # 24 h
+    schedule_job(auto_backup_all,                interval=86400)   # 24 h
     schedule_job(_cleanup_old_events,            interval=86400)   # 24 h
     schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
+    base_count = 10
     if ENABLE_CAPACITY_FORECAST:
         def _run_capacity_forecast():
             try:
@@ -91,9 +124,9 @@ async def _main() -> None:
                 logger.warning("capacity_forecast job failed: %s", exc)
 
         schedule_job(_run_capacity_forecast, interval=600)         # 10 min
-        logger.info("scheduler: 7 background jobs scheduled (capacity forecast enabled)")
+        logger.info("scheduler: %d background jobs scheduled (capacity forecast enabled)", base_count + 1)
     else:
-        logger.info("scheduler: 6 background jobs scheduled")
+        logger.info("scheduler: %d background jobs scheduled", base_count)
 
     # ── Wait for shutdown signal ──────────────────────────────────────────────
     stop = asyncio.Event()
