@@ -12,6 +12,7 @@ Executes all periodic background jobs:
   - auto_backup_all  (MariaDB + files backup)                24 h
   - cleanup_old_events (prune orchestrator_events table)     24 h
   - daily_report     (AI admin report at 08:00 UTC)           1 h check
+  - cleanup_sessions  (expire/prune session rows)            24 h
   - capacity_forecast (optional, env-gated)                  10 min
 
 Designed to run as a SINGLE instance in docker-compose so jobs are never
@@ -76,7 +77,8 @@ async def _main() -> None:
     from app.services.scheduler import schedule_job
     from app.services.prometheus_alert_poller import poll_prometheus_alerts
     from app.services.ssl_checker import check_ssl_for_all_hostings
-    from app.services.backup_service import auto_backup_all
+    from app.services.backup_service import auto_backup_all, cleanup_stale_backups
+    from app.infra.audit.session_repository import cleanup_sessions
     from app.api.config import ENABLE_CAPACITY_FORECAST
 
     # Single pass of the intelligent orchestrator (throttle / autoscale / restart).
@@ -112,9 +114,11 @@ async def _main() -> None:
     schedule_job(check_ssl_for_all_hostings,     interval=86400)   # 24 h
     schedule_job(auto_backup_all,                interval=86400)   # 24 h
     schedule_job(_cleanup_old_events,            interval=86400)   # 24 h
+    schedule_job(cleanup_stale_backups,          interval=604800)  # 7 days
+    schedule_job(cleanup_sessions,               interval=86400)   # 24 h
     schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
-    base_count = 10
+    base_count = 12
     if ENABLE_CAPACITY_FORECAST:
         def _run_capacity_forecast():
             try:

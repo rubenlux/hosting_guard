@@ -1,7 +1,12 @@
 """Backup service — creates MariaDB + files backups for WP sites."""
+import io
+import json
 import logging
 import os
+import re
 import subprocess
+import tarfile
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -270,3 +275,244 @@ def auto_backup_all() -> None:
                        category="backup", severity="critical", channel="both")
             except Exception:
                 pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lookup helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _safe_path(raw: Optional[str]) -> Optional[Path]:
+    """Return Path only if it sits inside BACKUP_DIR. Prevents path traversal."""
+    if not raw:
+        return None
+    p = Path(raw).resolve()
+    try:
+        p.relative_to(BACKUP_DIR.resolve())
+        return p
+    except ValueError:
+        logger.warning("backup: rejected out-of-tree path %s", raw)
+        return None
+
+
+def get_backup(backup_id: int, user_id: int) -> Optional[dict]:
+    """Fetch one backup enforcing ownership (user_id must match)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM backups WHERE backup_id=%s AND user_id=%s",
+            (backup_id, user_id),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        release_connection(conn)
+
+
+def admin_get_backup(backup_id: int) -> Optional[dict]:
+    """Fetch one backup without ownership check — admin use only."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM backups WHERE backup_id=%s", (backup_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        release_connection(conn)
+
+
+def admin_list_backups(user_id: Optional[int] = None,
+                       hosting_id: Optional[int] = None,
+                       limit: int = 50) -> list:
+    """List backups for admin — filter by user and/or hosting, no ownership check."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        clauses, params = [], []
+        if user_id is not None:
+            clauses.append("user_id=%s"); params.append(user_id)
+        if hosting_id is not None:
+            clauses.append("hosting_id=%s"); params.append(hosting_id)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        cur.execute(
+            f"""SELECT backup_id, hosting_id, user_id, site_name, created_at,
+                       size_bytes, status, error_message, db_path, files_path
+                FROM backups {where}
+                ORDER BY created_at DESC LIMIT %s""",
+            params,
+        )
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        release_connection(conn)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Download package builder
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def build_download_package(backup: dict) -> tuple:
+    """
+    Build a temporary tar.gz bundle containing manifest.json + backup files.
+    Returns (tmp_path: Path, filename: str). Caller must unlink tmp_path when done.
+    """
+    site_name = backup.get("site_name") or f"hosting-{backup['hosting_id']}"
+    safe_name = _SAFE_NAME_RE.sub("-", site_name)
+
+    created = backup.get("created_at")
+    if hasattr(created, "strftime"):
+        ts_str = created.strftime("%Y%m%d-%H%M%S")
+    else:
+        ts_str = re.sub(r"[^0-9]", "", str(created))[:14]
+        if len(ts_str) >= 8:
+            ts_str = f"{ts_str[:8]}-{ts_str[8:14]}"
+
+    filename = f"hostingguard-backup-{safe_name}-{ts_str}.tar.gz"
+
+    db_p     = _safe_path(backup.get("db_path"))
+    files_p  = _safe_path(backup.get("files_path"))
+    has_db   = db_p is not None and db_p.exists()
+    has_files = files_p is not None and files_p.exists()
+
+    bundle_files = []
+    if has_db:
+        bundle_files.append("db.sql.gz")
+    if has_files:
+        bundle_files.append(files_p.name)  # "wp-content.tar.gz" or "files.tar.gz"
+
+    manifest = {
+        "backup_version": "1.0",
+        "site_name": site_name,
+        "hosting_id": backup["hosting_id"],
+        "user_id": backup["user_id"],
+        "created_at": str(created),
+        "type": "wordpress" if has_db else "static",
+        "contains_database": has_db,
+        "contains_files": has_files,
+        "files": bundle_files + ["manifest.json"],
+    }
+    manifest_bytes = json.dumps(manifest, indent=2, ensure_ascii=False).encode()
+
+    tmp = Path(tempfile.mktemp(suffix=".tar.gz", dir="/tmp"))
+    with tarfile.open(tmp, "w:gz") as tar:
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(manifest_bytes)
+        tar.addfile(info, io.BytesIO(manifest_bytes))
+        if has_db:
+            tar.add(str(db_p), arcname="db.sql.gz")
+        if has_files:
+            tar.add(str(files_p), arcname=files_p.name)
+
+    return tmp, filename
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Delete backup
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _remove_file_safe(path_str: Optional[str]) -> None:
+    p = _safe_path(path_str)
+    if p and p.exists():
+        p.unlink()
+        # Remove empty parent timestamp directory
+        try:
+            if not any(p.parent.iterdir()):
+                p.parent.rmdir()
+        except Exception:
+            pass
+
+
+def delete_backup(backup_id: int, user_id: Optional[int] = None,
+                  admin: bool = False) -> bool:
+    """
+    Delete a backup record and its physical files.
+
+    - user_id is required when admin=False (enforces ownership).
+    - admin=True skips the ownership check (pass admin_id as user_id for audit).
+    - Returns True if a record was found and deleted, False if not found.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        if admin:
+            cur.execute(
+                "SELECT * FROM backups WHERE backup_id=%s", (backup_id,)
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM backups WHERE backup_id=%s AND user_id=%s",
+                (backup_id, user_id),
+            )
+        row = cur.fetchone()
+        if not row:
+            return False
+
+        backup = dict(row)
+        _remove_file_safe(backup.get("db_path"))
+        _remove_file_safe(backup.get("files_path"))
+
+        cur.execute("DELETE FROM backups WHERE backup_id=%s", (backup_id,))
+        conn.commit()
+        logger.info(
+            "backup deleted: backup_id=%s hosting_id=%s user_id=%s by_admin=%s",
+            backup_id, backup["hosting_id"], backup["user_id"], admin,
+        )
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        release_connection(conn)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cleanup stale failed/partial backups (scheduled job)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cleanup_stale_backups(days: int = 7) -> dict:
+    """
+    Delete backups with status 'failed' or 'partial' older than `days` days.
+    Physical files are removed first; then the DB record is hard-deleted.
+    Returns {"deleted": int, "errors": int}.
+    """
+    from app.infra.db import reset_pg_connection
+    reset_pg_connection()
+
+    conn = get_connection()
+    deleted = errors = 0
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT backup_id, db_path, files_path FROM backups
+               WHERE status IN ('failed','partial')
+                 AND created_at < NOW() - INTERVAL '%s days'""",
+            (days,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+    finally:
+        release_connection(conn)
+
+    for row in rows:
+        try:
+            _remove_file_safe(row.get("db_path"))
+            _remove_file_safe(row.get("files_path"))
+            conn2 = get_connection()
+            try:
+                c2 = conn2.cursor()
+                c2.execute("DELETE FROM backups WHERE backup_id=%s", (row["backup_id"],))
+                conn2.commit()
+                deleted += 1
+            except Exception:
+                conn2.rollback()
+                errors += 1
+            finally:
+                release_connection(conn2)
+        except Exception as exc:
+            logger.error("cleanup_stale_backups: error on backup_id=%s: %s", row["backup_id"], exc)
+            errors += 1
+
+    logger.info("cleanup_stale_backups: deleted=%d errors=%d (threshold=%d days)", deleted, errors, days)
+    return {"deleted": deleted, "errors": errors}

@@ -742,6 +742,53 @@ export const triggerBackup = async (hostingId) => {
   return response.data;
 };
 
+export const downloadBackup = async (backupId, filename) => {
+  const response = await api.get(`/hosting/backups/${backupId}/download`, {
+    responseType: 'blob',
+  });
+  const url = URL.createObjectURL(new Blob([response.data], { type: 'application/gzip' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || `backup-${backupId}.tar.gz`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+export const deleteBackup = async (backupId) => {
+  const response = await api.delete(`/hosting/backups/${backupId}`);
+  return response.data;
+};
+
+// ---------------------------------------------------------------------------
+// Admin — Backups
+// ---------------------------------------------------------------------------
+
+export const adminListUserBackups = async (userId, params = {}) => {
+  const response = await api.get(`/admin/users/${userId}/backups`, { params });
+  return response.data;
+};
+
+export const adminDownloadBackup = async (backupId, filename) => {
+  const response = await api.get(`/admin/backups/${backupId}/download`, {
+    responseType: 'blob',
+  });
+  const url = URL.createObjectURL(new Blob([response.data], { type: 'application/gzip' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || `admin-backup-${backupId}.tar.gz`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+export const adminDeleteBackup = async (backupId) => {
+  const response = await api.delete(`/admin/backups/${backupId}`);
+  return response.data;
+};
+
 // ---------------------------------------------------------------------------
 // Billing — Lemon Squeezy
 // ---------------------------------------------------------------------------
@@ -749,4 +796,38 @@ export const triggerBackup = async (hostingId) => {
 export const createBillingCheckout = async (plan) => {
   const response = await api.post('/billing/checkout', { plan });
   return response.data; // { url: string }
+};
+
+// ---------------------------------------------------------------------------
+// Presence & Activity
+// ---------------------------------------------------------------------------
+
+export const sendHeartbeat = async (path = '/') => {
+  try {
+    await api.post('/me/heartbeat', { path });
+  } catch {
+    // fire-and-forget — never throws
+  }
+};
+
+export const getMyActivityFeed = async (params = {}) => {
+  const response = await api.get('/activity', { params });
+  return response.data;
+};
+
+// Admin presence
+export const getAdminOnlineUsers = async () => {
+  const response = await api.get('/admin/users/online');
+  return response.data;
+};
+
+// Admin activity log
+export const getAdminActivity = async (params = {}) => {
+  const response = await api.get('/admin/activity', { params });
+  return response.data;
+};
+
+export const getAdminUserActivity = async (userId, params = {}) => {
+  const response = await api.get(`/admin/users/${userId}/activity`, { params });
+  return response.data;
 };

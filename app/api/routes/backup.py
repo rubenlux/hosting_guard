@@ -1,6 +1,10 @@
-"""Backup routes — manual backup creation and listing."""
+"""Backup routes — manual backup creation, listing, download, delete."""
+import asyncio
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Request
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 
 from app.api.rate_limit import limiter
 from app.api.security import verify_token
@@ -61,3 +65,81 @@ def list_backups(hosting_id: int, user: dict = Depends(verify_token)):
         raise HTTPException(status_code=404, detail="Hosting not found")
     from app.services.backup_service import list_backups as _list
     return {"items": _list(hosting_id, user_id)}
+
+
+@router.get("/backups/{backup_id}/download")
+@limiter.limit("10/hour")
+async def download_backup(
+    request: Request,
+    backup_id: int,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(verify_token),
+):
+    """Download a completed backup as a tar.gz bundle (manifest + DB + files)."""
+    from app.services.backup_service import get_backup, build_download_package
+
+    user_id = int(user["user_id"])
+    backup = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: get_backup(backup_id, user_id)
+    )
+    if not backup:
+        raise HTTPException(status_code=404, detail="Backup no encontrado")
+    if backup["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Solo se pueden descargar backups completados")
+
+    has_any = (
+        (backup.get("db_path") and Path(backup["db_path"]).exists()) or
+        (backup.get("files_path") and Path(backup["files_path"]).exists())
+    )
+    if not has_any:
+        raise HTTPException(status_code=410, detail="Los archivos de este backup ya no están disponibles")
+
+    loop = asyncio.get_running_loop()
+    tmp_path, filename = await loop.run_in_executor(
+        None, lambda: build_download_package(backup)
+    )
+    background_tasks.add_task(lambda: tmp_path.unlink(missing_ok=True))
+
+    logger.info(
+        "backup downloaded: backup_id=%s hosting_id=%s user_id=%s file=%s",
+        backup_id, backup["hosting_id"], user_id, filename,
+    )
+    try:
+        from app.services.activity_service import log_event
+        log_event(
+            user_id=user_id,
+            hosting_id=backup["hosting_id"],
+            event_type="backup_downloaded",
+            category="backup",
+            severity="info",
+            title=f"Backup descargado: {filename}",
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            source="dashboard",
+        )
+    except Exception:
+        pass
+    return FileResponse(
+        path=str(tmp_path),
+        filename=filename,
+        media_type="application/gzip",
+    )
+
+
+@router.delete("/backups/{backup_id}")
+def delete_backup(backup_id: int, user: dict = Depends(verify_token)):
+    """Delete a failed or partial backup (client can only delete non-completed backups)."""
+    from app.services.backup_service import get_backup, delete_backup as _delete
+
+    user_id = int(user["user_id"])
+    backup = get_backup(backup_id, user_id)
+    if not backup:
+        raise HTTPException(status_code=404, detail="Backup no encontrado")
+    if backup["status"] == "completed":
+        raise HTTPException(
+            status_code=403,
+            detail="No podés eliminar un backup completado. Contactá soporte si es necesario.",
+        )
+
+    _delete(backup_id, user_id=user_id, admin=False)
+    return {"status": "deleted", "backup_id": backup_id}

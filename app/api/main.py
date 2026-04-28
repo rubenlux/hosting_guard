@@ -74,6 +74,8 @@ from app.api.routes.import_hosting import router as import_router
 from app.api.routes.notifications import router as notifications_router
 from app.api.routes.backup import router as backup_router
 from app.api.routes.billing import router as billing_router
+from app.api.routes.presence import router as presence_router
+from app.api.routes.wp_audit import router as wp_audit_router
 app.include_router(pixel_router)
 app.include_router(files_router)
 app.include_router(impersonate_router)
@@ -85,6 +87,8 @@ app.include_router(import_router)
 app.include_router(notifications_router)
 app.include_router(backup_router)
 app.include_router(billing_router)
+app.include_router(presence_router)
+app.include_router(wp_audit_router)
 
 
 _IS_PRODUCTION = APP_ENV == "production"
@@ -611,6 +615,13 @@ def login(request: Request, response: Response, body: LoginRequest):
 
             claims = {"user_id": user["user_id"], "email": user["email"], "role": user.get("role", "user")}
             _set_auth_cookies(response, create_token(claims), create_refresh_token(claims))
+            try:
+                from app.services.activity_service import log_event as _log
+                _log(user_id=user["user_id"], event_type="login_success", category="auth",
+                     title="Inicio de sesión", message=f"IP: {ip}",
+                     ip=ip, user_agent=request.headers.get("user-agent"), source="login")
+            except Exception:
+                pass
             return {"status": "ok", "account_type": "user"}
 
         # Fallback: verificar si es un colaborador (staff_accounts).

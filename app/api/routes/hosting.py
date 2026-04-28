@@ -299,6 +299,14 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
             category="hosting", severity="success", channel="both",
             action_url="/dashboard",
         )
+        try:
+            from app.services.activity_service import log_event as _log
+            _log(user_id=user_id, hosting_id=hosting_id, event_type="hosting_created",
+                 category="hosting", title=f"Sitio creado: {data.name}",
+                 message=f"Plan: {data.plan}, URL: https://{subdomain}",
+                 ip=ip_address, source="dashboard")
+        except Exception:
+            pass
 
         return {
             "status":     "created",
@@ -401,6 +409,15 @@ async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
             keys = r.keys(pattern)
             if keys:
                 r.delete(*keys)
+    except Exception:
+        pass
+
+    try:
+        from app.services.activity_service import log_event as _log
+        _log(user_id=user_id, hosting_id=hosting_id, event_type="hosting_deleted",
+             category="hosting", severity="warning",
+             title=f"Sitio eliminado: {site_name}",
+             source="dashboard")
     except Exception:
         pass
 

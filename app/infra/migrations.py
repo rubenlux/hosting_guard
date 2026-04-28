@@ -296,6 +296,40 @@ _MIGRATIONS_PG = [
         event_name   TEXT NOT NULL,
         processed_at TEXT NOT NULL
     )""",
+
+    # ── User presence — heartbeat-updated session tracking ───────────────────
+    """CREATE TABLE IF NOT EXISTS user_sessions (
+        session_id   TEXT PRIMARY KEY,
+        user_id      INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+        email        TEXT,
+        ip           TEXT,
+        user_agent   TEXT,
+        current_path TEXT,
+        last_seen    TIMESTAMPTZ DEFAULT NOW(),
+        created_at   TIMESTAMPTZ DEFAULT NOW(),
+        expires_at   TIMESTAMPTZ,
+        is_active    BOOLEAN DEFAULT TRUE
+    )""",
+
+    # ── Activity / audit trail — unified event log ────────────────────────────
+    """CREATE TABLE IF NOT EXISTS activity_events (
+        event_id      BIGSERIAL PRIMARY KEY,
+        user_id       INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+        hosting_id    INTEGER REFERENCES hostings(hosting_id) ON DELETE SET NULL,
+        actor_type    TEXT NOT NULL DEFAULT 'user',
+        actor_user_id INTEGER,
+        actor_email   TEXT,
+        event_type    TEXT NOT NULL,
+        category      TEXT NOT NULL,
+        severity      TEXT NOT NULL DEFAULT 'info',
+        title         TEXT NOT NULL,
+        message       TEXT,
+        metadata      JSONB DEFAULT '{}',
+        ip            TEXT,
+        user_agent    TEXT,
+        source        TEXT,
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+    )""",
 ]
 
 _INDEXES = [
@@ -386,6 +420,17 @@ _INDEXES = [
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_hostings_user_status ON hostings(user_id, status)",
     # Covers orchestrator dashboard queries ordered by container + recency
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_orch_container_created ON orchestrator_events(container_name, created_at DESC)",
+
+    # user_sessions indexes
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_sessions_last_seen ON user_sessions(last_seen DESC)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_sessions_active_last ON user_sessions(is_active, last_seen DESC)",
+
+    # activity_events indexes
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_activity_user_created ON activity_events(user_id, created_at DESC)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_activity_hosting_created ON activity_events(hosting_id, created_at DESC)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_activity_category_created ON activity_events(category, created_at DESC)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_activity_event_type_created ON activity_events(event_type, created_at DESC)",
 
     # ── Row-Level Security (RLS) — defense-in-depth for user-scoped tables ──
     # These policies enforce that non-superuser DB roles can only access their

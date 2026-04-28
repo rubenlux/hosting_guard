@@ -1,9 +1,11 @@
 import asyncio
 import subprocess
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional, Literal, List
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 import os
@@ -164,6 +166,214 @@ def get_user_full(user_id: int, _: dict = Depends(require_role("admin"))):
         "execution_events": execution_events,
         "human_events": human_events,
     }
+
+
+@router.get("/users/online")
+def get_online_users(admin: dict = Depends(require_role("admin"))):
+    """Return presence summary + all sessions active in the last 30 minutes."""
+    from app.infra.audit.session_repository import get_presence_summary, get_all_active_sessions
+    from app.services.activity_service import mask_ip
+    from datetime import datetime, timezone
+
+    summary = get_presence_summary()
+    sessions_raw = get_all_active_sessions(limit=200)
+
+    now = datetime.now(timezone.utc)
+    sessions = []
+    for s in sessions_raw:
+        last = s.get("last_seen")
+        if hasattr(last, "total_seconds"):
+            delta_s = last.total_seconds()
+        elif last:
+            diff = now - last if last.tzinfo else now - last.replace(tzinfo=timezone.utc)
+            delta_s = diff.total_seconds()
+        else:
+            delta_s = 9999
+
+        if delta_s <= 120:
+            status = "online"
+        elif delta_s <= 900:
+            status = "active"
+        else:
+            status = "idle"
+
+        ua = s.get("user_agent") or ""
+        device = _parse_device(ua)
+
+        sessions.append({
+            "session_id":      s["session_id"],
+            "user_id":         s["user_id"],
+            "email":           s["email"],
+            "plan":            s.get("plan", "free"),
+            "role":            s.get("role", "user"),
+            "subscription_status": s.get("subscription_status"),
+            "status":          status,
+            "last_seen":       s.get("last_seen"),
+            "current_path":    s.get("current_path"),
+            "ip":              mask_ip(s.get("ip")),
+            "device":          device,
+            "session_started": s.get("created_at"),
+        })
+
+    return {**summary, "sessions": sessions}
+
+
+def _parse_device(ua: str) -> str:
+    ua_l = ua.lower()
+    if "mobile" in ua_l or "android" in ua_l or "iphone" in ua_l:
+        browser = "Chrome Mobile" if "chrome" in ua_l else "Mobile Browser"
+    elif "windows" in ua_l:
+        browser = "Chrome/Win" if "chrome" in ua_l else ("Firefox/Win" if "firefox" in ua_l else "Windows")
+    elif "mac" in ua_l:
+        browser = "Chrome/Mac" if "chrome" in ua_l else ("Safari" if "safari" in ua_l else "Mac")
+    elif "linux" in ua_l:
+        browser = "Linux Browser"
+    else:
+        browser = "Unknown"
+    return browser
+
+
+@router.get("/activity")
+def get_activity_log(
+    user_id: Optional[int] = None,
+    hosting_id: Optional[int] = None,
+    category: Optional[str] = None,
+    event_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    source: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Admin activity timeline — full access, IPs masked by default."""
+    from app.services.activity_service import query_events, mask_ip
+
+    events = query_events(
+        user_id=user_id,
+        hosting_id=hosting_id,
+        category=category,
+        event_type=event_type,
+        severity=severity,
+        source=source,
+        date_from=date_from,
+        date_to=date_to,
+        limit=min(limit, 500),
+        offset=offset,
+    )
+    for e in events:
+        e["ip"] = mask_ip(e.get("ip"))
+    return {"items": events, "limit": limit, "offset": offset}
+
+
+@router.get("/users/{user_id}/activity")
+def get_user_activity(
+    user_id: int,
+    limit: int = 100,
+    offset: int = 0,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Activity timeline for a specific user — for user detail / support view."""
+    from app.services.activity_service import query_events, mask_ip
+
+    events = query_events(user_id=user_id, limit=min(limit, 500), offset=offset)
+    for e in events:
+        e["ip"] = mask_ip(e.get("ip"))
+    return {"items": events, "limit": limit, "offset": offset}
+
+
+@router.get("/users/{user_id}/backups")
+def admin_list_user_backups(
+    user_id: int,
+    hosting_id: Optional[int] = None,
+    limit: int = 50,
+    admin: dict = Depends(require_role("admin")),
+):
+    """List all backups for a user (admin view — no ownership check)."""
+    from app.services.backup_service import admin_list_backups
+    return {"items": admin_list_backups(user_id=user_id, hosting_id=hosting_id, limit=limit)}
+
+
+@router.get("/backups/{backup_id}/download")
+async def admin_download_backup(
+    request: Request,
+    backup_id: int,
+    background_tasks: BackgroundTasks,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Download any backup as admin. Logged to admin_audit_log."""
+    from app.services.backup_service import admin_get_backup, build_download_package
+
+    backup = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: admin_get_backup(backup_id)
+    )
+    if not backup:
+        raise HTTPException(status_code=404, detail="Backup no encontrado")
+    if backup["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Solo se pueden descargar backups completados")
+
+    has_any = (
+        (backup.get("db_path") and Path(backup["db_path"]).exists()) or
+        (backup.get("files_path") and Path(backup["files_path"]).exists())
+    )
+    if not has_any:
+        raise HTTPException(status_code=410, detail="Archivos no disponibles en disco")
+
+    loop = asyncio.get_running_loop()
+    tmp_path, filename = await loop.run_in_executor(
+        None, lambda: build_download_package(backup)
+    )
+    background_tasks.add_task(lambda: tmp_path.unlink(missing_ok=True))
+
+    _admin_audit.log(
+        admin_id=admin["user_id"],
+        admin_email=admin.get("email", ""),
+        action="admin_download_backup",
+        target_user_id=backup["user_id"],
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        details=(
+            f"backup_id={backup_id} hosting_id={backup['hosting_id']} "
+            f"site={backup.get('site_name')} file={filename}"
+        ),
+    )
+
+    return FileResponse(
+        path=str(tmp_path),
+        filename=filename,
+        media_type="application/gzip",
+    )
+
+
+@router.delete("/backups/{backup_id}")
+def admin_delete_backup(
+    request: Request,
+    backup_id: int,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Delete any backup (admin). Removes DB record + physical files. Logged."""
+    from app.services.backup_service import admin_get_backup, delete_backup
+
+    backup = admin_get_backup(backup_id)
+    if not backup:
+        raise HTTPException(status_code=404, detail="Backup no encontrado")
+
+    delete_backup(backup_id, admin=True)
+
+    _admin_audit.log(
+        admin_id=admin["user_id"],
+        admin_email=admin.get("email", ""),
+        action="admin_delete_backup",
+        target_user_id=backup["user_id"],
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        details=(
+            f"backup_id={backup_id} hosting_id={backup['hosting_id']} "
+            f"site={backup.get('site_name')} status={backup['status']}"
+        ),
+    )
+    return {"status": "deleted", "backup_id": backup_id}
 
 
 @router.get("/pixel/site-by-domain")

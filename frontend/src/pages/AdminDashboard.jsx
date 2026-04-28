@@ -11,7 +11,7 @@ import {
   Terminal, RotateCcw, Play, Square, KeyRound,
   Crown, Infinity, CalendarClock, ShieldOff, TrendingUp as Upgrade, X,
   Database, Cpu, MemoryStick, HardDrive, Trash, Gauge, Wifi, WifiOff,
-  Sparkles, Mail, Send, BellRing,
+  Sparkles, Mail, Send, BellRing, Monitor,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
@@ -32,6 +32,8 @@ import StaffAnalytics from '../components/StaffAnalytics';
 import StatusCommandBar from '../components/dashboard/StatusCommandBar';
 import SystemStatusBanner from '../components/dashboard/SystemStatusBanner';
 import ImportSiteModal from '../components/dashboard/ImportSiteModal';
+import OnlineUsersCard from '../components/admin/OnlineUsersCard';
+import ActivityTimeline from '../components/admin/ActivityTimeline';
 
 /* ─── helpers ─────────────────────────────────────────────── */
 function groupBy(arr, key) {
@@ -62,6 +64,8 @@ const NAV = [
   { id: 'pixel',         label: 'Pixel Analytics',  icon: BarChart3 },
   { id: 'pixel-users',   label: 'Pixel Users',      icon: Users,     path: '/admin/pixel-users' },
   { id: 'orchestrator',  label: 'Orchestrator',     icon: Bot },
+  { id: 'presence',      label: 'Online Now',       icon: Wifi },
+  { id: 'activity',      label: 'Activity Log',     icon: Activity },
   { id: 'finance',       label: 'Finance',          icon: DollarSign },
   { id: 'ai-report',     label: 'AI Report',        icon: Sparkles },
   { id: 'notifications', label: 'Notificaciones',   icon: BellRing },
@@ -1217,6 +1221,12 @@ export default function AdminDashboard() {
                 )}
               </div>
             )}
+
+            {/* ══ ONLINE USERS / PRESENCE ══ */}
+            {section === 'presence' && <OnlineUsersCard />}
+
+            {/* ══ ACTIVITY LOG ══ */}
+            {section === 'activity' && <ActivityTimeline />}
 
             {/* ══ FINANCE ══ */}
             {section === 'finance' && finance && (<>
