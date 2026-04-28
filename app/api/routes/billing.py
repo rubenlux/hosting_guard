@@ -136,27 +136,29 @@ async def _process_webhook(event_name: str, meta: dict, data: dict) -> None:
     period_start = attrs.get("created_at")
     portal_url = (attrs.get("urls") or {}).get("customer_portal")
 
+    # base never includes subscription_status — each branch sets it explicitly
+    # to avoid "multiple values for keyword argument" when overriding.
     base: dict = {
         "ls_customer_id": ls_cid,
         "ls_subscription_id": subscription_id,
         "ls_variant_id": variant_id,
-        "subscription_status": status,
         "current_period_end": period_end,
         "ls_customer_portal_url": portal_url,
     }
 
-    # For events that involve plan assignment, variant_id must map to a known plan.
-    # This prevents a misconfigured LS product from silently elevating any plan.
+    # For events that assign a plan, variant_id must map to a known plan.
+    # order_created has a different payload structure (no variant_id in attributes)
+    # and is redundant — subscription_created always fires for subscriptions.
     plan_from_variant: str | None = _LS.plan_from_variant(variant_id) if variant_id else None
-    _plan_events = {"subscription_created", "subscription_updated", "subscription_resumed", "order_created"}
+    _plan_events = {"subscription_created", "subscription_updated", "subscription_resumed"}
     if event_name in _plan_events and not plan_from_variant:
         logger.error(
-            "Webhook %s: variant_id=%s is not mapped to any allowed plan — aborting. user=%s",
+            "Webhook %s: variant_id=%s not mapped to any allowed plan — aborting. user=%s",
             event_name, variant_id, uid,
         )
         return
 
-    if event_name in ("subscription_created", "order_created"):
+    if event_name == "subscription_created":
         _user_repo.update_billing_subscription(uid,
             plan=plan_from_variant,
             plan_started_at=datetime.now(timezone.utc).isoformat(),
@@ -167,7 +169,10 @@ async def _process_webhook(event_name: str, meta: dict, data: dict) -> None:
         logger.info("User %s → plan=%s sub=%s", uid, plan_from_variant, subscription_id)
 
     elif event_name in ("subscription_updated", "subscription_resumed"):
-        _user_repo.update_billing_subscription(uid, plan=plan_from_variant, **base)
+        _user_repo.update_billing_subscription(uid,
+            plan=plan_from_variant,
+            subscription_status=status,
+            **base)
 
     elif event_name == "subscription_cancelled":
         # Service remains active until current_period_end — do NOT downgrade plan yet
@@ -190,7 +195,7 @@ async def _process_webhook(event_name: str, meta: dict, data: dict) -> None:
         _notify(
             user_id=uid,
             title="Problema con tu pago",
-            message="No pudimos procesar el pago de tu suscripción. Actualiza tu método de pago para evitar la suspensión del servicio.",
+            message="No pudimos procesar el pago de tu suscripción. Actualizá tu método de pago para evitar la suspensión del servicio.",
             category="billing",
             severity="critical",
             action_url=portal_url or "https://hostingguard.lat/dashboard",
@@ -201,6 +206,11 @@ async def _process_webhook(event_name: str, meta: dict, data: dict) -> None:
     elif event_name == "subscription_payment_success":
         _user_repo.update_billing_subscription(uid, subscription_status="active", **base)
         logger.info("User %s payment success, renewed until %s", uid, period_end)
+
+    elif event_name == "order_created":
+        # order_created fires alongside subscription_created for new subscriptions.
+        # subscription_created is the authoritative event — ignore order_created.
+        logger.debug("order_created ignored (subscription_created is authoritative)")
 
     else:
         logger.debug("Webhook %s ignored (unhandled)", event_name)
