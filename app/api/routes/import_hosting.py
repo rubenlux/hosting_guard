@@ -509,10 +509,16 @@ def _restore_sql(job_id: int, db_container: Optional[str], file_path: Path):
 def _restore_sql_file_to_container(job_id: int, db_container: str, sql_path: Path):
     """Stream SQL file directly via stdin — avoids docker cp (blocked by socket proxy)."""
     _log(job_id, f"Importando SQL en MariaDB ({sql_path.stat().st_size // 1024} KB)...")
+    pw = _get_container_env(db_container, "MYSQL_PASSWORD") or ""
     with open(sql_path, "rb") as fh:
         r = subprocess.run(
-            ["docker", "exec", "-i", db_container,
-             "sh", "-c", 'mysql -u wpuser -p"$MYSQL_PASSWORD" wordpress'],
+            [
+                "docker", "exec", "--interactive", db_container,
+                "mysql", "--batch",
+                "-u", "wpuser",
+                f"--password={pw}",
+                "wordpress",
+            ],
             stdin=fh,
             capture_output=True,
             timeout=300,
@@ -830,12 +836,14 @@ async def stream_import_logs(job_id: int, user: dict = Depends(verify_token)):
     if not job:
         raise HTTPException(status_code=404, detail="Job no encontrado")
 
+    _owner_id = user["user_id"]
+
     async def _sse() -> AsyncIterator[str]:
         seen = 0
         finished_statuses = {"completed", "failed"}
         while True:
-            j = _import_repo.get_job(job_id)
-            logs: str = j.get("logs") or ""
+            j = _import_repo.get_job(job_id, user_id=_owner_id)
+            logs: str = (j or {}).get("logs") or ""
             status: str = j.get("status") or ""
             new_content = logs[seen:]
             if new_content:

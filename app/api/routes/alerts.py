@@ -20,9 +20,9 @@ async def get_user_alerts(limit: int = 20, user: dict = Depends(verify_token)):
 @router.post("/alerts/{alert_id}/resolve")
 async def resolve_alert(alert_id: int, user: dict = Depends(verify_token)):
     user_id = user.get("user_id")
-    success = _health_repo.resolve_alert(alert_id)
+    success = _health_repo.resolve_alert(alert_id, user_id=user_id)
     if not success:
-        raise HTTPException(status_code=500, detail="Error al resolver la alerta")
+        raise HTTPException(status_code=404, detail="Alerta no encontrada o no pertenece al usuario")
     return {"status": "resolved"}
 
 @router.get("/user/recent-activity")

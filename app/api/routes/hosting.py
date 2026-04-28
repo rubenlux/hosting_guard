@@ -1157,7 +1157,9 @@ def wp_reset_password(hosting_id: int, user: dict = Depends(verify_token)):
 
 @router.get("/{hosting_id}/health/history")
 async def get_health_history_legacy(hosting_id: int, user: dict = Depends(verify_token)):
-    """Endpoint solicitado por la guía de implementación."""
+    user_id = int(user["user_id"])
+    if not hosting_repo.get_hosting(hosting_id, user_id):
+        raise HTTPException(status_code=404, detail="Hosting not found")
     data = _health_repo.get_health_history(hosting_id)
     return [
         {

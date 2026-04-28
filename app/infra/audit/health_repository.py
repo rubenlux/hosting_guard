@@ -94,17 +94,17 @@ class HealthRepository:
         finally:
             release_connection(conn)
 
-    def resolve_alert(self, alert_id: int) -> bool:
+    def resolve_alert(self, alert_id: int, user_id: int) -> bool:
         conn = get_connection()
         try:
             cursor = conn.cursor()
             now = datetime.now(timezone.utc).isoformat()
             cursor.execute(
-                "UPDATE site_alerts SET resolved = 1, resolved_at = %s WHERE id = %s",
-                (now, alert_id),
+                "UPDATE site_alerts SET resolved = 1, resolved_at = %s WHERE id = %s AND user_id = %s",
+                (now, alert_id, user_id),
             )
             conn.commit()
-            return True
+            return cursor.rowcount > 0
         except Exception:
             conn.rollback()
             return False
