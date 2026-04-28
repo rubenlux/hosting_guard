@@ -361,7 +361,14 @@ const Dashboard = () => {
               </button>
             )}
             <NotificationBell />
-            {!sidebarSection && <button className="btn-dash btn-primary-dash shrink-0">Upgrade</button>}
+            {!sidebarSection && (
+              <button
+                onClick={() => { setSidebarSection('billing'); setShowCreate(false); navigate('/dashboard'); }}
+                className="btn-dash btn-primary-dash shrink-0"
+              >
+                Mejorar plan
+              </button>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto bg-[#0a0a0a]" style={{ padding: activeView === 'dashboard' && !showCreate && !sidebarSection ? 0 : undefined }}>
