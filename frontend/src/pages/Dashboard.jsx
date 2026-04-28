@@ -437,6 +437,7 @@ const Dashboard = () => {
                 unresolved={unresolved}
                 user={user}
                 onTopup={handleTopup}
+                onGoBilling={() => { setSidebarSection('billing'); setShowCreate(false); }}
                 onRefresh={refresh}
                 onOpenLogs={handleOpenLogs}
                 onOpenFiles={(h) => { setSelectedFilesHosting(h); setShowFiles(true); }}

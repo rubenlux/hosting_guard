@@ -62,6 +62,22 @@ def _log(job_id: int, line: str):
     logger.info("[import:%d] %s", job_id, line)
 
 
+_ZIP_MAGIC = b"PK\x03\x04"
+
+def _validate_magic_bytes(path: Path, suffix: str) -> None:
+    """Raise HTTPException if the file's magic bytes don't match its declared type."""
+    with open(path, "rb") as f:
+        header = f.read(4)
+    if suffix in (".zip", ".wpress"):
+        if not header.startswith(_ZIP_MAGIC):
+            raise HTTPException(status_code=400, detail="El archivo no es un ZIP válido (firma incorrecta)")
+    elif suffix == ".sql":
+        try:
+            header.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="El archivo SQL contiene bytes inválidos — debe ser texto UTF-8")
+
+
 def _detect_type(path: Path) -> str:
     name = path.name.lower()
     if name.endswith(".wpress"):
@@ -666,6 +682,13 @@ async def import_site(
 
     _log(job_id, f"Archivo guardado ({total // 1024} KB).")
 
+    try:
+        _validate_magic_bytes(dest, suffix)
+    except HTTPException:
+        dest.unlink(missing_ok=True)
+        _import_repo.set_status(job_id, "failed", "Tipo de archivo inválido")
+        raise
+
     # Save optional SQL file
     sql_dest: Optional[Path] = None
     if sql_file and sql_file.filename:
@@ -673,8 +696,10 @@ async def import_site(
         try:
             sql_total = await _save_upload(sql_file, sql_dest, job_id)
             _log(job_id, f"SQL adicional guardado ({sql_total // 1024} KB).")
+            _validate_magic_bytes(sql_dest, ".sql")
         except HTTPException:
             dest.unlink(missing_ok=True)
+            sql_dest.unlink(missing_ok=True)
             raise
         except Exception as exc:
             dest.unlink(missing_ok=True)

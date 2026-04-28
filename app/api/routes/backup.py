@@ -1,7 +1,8 @@
 """Backup routes — manual backup creation and listing."""
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from app.api.rate_limit import limiter
 from app.api.security import verify_token
 from app.infra.audit.hosting_repository import HostingRepository
 from app.services.notification_service import notify
@@ -13,7 +14,8 @@ _hosting_repo = HostingRepository()
 
 
 @router.post("/hostings/{hosting_id}/backup")
-async def create_backup(hosting_id: int, user: dict = Depends(verify_token)):
+@limiter.limit("4/hour")
+async def create_backup(request: Request, hosting_id: int, user: dict = Depends(verify_token)):
     user_id = user["user_id"]
     hosting = _hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:

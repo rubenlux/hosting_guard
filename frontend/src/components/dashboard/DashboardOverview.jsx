@@ -324,6 +324,7 @@ export default function DashboardOverview({
   unresolved = 0,
   user,
   onTopup,
+  onGoBilling,
   onRefresh,
   onOpenLogs,
   onOpenFiles,
@@ -518,35 +519,56 @@ export default function DashboardOverview({
           </Card>
 
           {/* Account */}
-          <Card
-            title="Tu Cuenta"
-            right={
-              user?.card_last_four
-                ? <span style={{ fontSize: 10, color: T.textDim, fontFamily: T.mono }}>•••• {user.card_last_four}</span>
-                : <span style={{ fontSize: 10, color: T.bad, fontFamily: T.mono }}>● Sin tarjeta</span>
-            }
-          >
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 4 }}>
-              <span style={{ fontSize: 11, color: T.textMute }}>Saldo</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12 }}>
-              <span style={{ fontSize: 32, fontWeight: 700, letterSpacing: '-0.035em', color: T.text, lineHeight: 1 }}>
-                ${parseFloat(user?.balance ?? 0).toFixed(2)}
-              </span>
-              <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', background: T.accentSoft, color: T.accent, borderRadius: 4, letterSpacing: '0.08em' }}>
-                {(user?.plan ?? 'FREE').toUpperCase()}
-              </span>
-            </div>
-            <button
-              onClick={onTopup} disabled={userActionLoading}
-              style={{ width: '100%', background: T.accent, color: '#000', border: 'none', padding: '8px 12px', borderRadius: 6, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', marginBottom: 8, opacity: userActionLoading ? 0.6 : 1 }}
-            >
-              Recargar +$10
-            </button>
-            <div style={{ textAlign: 'center', fontSize: 11, color: T.textMute, cursor: 'pointer' }} onClick={() => navigate('/dashboard')}>
-              Ver facturación →
-            </div>
-          </Card>
+          {(() => {
+            const subStatus = user?.subscription_status ?? 'none';
+            const statusColor = { active: T.good, cancelled: T.warn, past_due: T.bad, expired: T.bad }[subStatus] ?? T.textDim;
+            const statusLabel = { active: 'Activa', cancelled: 'Cancelada', past_due: 'Pago pendiente', expired: 'Expirada', none: 'Gratis' }[subStatus] ?? subStatus;
+            const periodEnd = user?.current_period_end;
+            const periodLabel = periodEnd ? new Date(periodEnd).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+            const portalUrl = user?.ls_customer_portal_url;
+            return (
+              <Card
+                title="Tu Cuenta"
+                right={<span style={{ fontSize: 10, color: statusColor, fontFamily: T.mono }}>● {statusLabel}</span>}
+              >
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12 }}>
+                  <span style={{ fontSize: 32, fontWeight: 700, letterSpacing: '-0.035em', color: T.text, lineHeight: 1 }}>
+                    {(user?.plan ?? 'free').charAt(0).toUpperCase() + (user?.plan ?? 'free').slice(1)}
+                  </span>
+                  {subStatus !== 'none' && (
+                    <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', background: T.accentSoft, color: T.accent, borderRadius: 4, letterSpacing: '0.08em' }}>
+                      ANUAL
+                    </span>
+                  )}
+                </div>
+                {periodLabel && (
+                  <div style={{ fontSize: 11, color: T.textMute, marginBottom: 12 }}>
+                    {subStatus === 'cancelled' ? 'Acceso hasta' : 'Renueva'}: {periodLabel}
+                  </div>
+                )}
+                {portalUrl ? (
+                  <a
+                    href={portalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ display: 'block', width: '100%', background: T.accent, color: '#000', border: 'none', padding: '8px 12px', borderRadius: 6, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', marginBottom: 8, textAlign: 'center', textDecoration: 'none' }}
+                  >
+                    Gestionar suscripción
+                  </a>
+                ) : (
+                  <button
+                    onClick={onGoBilling}
+                    style={{ width: '100%', background: T.accent, color: '#000', border: 'none', padding: '8px 12px', borderRadius: 6, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', marginBottom: 8 }}
+                  >
+                    Ver planes
+                  </button>
+                )}
+                <div style={{ textAlign: 'center', fontSize: 11, color: T.textMute, cursor: 'pointer' }} onClick={onGoBilling}>
+                  Ver facturación →
+                </div>
+              </Card>
+            );
+          })()}
         </div>
       </div>
 

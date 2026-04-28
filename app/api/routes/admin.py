@@ -131,7 +131,8 @@ def get_user_full(user_id: int, _: dict = Depends(require_role("admin"))):
     profile = _user_repo.get_user_by_id(user_id)
     if not profile:
         raise HTTPException(status_code=404, detail="User not found")
-    profile.pop("password_hash", None)
+    for _sensitive in ("password_hash", "totp_secret", "totp_backup_codes"):
+        profile.pop(_sensitive, None)
 
     hostings = _hosting_repo.get_user_hostings(user_id)
     activity = _hosting_repo.get_orchestrator_events(user_id, limit=30, skip=0)
