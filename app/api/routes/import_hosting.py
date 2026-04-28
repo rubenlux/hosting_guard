@@ -327,6 +327,8 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
         _import_repo.set_domains(job_id, old_domain or "", new_domain)
 
         if db_container:
+            # Validate before any SQL path — covers both _fix_domain and the else branch.
+            _validate_domain(new_domain, "new_domain")
             if old_domain and old_domain != new_domain:
                 _fix_domain(job_id, db_container, old_domain, new_domain, container=container)
             else:
@@ -523,11 +525,43 @@ def _restore_sql_file_to_container(job_id: int, db_container: str, sql_path: Pat
 
 # ── domain detection & fix ────────────────────────────────────────────────────
 
+# Only alnum, dots, hyphens — must start and end with alnum.
+# Used to whitelist both old_domain (from backup) and new_domain (from our DB)
+# before either value is embedded in SQL strings.
+_DOMAIN_RE = re.compile(
+    r"[a-zA-Z0-9]"              # must start with alnum
+    r"([a-zA-Z0-9.\-]{0,251}"  # middle: alnum, dot, hyphen (optional)
+    r"[a-zA-Z0-9])?"            # must end with alnum when longer than 1 char
+    r"(:\d{1,5})?"              # optional :port (1–5 digits)
+)
+
+
+def _validate_domain(domain: str, label: str) -> None:
+    """Raise RuntimeError if domain contains characters unsafe for SQL embedding."""
+    if not _DOMAIN_RE.fullmatch(domain):
+        raise RuntimeError(f"{label} contiene caracteres inválidos: {domain!r}")
+
+
 def _mysql_exec(db_container: str, sql: str, timeout: int = 30) -> subprocess.CompletedProcess:
-    """Run a SQL statement against the wordpress DB inside db_container."""
-    return _docker_exec(
-        db_container, "sh", "-c",
-        f'mysql -u wpuser -p"$MYSQL_PASSWORD" wordpress -e "{sql}"',
+    """
+    Run SQL against the WordPress DB via stdin — no sh -c, no shell injection.
+
+    Reads MYSQL_PASSWORD from the container via docker inspect so the credential
+    never passes through a shell.  SQL is written to mysql's stdin; the -e flag
+    and shell quoting are not used at all.
+    """
+    pw = _get_container_env(db_container, "MYSQL_PASSWORD") or ""
+    return subprocess.run(
+        [
+            "docker", "exec", "--interactive", db_container,
+            "mysql", "--batch",
+            "-u", "wpuser",
+            f"--password={pw}",
+            "wordpress",
+        ],
+        input=sql,
+        capture_output=True,
+        text=True,
         timeout=timeout,
     )
 
@@ -555,10 +589,10 @@ def _fix_domain(job_id: int, db_container: str, old_domain: str, new_domain: str
     metadata — plain MySQL REPLACE() does not, which corrupts PHP serialized values
     stored in wp_options and wp_postmeta by themes and plugins.
     """
-    # Reject domains that could escape the SQL string in the fallback path.
     # old_domain comes from the backup's wp_options — a crafted backup could inject SQL.
-    if not re.fullmatch(r"[a-zA-Z0-9.\-]+(:\d+)?", old_domain):
-        raise RuntimeError(f"Dominio inválido detectado en el backup: {old_domain!r}")
+    # new_domain comes from our own DB but is also validated for defence in depth.
+    _validate_domain(old_domain, "old_domain (del backup)")
+    _validate_domain(new_domain, "new_domain")
 
     _log(job_id, f"Actualizando dominio en BD: {old_domain} → {new_domain}")
     new_url = f"https://{new_domain}"
