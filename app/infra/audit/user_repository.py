@@ -102,7 +102,10 @@ class UserRepository:
             cursor.execute(
                 "SELECT user_id, email, role, plan, plan_expires_at, first_name, last_name, phone, "
                 "balance, has_payment_method, autoscale_enabled, created_at, "
-                "timezone, company, avatar_url, notification_prefs "
+                "timezone, company, avatar_url, notification_prefs, "
+                "ls_customer_id, ls_subscription_id, ls_variant_id, subscription_status, "
+                "current_period_start, current_period_end, trial_ends_at, "
+                "plan_started_at, billing_interval, ls_customer_portal_url "
                 "FROM users WHERE user_id = %s",
                 (user_id,)
             )
@@ -263,6 +266,70 @@ class UserRepository:
             cursor.execute(
                 "INSERT INTO login_audit (email, ip, success, detail, created_at) VALUES (%s, %s, %s, %s, %s)",
                 (email, ip, 1 if success else 0, detail, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+        finally:
+            release_connection(conn)
+
+    # ── Lemon Squeezy billing ─────────────────────────────────────────────────
+
+    _BILLING_FIELDS = frozenset({
+        "ls_customer_id", "ls_subscription_id", "ls_variant_id", "subscription_status",
+        "current_period_start", "current_period_end", "trial_ends_at",
+        "plan_started_at", "billing_interval", "ls_customer_portal_url", "plan",
+    })
+
+    def update_billing_subscription(self, user_id: int, **fields) -> None:
+        to_update = {k: v for k, v in fields.items() if k in self._BILLING_FIELDS and v is not None}
+        if not to_update:
+            return
+        cols = ", ".join(f"{k} = %s" for k in to_update)
+        vals = list(to_update.values()) + [user_id]
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(f"UPDATE users SET {cols} WHERE user_id = %s", vals)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            release_connection(conn)
+
+    def get_user_by_ls_customer_id(self, customer_id: str) -> Optional[Dict]:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT user_id, email, role, plan, ls_customer_id, ls_subscription_id "
+                "FROM users WHERE ls_customer_id = %s",
+                (customer_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            release_connection(conn)
+
+    def is_webhook_processed(self, event_id: str) -> bool:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM ls_webhook_events WHERE event_id = %s",
+                (event_id,)
+            )
+            return cursor.fetchone() is not None
+        finally:
+            release_connection(conn)
+
+    def mark_webhook_processed(self, event_id: str, event_name: str) -> None:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO ls_webhook_events (event_id, event_name, processed_at) "
+                "VALUES (%s, %s, %s) ON CONFLICT (event_id) DO NOTHING",
+                (event_id, event_name, datetime.now(timezone.utc).isoformat()),
             )
             conn.commit()
         finally:

@@ -280,10 +280,10 @@ function ActivityFeedV1({ events }) {
         <div style={{ padding: '20px 14px', fontSize: 12, color: T.textMute, textAlign: 'center' }}>Sin actividad reciente</div>
       ) : rows.map((ev, i) => {
         const type = (ev.event_type ?? '').toUpperCase();
-        const site = ev.site_name ?? ev.source ?? '—';
+        const site = ev.container_name ?? ev.source ?? '—';
         const score = ev.score ?? ev.health_score ?? 100;
         const cpu  = parseFloat(ev.cpu_pct ?? ev.cpu ?? 0);
-        const ram  = parseFloat(ev.ram_pct ?? ev.ram ?? 0);
+        const ram  = parseFloat(ev.mem_pct ?? ev.ram ?? 0);
         const isFirst = i === 0;
         return (
           <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', borderBottom: i < rows.length - 1 ? `1px solid ${T.border}` : 'none' }}>

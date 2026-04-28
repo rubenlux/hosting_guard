@@ -280,6 +280,22 @@ _MIGRATIONS_PG = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_backup_codes TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_prefs JSONB",
+    # ── Lemon Squeezy billing (annual subscriptions) ────────────────────────
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS ls_customer_id TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS ls_subscription_id TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS ls_variant_id TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'none'",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS current_period_start TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS current_period_end TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_ends_at TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_started_at TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_interval TEXT DEFAULT 'yearly'",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS ls_customer_portal_url TEXT",
+    """CREATE TABLE IF NOT EXISTS ls_webhook_events (
+        event_id     TEXT PRIMARY KEY,
+        event_name   TEXT NOT NULL,
+        processed_at TEXT NOT NULL
+    )""",
 ]
 
 _INDEXES = [

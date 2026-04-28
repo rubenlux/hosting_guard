@@ -741,3 +741,12 @@ export const triggerBackup = async (hostingId) => {
   const response = await api.post(`/hosting/hostings/${hostingId}/backup`);
   return response.data;
 };
+
+// ---------------------------------------------------------------------------
+// Billing — Lemon Squeezy
+// ---------------------------------------------------------------------------
+
+export const createBillingCheckout = async (plan) => {
+  const response = await api.post('/billing/checkout', { plan });
+  return response.data; // { url: string }
+};

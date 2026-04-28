@@ -73,6 +73,7 @@ from app.api.routes.alerts import router as alerts_router
 from app.api.routes.import_hosting import router as import_router
 from app.api.routes.notifications import router as notifications_router
 from app.api.routes.backup import router as backup_router
+from app.api.routes.billing import router as billing_router
 app.include_router(pixel_router)
 app.include_router(files_router)
 app.include_router(impersonate_router)
@@ -83,6 +84,7 @@ app.include_router(alerts_router)
 app.include_router(import_router)
 app.include_router(notifications_router)
 app.include_router(backup_router)
+app.include_router(billing_router)
 
 
 _IS_PRODUCTION = APP_ENV == "production"
@@ -759,6 +761,12 @@ def get_me(user: dict = Depends(verify_token)):
         "company": user_db.get("company"),
         "avatar_url": user_db.get("avatar_url"),
         "notification_prefs": user_db.get("notification_prefs"),
+        # Billing fields (Lemon Squeezy)
+        "subscription_status": user_db.get("subscription_status", "none"),
+        "current_period_end": user_db.get("current_period_end"),
+        "plan_started_at": user_db.get("plan_started_at"),
+        "billing_interval": user_db.get("billing_interval", "yearly"),
+        "ls_customer_portal_url": user_db.get("ls_customer_portal_url"),
     }
     # Expose support metadata so the frontend can render the SupportBanner
     if user.get("is_support_session"):
