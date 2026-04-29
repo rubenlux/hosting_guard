@@ -38,8 +38,8 @@ hosting_repo = HostingRepository()
 _health_repo = HealthRepository()
 
 # --- Constantes de seguridad ---
-MAX_ZIP_SIZE        = 50  * 1024 * 1024   # 50 MB en memoria
-MAX_EXTRACTED_SIZE  = 200 * 1024 * 1024   # 200 MB descomprimido (anti ZIP-bomb)
+MAX_ZIP_SIZE        = 500 * 1024 * 1024   # 500 MB en memoria
+MAX_EXTRACTED_SIZE  = 2   * 1024 * 1024 * 1024   # 2 GB descomprimido (anti ZIP-bomb)
 ALLOWED_REPO_HOSTS  = {"github.com", "gitlab.com", "bitbucket.org"}
 BRANCH_REGEX        = re.compile(r'^[a-zA-Z0-9._/\-]+$')
 PROJECT_NAME_REGEX  = re.compile(r'^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$')
