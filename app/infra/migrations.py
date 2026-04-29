@@ -637,6 +637,13 @@ _INDEXES = [
 
     # protection_mode per hosting — stores WAF/rate-limit settings as JSONB
     "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS protection_mode JSONB DEFAULT '{}'",
+
+    # ── security_events back-compat: add columns that may be absent on existing tables ──
+    # (CREATE TABLE IF NOT EXISTS is idempotent but doesn't add columns to pre-existing tables)
+    "ALTER TABLE security_events ADD COLUMN IF NOT EXISTS count    INTEGER    NOT NULL DEFAULT 1",
+    "ALTER TABLE security_events ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+    # Backfill last_seen = created_at for rows that didn't have it yet
+    """UPDATE security_events SET last_seen = created_at WHERE last_seen = NOW() AND created_at < NOW() - INTERVAL '5 seconds'""",
 ]
 
 def ensure_monthly_partitions(cursor):

@@ -175,13 +175,16 @@ function EventRow({ e, onResolved }) {
               <span className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded ${sev.pill}`}>
                 {e.severity}
               </span>
-              {e.count > 1 && (
-                <span className="text-[8px] bg-white/5 text-gray-500 px-1.5 py-0.5 rounded">
-                  ×{e.count}
-                </span>
-              )}
+              {/* Occurrences counter — always shown, styled by threat level */}
+              <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border font-mono ${
+                (e.count ?? 1) >= 20 ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                (e.count ?? 1) >= 5  ? 'bg-amber-500/15 text-amber-400 border-amber-500/25' :
+                'bg-white/5 text-gray-500 border-white/8'
+              }`}>
+                ×{e.count ?? 1}
+              </span>
               {e.status === 'resolved' && (
-                <span className="text-[8px] bg-emerald-500/10 text-emerald-500 px-1.5 py-0.5 rounded">
+                <span className="text-[8px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-1.5 py-0.5 rounded">
                   resuelto
                 </span>
               )}
@@ -202,7 +205,9 @@ function EventRow({ e, onResolved }) {
 
           {/* timestamp + actions */}
           <div className="flex flex-col items-end gap-1.5 shrink-0">
-            <span className="text-[9px] text-gray-600">{fmtDate(e.last_seen || e.created_at)}</span>
+            <span className="text-[9px] text-gray-600" title={`Primera vez: ${fmtDate(e.created_at)}`}>
+              {fmtDate(e.last_seen || e.created_at)}
+            </span>
             <div className="flex gap-1">
               <button
                 onClick={(ev) => { ev.stopPropagation(); setAiEvent(e.event_id); }}
@@ -230,15 +235,36 @@ function EventRow({ e, onResolved }) {
 
         {/* Expanded detail */}
         {expanded && (
-          <div className="ml-8 px-4 pb-3 space-y-2">
+          <div className="ml-8 px-4 pb-3 space-y-2.5">
             {e.message && (
               <p className="text-[10px] text-gray-400 leading-relaxed">{e.message}</p>
             )}
+
+            {/* Occurrence timeline */}
+            <div className="flex items-center gap-4 bg-[#0d0d0f] rounded-lg px-3 py-2 border border-white/5">
+              <div className="flex flex-col items-center">
+                <span className={`text-lg font-bold font-mono ${
+                  (e.count ?? 1) >= 20 ? 'text-red-400' :
+                  (e.count ?? 1) >= 5  ? 'text-amber-400' : 'text-gray-300'
+                }`}>{e.count ?? 1}</span>
+                <span className="text-[8px] text-gray-600 uppercase">ocurrencias</span>
+              </div>
+              <div className="h-8 w-px bg-white/5" />
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[9px] text-gray-600">
+                  Primera vez: <span className="text-gray-400">{fmtDate(e.created_at)}</span>
+                </span>
+                <span className="text-[9px] text-gray-600">
+                  Última vez:&nbsp;&nbsp;<span className="text-gray-400">{fmtDate(e.last_seen || e.created_at)}</span>
+                </span>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-              {e.source   && <Detail label="Source"    val={e.source} />}
-              {e.path     && <Detail label="Path"      val={e.path} />}
-              {e.category && <Detail label="Category"  val={e.category} />}
-              {e.created_at && <Detail label="First seen" val={fmtDate(e.created_at)} />}
+              {e.source   && <Detail label="Source"   val={e.source} />}
+              {e.path     && <Detail label="Path"     val={e.path} />}
+              {e.category && <Detail label="Category" val={e.category} />}
+              {e.event_id && <Detail label="Event ID" val={String(e.event_id)} />}
             </div>
             {e.metadata && Object.keys(e.metadata).length > 0 && (
               <pre className="text-[9px] text-gray-500 bg-[#0d0d0f] rounded p-2 overflow-x-auto font-mono border border-white/5">

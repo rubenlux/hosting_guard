@@ -14,9 +14,8 @@ Coverage:
 import zipfile
 
 import pytest
-from fastapi import HTTPException
 
-from app.api.routes.import_hosting import _validate_magic_bytes
+from app.api.routes.import_hosting import _InvalidFileError, _validate_magic_bytes
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -38,17 +37,17 @@ def test_zip_valid(tmp_path):
 def test_zip_fake_renamed(tmp_path):
     f = tmp_path / "fake.zip"
     f.write_bytes(b"This is plain text, not a ZIP file at all.")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(_InvalidFileError) as exc:
         _validate_magic_bytes(f, ".zip")
-    assert exc.value.status_code == 400
+    assert exc.value.reason == "invalid_zip_magic"
 
 
 def test_zip_elf_disguised_as_zip(tmp_path):
     f = tmp_path / "evil.zip"
     f.write_bytes(b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 200)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(_InvalidFileError) as exc:
         _validate_magic_bytes(f, ".zip")
-    assert exc.value.status_code == 400
+    assert exc.value.reason == "invalid_zip_magic"
 
 
 # ── .sql ──────────────────────────────────────────────────────────────────────
@@ -76,18 +75,18 @@ def test_sql_valid_latin1(tmp_path):
 def test_sql_binary_fake(tmp_path):
     f = tmp_path / "binary.sql"
     f.write_bytes(b"\x00\x01\x02\x03\xff\xfe\xfd binary garbage with null at start")
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(_InvalidFileError) as exc:
         _validate_magic_bytes(f, ".sql")
-    assert exc.value.status_code == 400
+    assert exc.value.reason == "binary_sql"
     assert "nulos" in exc.value.detail
 
 
 def test_sql_null_in_middle(tmp_path):
     f = tmp_path / "embed_null.sql"
     f.write_bytes(b"-- looks like SQL\n" + b"A" * 100 + b"\x00" + b"B" * 100)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(_InvalidFileError) as exc:
         _validate_magic_bytes(f, ".sql")
-    assert exc.value.status_code == 400
+    assert exc.value.reason == "binary_sql"
 
 
 # ── .wpress ───────────────────────────────────────────────────────────────────
@@ -106,9 +105,9 @@ def test_wpress_valid_custom_binary(tmp_path):
 def test_wpress_elf_rejected(tmp_path):
     f = tmp_path / "evil.wpress"
     f.write_bytes(b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 200)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(_InvalidFileError) as exc:
         _validate_magic_bytes(f, ".wpress")
-    assert exc.value.status_code == 400
+    assert exc.value.reason == "executable_magic_bytes"
     assert "ejecutable" in exc.value.detail
 
 
@@ -116,9 +115,9 @@ def test_wpress_pe_rejected(tmp_path):
     f = tmp_path / "evil_pe.wpress"
     # PE/COFF header used by Windows .exe and .dll files
     f.write_bytes(b"MZ\x90\x00\x03\x00\x00\x00" + b"\x00" * 200)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(_InvalidFileError) as exc:
         _validate_magic_bytes(f, ".wpress")
-    assert exc.value.status_code == 400
+    assert exc.value.reason == "executable_magic_bytes"
     assert "ejecutable" in exc.value.detail
 
 

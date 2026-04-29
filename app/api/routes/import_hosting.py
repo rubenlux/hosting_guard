@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/hosting", tags=["Import"])
 
+
+class _InvalidFileError(Exception):
+    def __init__(self, detail: str, reason: str):
+        self.detail = detail
+        self.reason = reason
+        super().__init__(detail)
+
 _import_repo = ImportRepository()
 _hosting_repo = HostingRepository()
 
@@ -60,21 +67,6 @@ def _log(job_id: int, line: str):
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
     _import_repo.append_log(job_id, f"[{ts}] {line}")
     logger.info("[import:%d] %s", job_id, line)
-
-
-def _log_upload_rejection(path, suffix: str, reason: str) -> None:
-    try:
-        from app.services.security_event_service import log_security_event
-        log_security_event(
-            severity="warning", category="upload",
-            event_type="magic_bytes_rejected",
-            title=f"Upload rechazado: {suffix} inválido ({reason})",
-            message=f"Archivo {path.name if hasattr(path, 'name') else path} rechazado por magic bytes ({reason}).",
-            source="import",
-            metadata={"suffix": suffix, "reason": reason},
-        )
-    except Exception:
-        pass
 
 
 _ZIP_MAGIC = b"PK\x03\x04"
@@ -105,29 +97,26 @@ def _validate_magic_bytes(path: Path, suffix: str) -> None:
 
     if suffix == ".zip":
         if not header[:4] == _ZIP_MAGIC:
-            _log_upload_rejection(path, suffix, "invalid_zip_magic")
-            raise HTTPException(
-                status_code=400,
+            raise _InvalidFileError(
                 detail="El archivo .zip no tiene firma ZIP válida (debe empezar con PK\\x03\\x04)",
+                reason="invalid_zip_magic",
             )
 
     elif suffix == ".wpress":
         for magic in _EXECUTABLE_MAGIC:
             if header[:len(magic)] == magic:
-                _log_upload_rejection(path, suffix, "executable_magic_bytes")
-                raise HTTPException(
-                    status_code=400,
+                raise _InvalidFileError(
                     detail="El archivo .wpress parece ser un ejecutable y fue rechazado",
+                    reason="executable_magic_bytes",
                 )
 
     elif suffix == ".sql":
         # Null bytes are the reliable indicator of binary content.
         # Both UTF-8 and latin-1 text files are free of null bytes.
         if b"\x00" in header:
-            _log_upload_rejection(path, suffix, "binary_sql")
-            raise HTTPException(
-                status_code=400,
+            raise _InvalidFileError(
                 detail="El archivo .sql contiene bytes nulos — debe ser un dump de texto (UTF-8 o latin-1)",
+                reason="binary_sql",
             )
 
 
@@ -777,19 +766,69 @@ async def import_site(
 
     try:
         _validate_magic_bytes(dest, suffix)
-    except HTTPException:
+    except _InvalidFileError as exc:
         dest.unlink(missing_ok=True)
-        _import_repo.set_status(job_id, "failed", "Tipo de archivo inválido")
-        raise
+        _import_repo.set_status(job_id, "failed", f"Tipo de archivo inválido: {exc.reason}")
+        try:
+            from app.services.security_event_service import log_security_event
+            log_security_event(
+                severity="warning", category="upload",
+                event_type="upload_rejected_magic_bytes",
+                title="Upload bloqueado por validación de archivo",
+                message=exc.detail,
+                ip=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                user_id=user_id,
+                hosting_id=hosting_id,
+                source="import_hosting",
+                metadata={
+                    "job_id": job_id,
+                    "filename": file.filename,
+                    "suffix": suffix,
+                    "size_bytes": total,
+                    "reason": exc.reason,
+                },
+            )
+        except Exception:
+            logger.exception("failed to log upload rejection security event")
+        raise HTTPException(status_code=400, detail=exc.detail)
 
     # Save optional SQL file
     sql_dest: Optional[Path] = None
     if sql_file and sql_file.filename:
         sql_dest = UPLOAD_DIR / f"job_{job_id}_extra.sql"
+        sql_total = 0
         try:
             sql_total = await _save_upload(sql_file, sql_dest, job_id)
             _log(job_id, f"SQL adicional guardado ({sql_total // 1024} KB).")
             _validate_magic_bytes(sql_dest, ".sql")
+        except _InvalidFileError as exc:
+            dest.unlink(missing_ok=True)
+            sql_dest.unlink(missing_ok=True)
+            _import_repo.set_status(job_id, "failed", f"Tipo de archivo inválido: {exc.reason}")
+            try:
+                from app.services.security_event_service import log_security_event
+                log_security_event(
+                    severity="warning", category="upload",
+                    event_type="sql_upload_rejected_magic_bytes",
+                    title="SQL adicional bloqueado por validación",
+                    message=exc.detail,
+                    ip=request.client.host if request.client else None,
+                    user_agent=request.headers.get("user-agent"),
+                    user_id=user_id,
+                    hosting_id=hosting_id,
+                    source="import_hosting",
+                    metadata={
+                        "job_id": job_id,
+                        "filename": sql_file.filename,
+                        "suffix": ".sql",
+                        "size_bytes": sql_total,
+                        "reason": exc.reason,
+                    },
+                )
+            except Exception:
+                logger.exception("failed to log SQL upload rejection security event")
+            raise HTTPException(status_code=400, detail=exc.detail)
         except HTTPException:
             dest.unlink(missing_ok=True)
             sql_dest.unlink(missing_ok=True)

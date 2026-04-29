@@ -27,6 +27,25 @@ logger = logging.getLogger(__name__)
 
 _DEDUP_WINDOW_MINUTES = 5
 
+# Severity escalation thresholds: (min_count, new_severity).
+# Applied in order — first match wins for the *upgrade* direction only.
+_ESCALATION: list[tuple[int, str]] = [
+    (20, "critical"),
+    (5,  "warning"),
+]
+
+
+def _escalated_severity(current: str, new_count: int) -> str:
+    """Return escalated severity if count crosses a threshold, otherwise keep current."""
+    _SEV_RANK = {"info": 0, "warning": 1, "critical": 2}
+    current_rank = _SEV_RANK.get(current, 0)
+    for min_count, target_sev in _ESCALATION:
+        if new_count >= min_count:
+            if _SEV_RANK.get(target_sev, 0) > current_rank:
+                return target_sev
+            break
+    return current
+
 
 def log_security_event(
     *,
@@ -49,22 +68,39 @@ def log_security_event(
     try:
         conn = get_connection()
         cur = conn.cursor()
+        meta_json = json.dumps(metadata or {})
 
-        # Try dedup-update first
+        # ── Dedup update: target exactly the most recent matching open event ──
+        # Using a subquery so we update ONE row (LIMIT 1) and can apply
+        # severity escalation inside the same statement.
         cur.execute(
             """UPDATE security_events
-               SET count    = count + 1,
+               SET count     = count + 1,
                    last_seen = NOW(),
-                   metadata  = metadata || %s::jsonb
-               WHERE status = 'open'
-                 AND category    = %s
-                 AND event_type  = %s
-                 AND ip          IS NOT DISTINCT FROM %s
-                 AND hosting_id  IS NOT DISTINCT FROM %s
-                 AND created_at >= NOW() - (%s || ' minutes')::INTERVAL
-               RETURNING event_id""",
+                   metadata  = CASE
+                                 WHEN %s::jsonb != '{}'::jsonb
+                                 THEN metadata || %s::jsonb
+                                 ELSE metadata
+                               END,
+                   severity  = CASE
+                                 WHEN count + 1 >= 20 AND severity != 'critical' THEN 'critical'
+                                 WHEN count + 1 >= 5  AND severity = 'info'      THEN 'warning'
+                                 ELSE severity
+                               END
+               WHERE event_id = (
+                   SELECT event_id FROM security_events
+                   WHERE  status     = 'open'
+                     AND  category   = %s
+                     AND  event_type = %s
+                     AND  ip         IS NOT DISTINCT FROM %s
+                     AND  hosting_id IS NOT DISTINCT FROM %s
+                     AND  created_at >= NOW() - (%s || ' minutes')::INTERVAL
+                   ORDER BY created_at DESC
+                   LIMIT 1
+               )
+               RETURNING event_id, count, severity""",
             (
-                json.dumps(metadata or {}),
+                meta_json, meta_json,
                 category, event_type, ip, hosting_id,
                 str(_DEDUP_WINDOW_MINUTES),
             ),
@@ -72,26 +108,30 @@ def log_security_event(
         row = cur.fetchone()
         if row:
             conn.commit()
+            # Notify if escalated to critical during dedup
+            if row["severity"] == "critical":
+                _notify_admin_critical(
+                    row["event_id"], title, category, event_type, hosting_id, user_id
+                )
             return row["event_id"]
 
-        # No existing open event — insert fresh
+        # ── No existing open event — insert fresh ────────────────────────────
         cur.execute(
             """INSERT INTO security_events
                (severity, category, event_type, title, message, ip, user_id,
-                hosting_id, path, user_agent, source, metadata)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                hosting_id, path, user_agent, source, metadata, count, last_seen)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, 1, NOW())
                RETURNING event_id""",
             (
                 severity, category, event_type, title, message,
                 ip, user_id, hosting_id, path, user_agent, source,
-                json.dumps(metadata or {}),
+                meta_json,
             ),
         )
         row = cur.fetchone()
         conn.commit()
         event_id = row["event_id"] if row else None
 
-        # Notify admin on critical events
         if event_id and severity == "critical":
             _notify_admin_critical(event_id, title, category, event_type, hosting_id, user_id)
 
@@ -185,23 +225,23 @@ def query_security_events(
         params: list = []
 
         if severity:
-            clauses.append("severity = %s"); params.append(severity)
+            clauses.append("e.severity = %s"); params.append(severity)
         if category:
-            clauses.append("category = %s"); params.append(category)
+            clauses.append("e.category = %s"); params.append(category)
         if status:
-            clauses.append("status = %s"); params.append(status)
+            clauses.append("e.status = %s"); params.append(status)
         if user_id is not None:
-            clauses.append("user_id = %s"); params.append(user_id)
+            clauses.append("e.user_id = %s"); params.append(user_id)
         if hosting_id is not None:
-            clauses.append("hosting_id = %s"); params.append(hosting_id)
+            clauses.append("e.hosting_id = %s"); params.append(hosting_id)
         if ip:
-            clauses.append("ip = %s"); params.append(ip)
+            clauses.append("e.ip = %s"); params.append(ip)
         if date_from:
-            clauses.append("created_at >= %s"); params.append(date_from)
+            clauses.append("e.created_at >= %s"); params.append(date_from)
         if date_to:
-            clauses.append("created_at <= %s"); params.append(date_to)
+            clauses.append("e.created_at <= %s"); params.append(date_to)
         if search:
-            clauses.append("(title ILIKE %s OR message ILIKE %s OR event_type ILIKE %s)")
+            clauses.append("(e.title ILIKE %s OR e.message ILIKE %s OR e.event_type ILIKE %s)")
             params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
 
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
