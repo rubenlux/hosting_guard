@@ -96,35 +96,37 @@ def query_events(
         params: list = []
 
         if user_id is not None:
-            clauses.append("user_id = %s"); params.append(user_id)
+            clauses.append("ae.user_id = %s"); params.append(user_id)
         if hosting_id is not None:
-            clauses.append("hosting_id = %s"); params.append(hosting_id)
+            clauses.append("ae.hosting_id = %s"); params.append(hosting_id)
         if category:
-            clauses.append("category = %s"); params.append(category)
+            clauses.append("ae.category = %s"); params.append(category)
         if event_type:
-            clauses.append("event_type = %s"); params.append(event_type)
+            clauses.append("ae.event_type = %s"); params.append(event_type)
         if severity:
-            clauses.append("severity = %s"); params.append(severity)
+            clauses.append("ae.severity = %s"); params.append(severity)
         if source:
-            clauses.append("source = %s"); params.append(source)
+            clauses.append("ae.source = %s"); params.append(source)
         if date_from:
-            clauses.append("created_at >= %s"); params.append(date_from)
+            clauses.append("ae.created_at >= %s"); params.append(date_from)
         if date_to:
-            clauses.append("created_at <= %s"); params.append(date_to)
+            clauses.append("ae.created_at <= %s"); params.append(date_to)
         if exclude_system:
-            clauses.append("actor_type != 'system'")
+            clauses.append("ae.actor_type != 'system'")
 
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         params += [limit, offset]
 
         cur = conn.cursor()
         cur.execute(
-            f"""SELECT event_id, user_id, hosting_id, actor_type, actor_email,
-                       event_type, category, severity, title, message, metadata,
-                       ip, source, created_at
-                FROM activity_events
+            f"""SELECT ae.event_id, ae.user_id, ae.hosting_id, ae.actor_type,
+                       COALESCE(ae.actor_email, u.email) AS actor_email,
+                       ae.event_type, ae.category, ae.severity, ae.title, ae.message,
+                       ae.metadata, ae.ip, ae.source, ae.created_at
+                FROM activity_events ae
+                LEFT JOIN users u ON u.user_id = ae.user_id
                 {where}
-                ORDER BY created_at DESC
+                ORDER BY ae.created_at DESC
                 LIMIT %s OFFSET %s""",
             params,
         )
