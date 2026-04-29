@@ -67,8 +67,11 @@ const ZipUploadModal = ({ isOpen, onClose, hosting }) => {
     } catch (err) {
       clearInterval(tick);
       setProgress(0);
-      // No exponer detail interno del servidor al usuario
-      setResult({ success: false, error: 'Error al subir el archivo. Inténtalo de nuevo.' });
+      const detail = err?.response?.data?.detail;
+      const msg = detail
+        ? String(detail)
+        : 'Error al subir el archivo. Inténtalo de nuevo.';
+      setResult({ success: false, error: msg });
     } finally {
       setUploading(false);
     }

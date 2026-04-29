@@ -5,9 +5,11 @@ import re
 import asyncio
 import secrets
 import shutil
+import stat
 import zipfile
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
@@ -43,6 +45,67 @@ BRANCH_REGEX        = re.compile(r'^[a-zA-Z0-9._/\-]+$')
 PROJECT_NAME_REGEX  = re.compile(r'^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$')
 # Formatos válidos para --since de docker logs: "5m", "2h", "3d", "2024-01-15T10:00:00"
 _SINCE_REGEX        = re.compile(r'^\d+[smhd]$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$')
+
+
+# ── upload-zip security helpers ───────────────────────────────────────────────
+
+class _ZipValidationError(Exception):
+    def __init__(self, detail: str, reason: str):
+        self.detail = detail
+        self.reason = reason
+        super().__init__(detail)
+
+
+def _log_static_upload_rejection(
+    request, user_id: Optional[int], hosting_id: int,
+    filename: str, size_bytes: int, reason: str,
+) -> None:
+    from app.services.security_event_service import log_security_event
+    log_security_event(
+        severity="warning",
+        category="upload",
+        event_type="static_upload_rejected_magic_bytes",
+        title="Upload de sitio bloqueado por validación de archivo",
+        message="El archivo subido no es un ZIP válido o contiene rutas inseguras.",
+        user_id=user_id,
+        hosting_id=hosting_id,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        path=str(request.url.path),
+        source="static_site_upload",
+        metadata={
+            "filename": filename,
+            "suffix": ".zip",
+            "size_bytes": size_bytes,
+            "reason": reason,
+            "action": "blocked",
+        },
+    )
+
+
+def _safe_extract_zip(zf: zipfile.ZipFile, extracted_dir: Path) -> None:
+    """Validate and extract each ZIP member individually. Raises _ZipValidationError on violation."""
+    base = extracted_dir.resolve()
+    for member in zf.infolist():
+        name = member.filename
+        if os.path.isabs(name):
+            raise _ZipValidationError("ZIP contiene rutas absolutas", "absolute_path")
+        if ".git" in Path(name).parts:
+            raise _ZipValidationError("ZIP contiene entradas .git", "git_entry_blocked")
+        if stat.S_ISLNK(member.external_attr >> 16):
+            raise _ZipValidationError("ZIP contiene enlaces simbólicos", "symlink_detected")
+        target = (base / name).resolve()
+        if not str(target).startswith(str(base) + os.sep) and str(target) != str(base):
+            raise _ZipValidationError(
+                "ZIP contiene rutas que escapan del directorio destino (Zip Slip)",
+                "zip_slip_path_traversal",
+            )
+        if name.endswith("/"):
+            target.mkdir(parents=True, exist_ok=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
 
 
 def _find_serve_dir(site_dir: str) -> str:
@@ -901,45 +964,69 @@ async def upload_zip(
 
     container_name = hosting["container_name"]
 
-    # Directorio de trabajo en el host
     site_dir = f"/opt/clients/{container_name}"
+    # Record BEFORE makedirs — bind-mount only if dir already existed
+    has_host_mount = os.path.isdir(site_dir)
     os.makedirs(site_dir, exist_ok=True)
 
     tmp_zip = os.path.join(site_dir, "_upload.zip")
     extracted_dir = os.path.join(site_dir, "_extracted")
 
     try:
-        # FIX #6: leer en chunks para evitar agotamiento de RAM con archivos gigantes
-        contents = b""
-        chunk_size = 1024 * 1024  # 1 MB por chunk
-        while True:
-            chunk = await file.read(chunk_size)
-            if not chunk:
-                break
-            contents += chunk
-            if len(contents) > MAX_ZIP_SIZE:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Archivo demasiado grande. Máximo permitido: {MAX_ZIP_SIZE // (1024 * 1024)} MB."
-                )
+        # A. Stream directly to disk — no in-memory accumulation
+        total = 0
+        with open(tmp_zip, "wb") as fh:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_ZIP_SIZE:
+                    _log_static_upload_rejection(
+                        request, user_id, hosting_id, file.filename, total, "zip_too_large"
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Archivo demasiado grande. Máximo permitido: {MAX_ZIP_SIZE // (1024 * 1024)} MB.",
+                    )
+                fh.write(chunk)
 
-        with open(tmp_zip, "wb") as f:
-            f.write(contents)
+        # B. Validar magic bytes
+        with open(tmp_zip, "rb") as fh:
+            header = fh.read(4)
+        if header != b"PK\x03\x04":
+            _log_static_upload_rejection(
+                request, user_id, hosting_id, file.filename, total, "invalid_zip_magic"
+            )
+            raise HTTPException(status_code=400, detail="El archivo no es un ZIP válido o está corrupto.")
 
-        # 2. Extraer a directorio temporal
+        # C. Extraer a directorio temporal
         if os.path.exists(extracted_dir):
             shutil.rmtree(extracted_dir)
         os.makedirs(extracted_dir, exist_ok=True)
 
-        # FIX #6: protección contra ZIP bomb — verificar tamaño total antes de extraer
-        with zipfile.ZipFile(tmp_zip, "r") as zf:
-            total_size = sum(info.file_size for info in zf.infolist())
-            if total_size > MAX_EXTRACTED_SIZE:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"El contenido descomprimido excede el límite de {MAX_EXTRACTED_SIZE // (1024 * 1024)} MB."
-                )
-            zf.extractall(extracted_dir)
+        try:
+            with zipfile.ZipFile(tmp_zip, "r") as zf:
+                total_size = sum(info.file_size for info in zf.infolist())
+                if total_size > MAX_EXTRACTED_SIZE:
+                    _log_static_upload_rejection(
+                        request, user_id, hosting_id, file.filename, total, "extracted_size_limit_exceeded"
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"El contenido descomprimido excede el límite de {MAX_EXTRACTED_SIZE // (1024 * 1024)} MB.",
+                    )
+                _safe_extract_zip(zf, Path(extracted_dir))
+        except _ZipValidationError as exc:
+            _log_static_upload_rejection(
+                request, user_id, hosting_id, file.filename, total, exc.reason
+            )
+            raise HTTPException(status_code=400, detail=exc.detail)
+        except zipfile.BadZipFile:
+            _log_static_upload_rejection(
+                request, user_id, hosting_id, file.filename, total, "bad_zip_file"
+            )
+            raise HTTPException(status_code=400, detail="El archivo no es un ZIP válido o está corrupto.")
 
         # 3. Detectar si el ZIP tiene carpeta raíz única ignorando __MACOSX
         entries = [e for e in os.listdir(extracted_dir) if e != "__MACOSX"]
@@ -958,12 +1045,10 @@ async def upload_zip(
 
         deployed_via_host = False
 
-        # 5a. Si existe el directorio del cliente en el host, sincronizar directamente
-        if os.path.isdir(site_dir):
-            # Limpiar archivos existentes (excepto archivos especiales del sistema)
+        # F. Usar has_host_mount (evaluado ANTES de makedirs) para detectar bind-mount real
+        if has_host_mount:
             for item in os.listdir(site_dir):
                 item_path = os.path.join(site_dir, item)
-                # No borrar archivos temporales propios ni .git
                 if item in ("_upload.zip", "_extracted", ".git"):
                     continue
                 if os.path.isdir(item_path):
@@ -971,7 +1056,6 @@ async def upload_zip(
                 else:
                     os.remove(item_path)
 
-            # Copiar archivos nuevos al directorio del host
             for item in os.listdir(serve_dir):
                 src = os.path.join(serve_dir, item)
                 dst = os.path.join(site_dir, item)
@@ -982,7 +1066,7 @@ async def upload_zip(
 
             deployed_via_host = True
 
-                # 5b. Intentar docker cp también (funciona para contenedores sin volume mount)
+        # Siempre intentar docker cp (cubre contenedores sin bind-mount)
         cp_code, _, cp_err = await run_docker_command_async(
             ["cp", f"{serve_dir}/.", f"{container_name}:/usr/share/nginx/html/"],
             timeout=30,
@@ -991,7 +1075,7 @@ async def upload_zip(
         if not deployed_via_host and cp_code != 0:
             raise HTTPException(
                 status_code=500,
-                detail=f"Error desplegando archivos: {cp_err}"
+                detail=f"Error desplegando archivos: {cp_err}",
             )
 
         # 6. Recargar Nginx
@@ -1007,8 +1091,6 @@ async def upload_zip(
             "message": "Sitio desplegado correctamente. Activo en segundos."
         }
 
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="El archivo ZIP está corrupto o es inválido")
     except HTTPException:
         raise
     except Exception as e:
