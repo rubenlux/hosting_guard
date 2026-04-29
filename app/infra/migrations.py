@@ -659,6 +659,9 @@ _INDEXES = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_resource_samples_hosting_time ON hosting_resource_samples(hosting_id, sampled_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_resource_samples_sampled_at ON hosting_resource_samples(sampled_at DESC)",
+    # user_id added after initial deploy — lets admin queries filter/group by owner
+    "ALTER TABLE hosting_resource_samples ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL",
+    "CREATE INDEX IF NOT EXISTS idx_resource_samples_user_time ON hosting_resource_samples(user_id, sampled_at DESC)",
 ]
 
 def ensure_monthly_partitions(cursor):

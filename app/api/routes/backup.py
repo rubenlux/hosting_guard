@@ -30,10 +30,14 @@ async def create_backup(request: Request, hosting_id: int, user: dict = Depends(
     container = hosting["container_name"]
     site_name = hosting.get("name") or str(hosting_id)
 
+    from app.services.activity_service import log_event as _log
     try:
         notify(user_id, f"Backup iniciado: {site_name}",
                f"Se está creando un backup de '{site_name}'...",
                category="backup", severity="info", channel="dashboard")
+        _log(user_id=user_id, hosting_id=hosting_id, event_type="backup_started",
+             category="backup", title=f"Backup iniciado: {site_name}",
+             ip=request.client.host if request.client else None, source="dashboard")
         from app.services.backup_service import create_backup as _create
         result = _create(hosting_id, user_id, container, None,
                          site_name, hosting.get("subdomain", ""))
@@ -42,16 +46,31 @@ async def create_backup(request: Request, hosting_id: int, user: dict = Depends(
             notify(user_id, f"Backup completado: {site_name}",
                    f"Backup de '{site_name}' listo ({size_mb:.1f} MB).",
                    category="backup", severity="success", channel="both")
+            _log(user_id=user_id, hosting_id=hosting_id, event_type="backup_completed",
+                 category="backup", title=f"Backup completado: {site_name}",
+                 message=f"{size_mb:.1f} MB",
+                 ip=request.client.host if request.client else None, source="dashboard",
+                 metadata={"size_bytes": result["size_bytes"], "backup_id": result.get("backup_id")})
         elif result["errors"]:
             notify(user_id, f"Backup con errores: {site_name}",
                    f"Errores durante el backup: {'; '.join(result['errors'])[:200]}",
                    category="backup", severity="warning", channel="dashboard")
+            _log(user_id=user_id, hosting_id=hosting_id, event_type="backup_failed",
+                 category="backup", severity="warning",
+                 title=f"Backup con errores: {site_name}",
+                 message="; ".join(result["errors"])[:200],
+                 ip=request.client.host if request.client else None, source="dashboard")
         return result
     except Exception as exc:
         try:
             notify(user_id, f"Backup fallido: {site_name}",
                    f"No se pudo crear el backup: {str(exc)[:150]}",
                    category="backup", severity="critical", channel="both")
+            _log(user_id=user_id, hosting_id=hosting_id, event_type="backup_failed",
+                 category="backup", severity="warning",
+                 title=f"Backup fallido: {site_name}",
+                 message=str(exc)[:200],
+                 ip=request.client.host if request.client else None, source="dashboard")
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=str(exc))

@@ -73,12 +73,12 @@ def collect_resource_usage() -> None:
     """Collect docker stats for all active hosting containers and persist samples."""
     from app.infra.db import get_connection, release_connection
 
-    # 1. Fetch active hostings with their container names
+    # 1. Fetch active hostings: hosting_id + user_id + container_name
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
-            """SELECT hosting_id, container_name FROM hostings
+            """SELECT hosting_id, user_id, container_name FROM hostings
                WHERE status NOT IN ('deleted','expired') AND container_name IS NOT NULL"""
         )
         rows = [dict(r) for r in cur.fetchall()]
@@ -90,7 +90,7 @@ def collect_resource_usage() -> None:
 
     # 2. Run docker stats (single shot) for all containers at once
     container_names = [r["container_name"] for r in rows]
-    name_to_id = {r["container_name"]: r["hosting_id"] for r in rows}
+    name_to_info = {r["container_name"]: r for r in rows}
 
     try:
         result = subprocess.run(
@@ -117,49 +117,56 @@ def collect_resource_usage() -> None:
             continue
 
         cname = data.get("name", "").lstrip("/")
-        hosting_id = name_to_id.get(cname)
-        if hosting_id is None:
+        info  = name_to_info.get(cname)
+        if info is None:
             continue
 
         cpu_pct           = _parse_pct(data.get("cpu", ""))
         mem_used, mem_lim = _parse_mem_usage(data.get("mem", ""))
         net_rx, net_tx    = _parse_net(data.get("net", ""))
 
-        samples.append((hosting_id, cname, cpu_pct, mem_used, mem_lim, net_rx, net_tx))
+        samples.append((
+            info["hosting_id"], info["user_id"], cname,
+            cpu_pct, mem_used, mem_lim, net_rx, net_tx,
+        ))
 
     if not samples:
         return
 
-    # 4. Bulk-insert samples
+    # 4. Insert samples one by one (_AdaptedCursor does not support executemany)
+    _INSERT = (
+        "INSERT INTO hosting_resource_samples"
+        " (hosting_id, user_id, container_name, cpu_pct, mem_mb, mem_limit_mb, net_rx_mb, net_tx_mb)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+    )
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.executemany(
-            """INSERT INTO hosting_resource_samples
-               (hosting_id, container_name, cpu_pct, mem_mb, mem_limit_mb, net_rx_mb, net_tx_mb)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-            samples,
-        )
+        for row in samples:
+            cur.execute(_INSERT, row)
         conn.commit()
-        logger.debug("collect_resource_usage: wrote %d samples", len(samples))
+        logger.info("collect_resource_usage: inserted %d samples", len(samples))
     except Exception as exc:
         logger.warning("collect_resource_usage: insert failed: %s", exc)
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
     finally:
         release_connection(conn)
 
     # 5. Prune old samples (keep 24h to prevent unbounded growth)
+    conn2 = get_connection()
     try:
-        conn2 = get_connection()
-        cur2  = conn2.cursor()
+        cur2 = conn2.cursor()
         cur2.execute(
             "DELETE FROM hosting_resource_samples WHERE sampled_at < NOW() - INTERVAL '24 hours'"
         )
         conn2.commit()
     except Exception:
-        pass
-    finally:
         try:
-            release_connection(conn2)
+            conn2.rollback()
         except Exception:
             pass
+    finally:
+        release_connection(conn2)

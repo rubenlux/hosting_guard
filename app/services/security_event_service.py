@@ -135,6 +135,27 @@ def log_security_event(
         if event_id and severity == "critical":
             _notify_admin_critical(event_id, title, category, event_type, hosting_id, user_id)
 
+        # Mirror to activity_events so Activity Log shows security events inline
+        if event_id and user_id is not None:
+            try:
+                from app.services.activity_service import log_event
+                log_event(
+                    user_id=user_id,
+                    hosting_id=hosting_id,
+                    actor_type="system",
+                    event_type=event_type,
+                    category="security",
+                    severity=severity,
+                    title=title,
+                    message=message,
+                    ip=ip,
+                    user_agent=user_agent,
+                    source=source,
+                    metadata={**(metadata or {}), "security_event_id": event_id},
+                )
+            except Exception:
+                pass
+
         return event_id
 
     except Exception:
