@@ -865,3 +865,14 @@ export const getAdminUserActivity = async (userId, params = {}) => {
   const response = await api.get(`/admin/users/${userId}/activity`, { params });
   return response.data;
 };
+
+// Admin resource usage
+export const getAdminResourcesOverview = async () => {
+  const response = await api.get('/admin/resources/overview');
+  return response.data;
+};
+
+export const getAdminResourcesTenants = async () => {
+  const response = await api.get('/admin/resources/tenants');
+  return response.data;
+};

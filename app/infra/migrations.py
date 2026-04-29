@@ -644,6 +644,21 @@ _INDEXES = [
     "ALTER TABLE security_events ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()",
     # Backfill last_seen = created_at for rows that didn't have it yet
     """UPDATE security_events SET last_seen = created_at WHERE last_seen = NOW() AND created_at < NOW() - INTERVAL '5 seconds'""",
+
+    # ── Hosting resource samples — written by collect_resource_usage job every 60s ──
+    """CREATE TABLE IF NOT EXISTS hosting_resource_samples (
+        sample_id      BIGSERIAL PRIMARY KEY,
+        hosting_id     INTEGER NOT NULL REFERENCES hostings(hosting_id) ON DELETE CASCADE,
+        container_name TEXT NOT NULL,
+        cpu_pct        REAL,
+        mem_mb         REAL,
+        mem_limit_mb   REAL,
+        net_rx_mb      REAL,
+        net_tx_mb      REAL,
+        sampled_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_resource_samples_hosting_time ON hosting_resource_samples(hosting_id, sampled_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_resource_samples_sampled_at ON hosting_resource_samples(sampled_at DESC)",
 ]
 
 def ensure_monthly_partitions(cursor):

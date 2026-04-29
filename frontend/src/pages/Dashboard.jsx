@@ -2,6 +2,7 @@ import { useState, useMemo, lazy, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { updateUserConfig, topupBalance, resendVerification } from '../services/api';
 import { useAuth }                   from '../hooks/useAuth';
+import { useHeartbeat }              from '../hooks/useHeartbeat';
 import { useDashboardData }          from '../hooks/useDashboardData';
 import { useHostingActions }         from '../hooks/useHostingActions';
 import { useHostingLogs }            from '../hooks/useHostingLogs';
@@ -47,6 +48,9 @@ const Dashboard = () => {
   const { user, logoutAction, setUser, isSupportSession, supportSession, deactivateSupportSession } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+
+  // ── Presence heartbeat — runs for both regular users and admins ─────────────
+  useHeartbeat(location.pathname);
 
   // ── Active view (derived from URL) ──────────────────────────────────────────
   const activeView = location.pathname === '/pixel'    ? 'pixel'

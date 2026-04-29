@@ -283,6 +283,70 @@ def get_user_activity(
     return {"items": events, "limit": limit, "offset": offset}
 
 
+@router.get("/resources/overview")
+def get_resources_overview(admin: dict = Depends(require_role("admin"))):
+    """Latest resource snapshot aggregated across all active hostings."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT
+                 COUNT(DISTINCT s.hosting_id)                         AS total_hostings,
+                 ROUND(AVG(s.cpu_pct)::numeric, 1)                   AS avg_cpu_pct,
+                 ROUND(MAX(s.cpu_pct)::numeric, 1)                   AS max_cpu_pct,
+                 ROUND(AVG(s.mem_mb)::numeric, 0)                    AS avg_mem_mb,
+                 ROUND(SUM(s.mem_mb)::numeric, 0)                    AS total_mem_mb,
+                 ROUND(MAX(s.mem_mb)::numeric, 0)                    AS max_mem_mb
+               FROM hosting_resource_samples s
+               WHERE s.sampled_at >= NOW() - INTERVAL '2 minutes'"""
+        )
+        row = dict(cur.fetchone() or {})
+
+        # Top 5 by CPU
+        cur.execute(
+            """SELECT DISTINCT ON (s.hosting_id)
+                 s.hosting_id, h.name, s.container_name,
+                 s.cpu_pct, s.mem_mb, s.mem_limit_mb, s.sampled_at
+               FROM hosting_resource_samples s
+               JOIN hostings h USING (hosting_id)
+               WHERE s.sampled_at >= NOW() - INTERVAL '2 minutes'
+               ORDER BY s.hosting_id, s.sampled_at DESC"""
+        )
+        all_snaps = [dict(r) for r in cur.fetchall()]
+        top_cpu = sorted(all_snaps, key=lambda x: x.get("cpu_pct") or 0, reverse=True)[:5]
+        top_mem = sorted(all_snaps, key=lambda x: x.get("mem_mb") or 0, reverse=True)[:5]
+
+        return {**row, "top_cpu": top_cpu, "top_mem": top_mem, "snapshot_count": len(all_snaps)}
+    finally:
+        release_connection(conn)
+
+
+@router.get("/resources/tenants")
+def get_resources_tenants(admin: dict = Depends(require_role("admin"))):
+    """Latest resource snapshot per hosting (for the tenant resource table)."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT DISTINCT ON (s.hosting_id)
+                 s.hosting_id, h.name, h.subdomain, u.email AS user_email,
+                 s.container_name, s.cpu_pct, s.mem_mb, s.mem_limit_mb,
+                 s.net_rx_mb, s.net_tx_mb, s.sampled_at
+               FROM hosting_resource_samples s
+               JOIN hostings h USING (hosting_id)
+               JOIN users u ON u.user_id = h.user_id
+               WHERE s.sampled_at >= NOW() - INTERVAL '5 minutes'
+               ORDER BY s.hosting_id, s.sampled_at DESC"""
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        rows.sort(key=lambda x: x.get("cpu_pct") or 0, reverse=True)
+        return {"items": rows, "count": len(rows)}
+    finally:
+        release_connection(conn)
+
+
 @router.get("/users/{user_id}/backups")
 def admin_list_user_backups(
     user_id: int,

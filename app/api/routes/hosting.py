@@ -528,6 +528,10 @@ async def restart_hosting(hosting_id: int, request: Request, user: dict = Depend
         category="hosting", severity="info", channel="both",
         action_url="/dashboard",
     )
+    from app.services.activity_service import log_event as _log
+    _log(user_id=user_id, hosting_id=hosting_id, event_type="hosting_restarted",
+         category="hosting", title=f"Sitio reiniciado: {hosting.get('name') or hosting_id}",
+         ip=request.client.host if request.client else None, source="dashboard")
     return {"status": "restarting", "container_state": final_state}
 
 
@@ -558,6 +562,11 @@ async def stop_hosting(hosting_id: int, request: Request, user: dict = Depends(v
         category="hosting", severity="warning", channel="both",
         action_url="/dashboard",
     )
+    from app.services.activity_service import log_event as _log
+    _log(user_id=user_id, hosting_id=hosting_id, event_type="hosting_stopped",
+         category="hosting", severity="warning",
+         title=f"Sitio detenido: {hosting.get('name') or hosting_id}",
+         ip=request.client.host if request.client else None, source="dashboard")
     return {"status": "stopped"}
 
 
@@ -589,6 +598,10 @@ async def start_hosting(hosting_id: int, request: Request, user: dict = Depends(
         category="hosting", severity="success", channel="both",
         action_url="/dashboard",
     )
+    from app.services.activity_service import log_event as _log
+    _log(user_id=user_id, hosting_id=hosting_id, event_type="hosting_started",
+         category="hosting", title=f"Sitio iniciado: {hosting.get('name') or hosting_id}",
+         ip=request.client.host if request.client else None, source="dashboard")
     return {"status": "starting", "container_state": final_state}
 
 from app.services.hosting.logs_service import get_hosting_logs
@@ -1084,6 +1097,13 @@ async def upload_zip(
             timeout=10,
         )
 
+        from app.services.activity_service import log_event as _log
+        _log(user_id=user_id, hosting_id=hosting_id,
+             event_type="static_zip_upload_completed", category="hosting",
+             title=f"Sitio desplegado vía ZIP: {hosting.get('name') or hosting_id}",
+             message=f"Archivo: {file.filename}, tamaño: {total} bytes",
+             ip=request.client.host if request.client else None, source="dashboard",
+             metadata={"filename": file.filename, "size_bytes": total})
         return {
             "status": "deployed",
             "hosting_id": hosting_id,

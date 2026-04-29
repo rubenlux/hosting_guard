@@ -81,6 +81,7 @@ async def _main() -> None:
     from app.services.backup_service import auto_backup_all, cleanup_stale_backups
     from app.infra.audit.session_repository import cleanup_sessions
     from app.services.detect_security_anomalies import detect_security_anomalies
+    from app.services.collect_resource_usage import collect_resource_usage
     from app.api.config import ENABLE_CAPACITY_FORECAST
 
     # Single pass of the intelligent orchestrator (throttle / autoscale / restart).
@@ -107,6 +108,7 @@ async def _main() -> None:
     # ── Sub-minute ───────────────────────────────────────────────────────────
     schedule_job(detect_security_anomalies,      interval=60)      # 60 s — attack detection
     schedule_job(poll_prometheus_alerts,         interval=60)      # 1 min
+    schedule_job(collect_resource_usage,         interval=60)      # 60 s — CPU/RAM per container
     # ── Every 5 minutes ──────────────────────────────────────────────────────
     schedule_job(collect_traffic,                interval=300)     # 5 min
     schedule_job(check_all_hostings,             interval=300)     # 5 min
@@ -121,7 +123,7 @@ async def _main() -> None:
     schedule_job(cleanup_sessions,               interval=86400)   # 24 h
     schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
-    base_count = 13
+    base_count = 14
     if ENABLE_CAPACITY_FORECAST:
         def _run_capacity_forecast():
             try:

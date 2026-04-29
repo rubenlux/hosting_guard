@@ -35,6 +35,7 @@ import ImportSiteModal from '../components/dashboard/ImportSiteModal';
 import OnlineUsersCard from '../components/admin/OnlineUsersCard';
 import ActivityTimeline from '../components/admin/ActivityTimeline';
 import SecurityCenter from '../components/admin/SecurityCenter';
+import ResourceUsage from '../components/admin/ResourceUsage';
 
 /* ─── helpers ─────────────────────────────────────────────── */
 function groupBy(arr, key) {
@@ -68,6 +69,7 @@ const NAV = [
   { id: 'security',      label: 'Security Center',  icon: ShieldAlert },
   { id: 'presence',      label: 'Online Now',       icon: Wifi },
   { id: 'activity',      label: 'Activity Log',     icon: Activity },
+  { id: 'resources',     label: 'Resources',        icon: Cpu },
   { id: 'finance',       label: 'Finance',          icon: DollarSign },
   { id: 'ai-report',     label: 'AI Report',        icon: Sparkles },
   { id: 'notifications', label: 'Notificaciones',   icon: BellRing },
@@ -1232,6 +1234,9 @@ export default function AdminDashboard() {
 
             {/* ══ ACTIVITY LOG ══ */}
             {section === 'activity' && <ActivityTimeline />}
+
+            {/* ══ RESOURCES ══ */}
+            {section === 'resources' && <ResourceUsage />}
 
             {/* ══ FINANCE ══ */}
             {section === 'finance' && finance && (<>
