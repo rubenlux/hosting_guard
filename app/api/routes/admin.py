@@ -375,7 +375,7 @@ def get_resources_tenants(admin: dict = Depends(require_role("admin"))):
                    SELECT ROUND(AVG(response_ms)::numeric, 0)::float AS avg_response_ms
                    FROM uptime_checks
                    WHERE hosting_id = s.hosting_id
-                     AND checked_at >= NOW() - INTERVAL '24 hours'
+                     AND checked_at::TIMESTAMPTZ >= NOW() - INTERVAL '24 hours'
                      AND response_ms IS NOT NULL
                ) uc ON TRUE
                LEFT JOIN LATERAL (
@@ -388,7 +388,7 @@ def get_resources_tenants(admin: dict = Depends(require_role("admin"))):
                    FROM activity_events
                    WHERE hosting_id = s.hosting_id
                      AND event_type = 'hosting_restarted'
-                     AND created_at >= NOW() - INTERVAL '24 hours'
+                     AND created_at::TIMESTAMPTZ >= NOW() - INTERVAL '24 hours'
                ) rc ON TRUE
                WHERE s.sampled_at >= NOW() - INTERVAL '5 minutes'
                ORDER BY s.hosting_id, s.sampled_at DESC"""
