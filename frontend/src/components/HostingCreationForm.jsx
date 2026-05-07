@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github } from 'lucide-react';
 import { createHosting, createWordPress, deployFromGithub } from '../services/api';
@@ -32,13 +33,18 @@ const TYPES = [
   },
 ];
 
-const HostingCreationForm = ({ onSuccess }) => {
+const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const userPlan = user?.plan || 'free';
   const isPaidUser = userPlan !== 'free';
 
   const [name, setName] = useState('');
-  const [plan, setPlan] = useState(userPlan);
+  const [plan, setPlan] = useState(selectedPlan || userPlan);
+
+  useEffect(() => {
+    if (selectedPlan) setPlan(selectedPlan);
+  }, [selectedPlan]);
   const [type, setType] = useState('static');
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('main');
@@ -52,7 +58,7 @@ const HostingCreationForm = ({ onSuccess }) => {
 
     try {
       if (!user) {
-        alert('Debes iniciar sesión primero');
+        navigate('.', { replace: true, state: { openLogin: true } });
         setLoading(false);
         return;
       }

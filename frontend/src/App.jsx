@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Toaster } from 'react-hot-toast';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
@@ -36,15 +36,26 @@ const AdminRoute = ({ children }) => {
   return children;
 };
 
-const Home = () => (
-  <>
-    <Hero />
-    <HowItWorks />
-    <Benefits />
-    <Pricing />
-    <HostingCreationForm />
-  </>
-);
+const Home = () => {
+  const [selectedPlan, setSelectedPlan] = useState(null);
+
+  const handleSelectPlan = (planId) => {
+    setSelectedPlan(planId);
+    setTimeout(() => {
+      document.getElementById('nuevo-proyecto')?.scrollIntoView({ behavior: 'smooth' });
+    }, 50);
+  };
+
+  return (
+    <>
+      <Hero />
+      <HowItWorks />
+      <Benefits />
+      <Pricing onSelectPlan={handleSelectPlan} />
+      <HostingCreationForm selectedPlan={selectedPlan} />
+    </>
+  );
+};
 
 function App() {
   const { user, loading } = useAuth();

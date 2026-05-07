@@ -23,7 +23,7 @@ const METHOD_COLOR = {
 
 export default function ApiDocs() {
   return (
-    <div className="min-h-screen bg-[#080809] text-white">
+    <div className="min-h-screen bg-[#080809] text-white pt-20">
       {/* Header */}
       <div className="border-b border-white/8 bg-[#0d0d0f]">
         <div className="max-w-4xl mx-auto px-6 py-5 flex items-center justify-between">

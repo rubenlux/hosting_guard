@@ -5,7 +5,7 @@ import { login, register, forgotPassword, resendVerification, verify2FALogin } f
 import { useAuth } from '../hooks/useAuth';
 
 // ── Shared input field ────────────────────────────────────────────────────────
-function Field({ label, icon: Icon, type = 'text', placeholder, value, onChange, required = true, hint, autoFocus }) {
+function Field({ label, icon: Icon, type = 'text', placeholder, value, onChange, required = true, hint, autoFocus, autoComplete }) {
   const [show, setShow] = useState(false);
   const isPassword = type === 'password';
   return (
@@ -20,6 +20,7 @@ function Field({ label, icon: Icon, type = 'text', placeholder, value, onChange,
           value={value}
           onChange={onChange}
           autoFocus={autoFocus}
+          autoComplete={autoComplete}
           className="w-full py-3 rounded-lg bg-black/60 border border-gray-800 text-white text-sm
             focus:border-green-500 focus:outline-none transition-colors placeholder:text-gray-700"
           style={{ paddingLeft: Icon ? '2.25rem' : '0.75rem', paddingRight: isPassword ? '2.5rem' : '0.75rem' }}
@@ -149,8 +150,8 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
             <>
               <Header title="Iniciar sesión" sub="Bienvenido de vuelta" onClose={onClose} />
               <form onSubmit={handleLogin} className="space-y-3.5">
-                <Field label="Email" icon={Mail} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} autoFocus />
-                <Field label="Contraseña" icon={Lock} type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
+                <Field label="Email" icon={Mail} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} autoFocus autoComplete="email" />
+                <Field label="Contraseña" icon={Lock} type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" />
                 <button type="button" onClick={() => go('forgot')}
                   className="text-xs text-gray-500 hover:text-green-400 transition-colors">
                   ¿Olvidaste tu contraseña?
@@ -174,10 +175,10 @@ const LoginModal = ({ isOpen, onClose, onLoginSuccess }) => {
                 <Field label="Teléfono" icon={Phone} type="tel" placeholder="+54 9 11 1234-5678"
                   value={phone} onChange={e => setPhone(e.target.value)}
                   hint="Con código de país. Ej: +54 9 11 1234-5678" />
-                <Field label="Email" icon={Mail} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} />
+                <Field label="Email" icon={Mail} type="email" placeholder="tu@email.com" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" />
                 <Field label="Contraseña" icon={Lock} type="password" placeholder="••••••••"
                   value={password} onChange={e => setPassword(e.target.value)}
-                  hint="Mínimo 8 caracteres" />
+                  hint="Mínimo 8 caracteres" autoComplete="new-password" />
                 <ErrorBox msg={error} />
                 <SubmitBtn loading={loading} label="CREAR CUENTA" />
               </form>
