@@ -78,13 +78,49 @@ export const createWordPress = async (name, plan) => {
   return response.data;
 };
 
-export const deployFromGithub = async (name, plan, repoUrl, branch = 'main') => {
+export const deployFromGithub = async (name, plan, repoUrl, branch = 'main', extra = {}) => {
   const response = await api.post('/deploy-from-github', {
     name,
     plan,
     repo_url: repoUrl,
     branch,
+    ...extra,
   });
+  return response.data;
+};
+
+export const redeployHosting = async (id) => {
+  const response = await api.post(`/hostings/${id}/redeploy`);
+  return response.data;
+};
+
+export const getDeployLogs = async (id) => {
+  const response = await api.get(`/hostings/${id}/deploy-logs`);
+  return response.data;
+};
+
+export const getDomains = async (hostingId) => {
+  const response = await api.get(`/hostings/${hostingId}/domains`);
+  return response.data;
+};
+
+export const addDomain = async (hostingId, domain) => {
+  const response = await api.post(`/hostings/${hostingId}/domains`, { domain });
+  return response.data;
+};
+
+export const deleteDomain = async (hostingId, domainId) => {
+  const response = await api.delete(`/hostings/${hostingId}/domains/${domainId}`);
+  return response.data;
+};
+
+export const verifyDomain = async (hostingId, domainId) => {
+  const response = await api.post(`/hostings/${hostingId}/domains/${domainId}/verify`);
+  return response.data;
+};
+
+export const setPrimaryDomain = async (hostingId, domainId) => {
+  const response = await api.post(`/hostings/${hostingId}/domains/${domainId}/set-primary`);
   return response.data;
 };
 

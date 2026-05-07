@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github } from 'lucide-react';
+import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { createHosting, createWordPress, deployFromGithub } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 
@@ -48,6 +48,15 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
   const [type, setType] = useState('static');
   const [repoUrl, setRepoUrl] = useState('');
   const [branch, setBranch] = useState('main');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [rootDirectory, setRootDirectory] = useState('');
+  const [installCommand, setInstallCommand] = useState('');
+  const [buildCommand, setBuildCommand] = useState('');
+  const [startCommand, setStartCommand] = useState('');
+  const [outputDirectory, setOutputDirectory] = useState('');
+  const [port, setPort] = useState('');
+  const [dockerfilePath, setDockerfilePath] = useState('');
+  const [envVars, setEnvVars] = useState([{ key: '', value: '' }]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -66,7 +75,18 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
       const data = type === 'wordpress'
         ? await createWordPress(name, plan)
         : type === 'github'
-        ? await deployFromGithub(name, plan, repoUrl, branch)
+        ? await deployFromGithub(name, plan, repoUrl, branch, {
+            root_directory:   rootDirectory  || undefined,
+            install_command:  installCommand || undefined,
+            build_command:    buildCommand   || undefined,
+            start_command:    startCommand   || undefined,
+            output_directory: outputDirectory|| undefined,
+            port:             port ? parseInt(port, 10) : undefined,
+            dockerfile_path:  dockerfilePath || undefined,
+            env_vars: Object.fromEntries(
+              envVars.filter(e => e.key.trim()).map(e => [e.key.trim(), e.value])
+            ),
+          })
         : await createHosting(name, plan);
 
       setResult({ success: true, data });
@@ -157,8 +177,84 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
                   onChange={(e) => setBranch(e.target.value)}
                 />
               </div>
+              {/* Advanced config toggle */}
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(v => !v)}
+                className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-300 transition-colors py-1"
+              >
+                {showAdvanced ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                Configuración avanzada
+              </button>
+
+              {showAdvanced && (
+                <div className="space-y-3 border border-white/6 rounded-xl px-4 py-4 bg-white/[0.02]">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-gray-600 uppercase tracking-widest">Directorio raíz</label>
+                      <input type="text" placeholder="ej: frontend" value={rootDirectory} onChange={e => setRootDirectory(e.target.value)}
+                        className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-gray-600 uppercase tracking-widest">Puerto</label>
+                      <input type="number" placeholder="80" value={port} onChange={e => setPort(e.target.value)}
+                        className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-gray-600 uppercase tracking-widest">Comando de instalación</label>
+                    <input type="text" placeholder="npm install" value={installCommand} onChange={e => setInstallCommand(e.target.value)}
+                      className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-gray-600 uppercase tracking-widest">Comando de build</label>
+                    <input type="text" placeholder="npm run build" value={buildCommand} onChange={e => setBuildCommand(e.target.value)}
+                      className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-gray-600 uppercase tracking-widest">Comando de inicio (app server)</label>
+                    <input type="text" placeholder="uvicorn app.main:app --host 0.0.0.0 --port 8000" value={startCommand} onChange={e => setStartCommand(e.target.value)}
+                      className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-gray-600 uppercase tracking-widest">Directorio de salida</label>
+                      <input type="text" placeholder="dist" value={outputDirectory} onChange={e => setOutputDirectory(e.target.value)}
+                        className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-gray-600 uppercase tracking-widest">Ruta Dockerfile</label>
+                      <input type="text" placeholder="Dockerfile" value={dockerfilePath} onChange={e => setDockerfilePath(e.target.value)}
+                        className="w-full bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
+                    </div>
+                  </div>
+
+                  {/* Env vars */}
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-bold text-gray-600 uppercase tracking-widest">Variables de entorno</label>
+                    {envVars.map((ev, i) => (
+                      <div key={i} className="flex gap-2">
+                        <input type="text" placeholder="KEY" value={ev.key} onChange={e => setEnvVars(v => v.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                          className="w-2/5 bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
+                        <input type="text" placeholder="value" value={ev.value} onChange={e => setEnvVars(v => v.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                          className="flex-1 bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
+                        {envVars.length > 1 && (
+                          <button type="button" onClick={() => setEnvVars(v => v.filter((_, j) => j !== i))} className="text-gray-600 hover:text-red-400 transition-colors">
+                            <X size={13} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => setEnvVars(v => [...v, { key: '', value: '' }])}
+                      className="text-xs text-gray-600 hover:text-gray-400 transition-colors flex items-center gap-1">
+                      <Plus size={11} /> Agregar variable
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl px-4 py-3 text-purple-400 text-xs">
-                ⚡ El sistema clona tu repo automáticamente. HTML, React y Node.js soportados.
+                El sistema clona tu repo automáticamente. HTML, React, Node.js y Python soportados.
               </div>
             </div>
           )}

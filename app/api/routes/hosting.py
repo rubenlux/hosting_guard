@@ -764,22 +764,73 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
         raise HTTPException(status_code=500, detail=str(e))
 
 class GitDeployRequest(BaseModel):
-    name: str
-    plan: str
-    repo_url: str
-    branch: str = "main"
+    name:             str
+    plan:             str
+    repo_url:         str
+    branch:           str = "main"
+    root_directory:   str = ""          # subdirectory to serve/run from inside the cloned repo
+    install_command:  Optional[str] = None  # overrides default 'npm install' / 'pip install -r requirements.txt'
+    build_command:    Optional[str] = None  # overrides default 'npm run build'
+    start_command:    Optional[str] = None  # set for backend apps: 'uvicorn app.main:app --host 0.0.0.0 --port 8000'
+    output_directory: Optional[str] = None  # where built assets live; overrides dist/build auto-detect
+    port:             int = 80              # container port Traefik forwards to
+    framework:        Optional[str] = None  # explicit: 'static' | 'node' | 'python' | 'dockerfile'
+    dockerfile_path:  Optional[str] = None  # path relative to root_directory
+    env_vars:         dict = {}             # { KEY: value } — injected at runtime
+
+
+ENV_KEY_RE = re.compile(r'^[A-Z_][A-Z0-9_]{0,63}$')
+
+
+def _validate_env_vars(env_vars: dict) -> None:
+    for k in env_vars:
+        if not ENV_KEY_RE.match(str(k)):
+            raise HTTPException(status_code=400, detail=f"Env var key inválida: {k!r}")
+
+
+def _docker_env_flags(env_vars: dict) -> list:
+    flags = []
+    for k, v in env_vars.items():
+        flags += ["-e", f"{k}={v}"]
+    return flags
+
+
+def _detect_image_for_start(work_dir: str, framework: Optional[str]) -> str:
+    if framework in ("python", "fastapi", "flask", "django"):
+        return "python:3.11-slim"
+    if framework in ("node", "express", "nextjs", "nuxt"):
+        return "node:20-alpine"
+    if os.path.exists(f"{work_dir}/requirements.txt"):
+        return "python:3.11-slim"
+    if os.path.exists(f"{work_dir}/package.json"):
+        return "node:20-alpine"
+    return "python:3.11-slim"
+
+
+def _default_install(image: str) -> str:
+    if "python" in image:
+        return "pip install --no-cache-dir -r requirements.txt"
+    return "npm install --prefer-offline"
+
+
+def _traefik_labels(container_name: str, subdomain: str, port: int) -> list:
+    return [
+        "-l", "traefik.enable=true",
+        "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
+        "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
+        "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
+        "-l", f"traefik.http.services.{container_name}.loadbalancer.server.port={port}",
+    ]
 
 
 @router.post("/deploy-from-github")
 @limiter.limit("3/hour")
 async def deploy_from_github(data: GitDeployRequest, request: Request, user: dict = Depends(verify_token)):
     try:
-        # FIX #4: validar URL antes de usarla en subprocess
-        # FIX #5: validar branch para prevenir command injection
-        # FIX #7: validar nombre de proyecto
         _validate_project_name(data.name)
         _validate_repo_url(data.repo_url)
         _validate_branch(data.branch)
+        _validate_env_vars(data.env_vars)
 
         user_id        = user.get("user_id")
         project_name   = data.name.lower().replace(" ", "-")
@@ -788,13 +839,14 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
         container_name = f"user_{user_id}_git_{project_name}_{uid}"
         site_dir       = f"/opt/clients/{container_name}"
         ip_address     = _get_real_ip(request)
+        deploy_log     = {"started_at": datetime.now().isoformat(), "stages": {}}
 
         plan = PLANS.get(data.plan)
         if not plan:
             raise HTTPException(status_code=400, detail="Plan inválido")
 
         if data.plan != "free" and user.get("role") != "admin":
-            user_db = _user_repo.get_user_by_id(user_id)
+            user_db   = _user_repo.get_user_by_id(user_id)
             user_plan = user_db.get("plan", "free") if user_db else "free"
             if user_plan != data.plan:
                 raise HTTPException(
@@ -815,7 +867,7 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
 
         loop = asyncio.get_running_loop()
 
-        # 1. Clonar el repo (FIX #1: no bloqueante)
+        # ── Stage 1: Clone ───────────────────────────────────────────────────
         clone_result = await loop.run_in_executor(
             None,
             lambda: subprocess.run(
@@ -823,34 +875,41 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 capture_output=True, text=True, timeout=60
             )
         )
+        deploy_log["stages"]["clone"] = {
+            "ok": clone_result.returncode == 0,
+            "stdout": clone_result.stdout[-2000:],
+            "stderr": clone_result.stderr[-2000:],
+        }
         if clone_result.returncode != 0:
             raise HTTPException(status_code=400, detail=f"Error clonando repo: {clone_result.stderr}")
 
-        # 2. Detectar tipo de proyecto
-        import json as _json
-        has_package_json  = False
-        package_json_path = f"{site_dir}/package.json"
-        if os.path.exists(package_json_path):
-            try:
-                with open(package_json_path) as f:
-                    pkg = _json.load(f)
-                scripts = pkg.get("scripts", {})
-                deps    = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-                has_package_json = "build" in scripts and any(
-                    k in deps for k in ["react", "vue", "vite", "next", "nuxt", "svelte"]
-                )
-            except Exception:
-                has_package_json = False
+        # work_dir is the directory we install/build/run from
+        work_dir = os.path.join(site_dir, data.root_directory) if data.root_directory else site_dir
+        if not os.path.isdir(work_dir):
+            raise HTTPException(status_code=400,
+                detail=f"root_directory '{data.root_directory}' no existe en el repo.")
 
-        # 3. Lanzar contenedor según tipo
-        if has_package_json:
-            image   = "node:20-alpine"
-            cmd_str = (
-                "npm install && npm run build && "
-                "if [ -d dist ]; then npx serve dist -l 80; "
-                "elif [ -d build ]; then npx serve build -l 80; "
-                "else npx serve . -l 80; fi"
+        # ── Stage 2: Container launch (3 strategies) ─────────────────────────
+
+        if data.dockerfile_path or data.framework == "dockerfile":
+            # Strategy A: build & run from Dockerfile
+            df_path = data.dockerfile_path or "Dockerfile"
+            image_tag = container_name
+            build_result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    ["docker", "build", "-f", os.path.join(work_dir, df_path), "-t", image_tag, work_dir],
+                    capture_output=True, text=True, timeout=300
+                )
             )
+            deploy_log["stages"]["build"] = {
+                "ok": build_result.returncode == 0,
+                "stdout": build_result.stdout[-3000:],
+                "stderr": build_result.stderr[-3000:],
+            }
+            if build_result.returncode != 0:
+                await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
+                raise HTTPException(status_code=500, detail=f"Docker build error: {build_result.stderr[-500:]}")
             command = [
                 "run", "-d",
                 "--name",    container_name,
@@ -858,33 +917,98 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 "--restart", "unless-stopped",
                 "--cpus",    plan["cpu"],
                 "--memory",  plan["memory"],
-                "-v", f"{site_dir}:/app",
+                *_docker_env_flags(data.env_vars),
+                *_traefik_labels(container_name, subdomain, data.port),
+                image_tag,
+            ]
+
+        elif data.start_command:
+            # Strategy B: application server (FastAPI, Express, etc.)
+            image = _detect_image_for_start(work_dir, data.framework)
+            install_cmd = data.install_command or _default_install(image)
+            cmd_str = f"{install_cmd} && {data.start_command}"
+            command = [
+                "run", "-d",
+                "--name",    container_name,
+                "--network", "deploy_hosting_network",
+                "--restart", "unless-stopped",
+                "--cpus",    plan["cpu"],
+                "--memory",  plan["memory"],
+                "-v", f"{work_dir}:/app",
                 "-w", "/app",
-                "-l", "traefik.enable=true",
-                "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
-                "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
-                "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
-                "-l", f"traefik.http.services.{container_name}.loadbalancer.server.port=80",
-                image, "sh", "-c", cmd_str
+                *_docker_env_flags(data.env_vars),
+                *_traefik_labels(container_name, subdomain, data.port),
+                image, "sh", "-c", cmd_str,
             ]
+
         else:
-            command = [
-                "run", "-d",
-                "--name",    container_name,
-                "--network", "deploy_hosting_network",
-                "--restart", "unless-stopped",
-                "--cpus",    plan["cpu"],
-                "--memory",  plan["memory"],
-                "-v", f"{_find_serve_dir(site_dir)}:/usr/share/nginx/html:ro",
-                "-l", "traefik.enable=true",
-                "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
-                "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
-                "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
-                "-l", f"traefik.http.services.{container_name}.loadbalancer.server.port=80",
-                "nginx:alpine"
-            ]
+            # Strategy C: static or Node build → serve
+            import json as _json
+            has_package_json = False
+            pkg_path = os.path.join(work_dir, "package.json")
+            if os.path.exists(pkg_path):
+                try:
+                    with open(pkg_path) as f:
+                        pkg = _json.load(f)
+                    scripts = pkg.get("scripts", {})
+                    deps    = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                    has_package_json = (
+                        data.build_command is not None or
+                        ("build" in scripts and any(
+                            k in deps for k in ["react", "vue", "vite", "next", "nuxt", "svelte"]
+                        ))
+                    )
+                except Exception:
+                    has_package_json = False
+
+            if has_package_json:
+                install_cmd = data.install_command or "npm install"
+                build_cmd   = data.build_command   or "npm run build"
+                out_dir     = data.output_directory or None
+                if out_dir:
+                    serve_part = f"npx serve {out_dir} -l 80"
+                else:
+                    serve_part = (
+                        "if [ -d dist ]; then npx serve dist -l 80; "
+                        "elif [ -d build ]; then npx serve build -l 80; "
+                        "else npx serve . -l 80; fi"
+                    )
+                cmd_str = f"{install_cmd} && {build_cmd} && {serve_part}"
+                command = [
+                    "run", "-d",
+                    "--name",    container_name,
+                    "--network", "deploy_hosting_network",
+                    "--restart", "unless-stopped",
+                    "--cpus",    plan["cpu"],
+                    "--memory",  plan["memory"],
+                    "-v", f"{work_dir}:/app",
+                    "-w", "/app",
+                    *_docker_env_flags(data.env_vars),
+                    *_traefik_labels(container_name, subdomain, data.port),
+                    "node:20-alpine", "sh", "-c", cmd_str,
+                ]
+            else:
+                # Pure static — resolve output dir
+                serve_root = (
+                    os.path.join(work_dir, data.output_directory)
+                    if data.output_directory
+                    else _find_serve_dir(work_dir)
+                )
+                command = [
+                    "run", "-d",
+                    "--name",    container_name,
+                    "--network", "deploy_hosting_network",
+                    "--restart", "unless-stopped",
+                    "--cpus",    plan["cpu"],
+                    "--memory",  plan["memory"],
+                    "-v", f"{serve_root}:/usr/share/nginx/html:ro",
+                    *_docker_env_flags(data.env_vars),
+                    *_traefik_labels(container_name, subdomain, data.port),
+                    "nginx:alpine",
+                ]
 
         code, _, stderr = await run_docker_command_async(command, timeout=60)
+        deploy_log["stages"]["container"] = {"ok": code == 0, "stderr": stderr[-2000:]}
         if code != 0:
             await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
             raise HTTPException(status_code=500, detail=f"Docker error: {stderr}")
@@ -898,14 +1022,36 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
             ip_address=ip_address
         )
 
+        # Persist build config + generate webhook token
+        import secrets as _secrets
+        webhook_token = _secrets.token_hex(24)
+        git_config = {
+            "repo_url":         data.repo_url,
+            "branch":           data.branch,
+            "root_directory":   data.root_directory,
+            "install_command":  data.install_command,
+            "build_command":    data.build_command,
+            "start_command":    data.start_command,
+            "output_directory": data.output_directory,
+            "port":             data.port,
+            "framework":        data.framework,
+            "dockerfile_path":  data.dockerfile_path,
+            "env_vars":         data.env_vars,
+        }
+        hosting_repo.set_git_config(hosting_id, git_config, webhook_token)
+        deploy_log["finished_at"] = datetime.now().isoformat()
+        hosting_repo.append_deploy_log(hosting_id, deploy_log)
+
         return {
-            "status":     "deployed",
-            "type":       "github",
-            "hosting_id": hosting_id,
-            "url":        f"https://{subdomain}",
-            "repo":       data.repo_url,
-            "branch":     data.branch,
-            "note":       "Sitio desplegado desde GitHub. Listo en 30 segundos."
+            "status":        "deployed",
+            "type":          "github",
+            "hosting_id":    hosting_id,
+            "url":           f"https://{subdomain}",
+            "repo":          data.repo_url,
+            "branch":        data.branch,
+            "webhook_url":   f"/hosting/hostings/{hosting_id}/webhook",
+            "webhook_token": webhook_token,
+            "note":          "Sitio desplegado desde GitHub. Listo en 30 segundos.",
         }
 
     except HTTPException:
@@ -917,9 +1063,8 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
 @router.post("/hostings/{hosting_id}/redeploy")
 @limiter.limit("3/hour")
 async def redeploy_from_github(hosting_id: int, request: Request, user: dict = Depends(verify_token)):
-    """Hace git pull y reinicia el contenedor."""
-    user_id = user.get("user_id")
-    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    user_id    = user.get("user_id")
+    hosting    = hosting_repo.get_hosting(hosting_id, user_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
 
@@ -928,30 +1073,192 @@ async def redeploy_from_github(hosting_id: int, request: Request, user: dict = D
 
     if not os.path.exists(site_dir):
         raise HTTPException(status_code=400, detail="No es un deploy de GitHub")
-
-    # FIX #8: verificar que el directorio sea un repo git válido antes de hacer pull
     if not os.path.exists(os.path.join(site_dir, ".git")):
-        raise HTTPException(
-            status_code=400,
-            detail="El directorio no contiene un repositorio Git válido."
-        )
+        raise HTTPException(status_code=400, detail="El directorio no contiene un repositorio Git válido.")
 
-    loop = asyncio.get_running_loop()
-    # FIX #1: no bloqueante
+    cfg_row        = hosting_repo.get_git_config(hosting_id, user_id) or {}
+    git_config     = cfg_row.get("git_config") or {}
+    root_directory = git_config.get("root_directory", "")
+    work_dir       = os.path.join(site_dir, root_directory) if root_directory else site_dir
+    branch         = git_config.get("branch", "main")
+    loop           = asyncio.get_running_loop()
+    deploy_log     = {"started_at": datetime.now().isoformat(), "stages": {}}
+
     pull = await loop.run_in_executor(
         None,
         lambda: subprocess.run(
-            ["git", "-C", site_dir, "pull"],
-            capture_output=True, text=True, timeout=30
+            ["git", "-C", site_dir, "pull", "origin", branch],
+            capture_output=True, text=True, timeout=60
         )
     )
-    await run_docker_command_async(["restart", container_name], timeout=20)
-
-    return {
-        "status":     "redeployed",
-        "git_output": pull.stdout,
-        "container":  container_name
+    deploy_log["stages"]["pull"] = {
+        "ok": pull.returncode == 0,
+        "stdout": pull.stdout[-2000:],
+        "stderr": pull.stderr[-2000:],
     }
+    if pull.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"git pull failed: {pull.stderr[-500:]}")
+
+    if git_config.get("dockerfile_path") or git_config.get("framework") == "dockerfile":
+        df_path   = git_config.get("dockerfile_path") or "Dockerfile"
+        image_tag = container_name
+        build_result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                ["docker", "build", "-f", os.path.join(work_dir, df_path), "-t", image_tag, work_dir],
+                capture_output=True, text=True, timeout=300
+            )
+        )
+        deploy_log["stages"]["build"] = {
+            "ok": build_result.returncode == 0,
+            "stderr": build_result.stderr[-3000:],
+        }
+        if build_result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Docker build error: {build_result.stderr[-500:]}")
+
+        await run_docker_command_async(["stop", container_name], timeout=30)
+        await run_docker_command_async(["rm",   container_name], timeout=10)
+
+        plan_cfg  = PLANS.get(hosting.get("plan", "free"), PLANS["free"])
+        env_vars  = git_config.get("env_vars", {})
+        port      = int(git_config.get("port", 80))
+        subdomain = hosting.get("subdomain", "")
+        command = [
+            "run", "-d",
+            "--name",    container_name,
+            "--network", "deploy_hosting_network",
+            "--restart", "unless-stopped",
+            "--cpus",    plan_cfg["cpu"],
+            "--memory",  plan_cfg["memory"],
+            *_docker_env_flags(env_vars),
+            *_traefik_labels(container_name, subdomain, port),
+            image_tag,
+        ]
+        code, _, stderr = await run_docker_command_async(command, timeout=60)
+        deploy_log["stages"]["container"] = {"ok": code == 0, "stderr": stderr[-2000:]}
+        if code != 0:
+            raise HTTPException(status_code=500, detail=f"Docker run error: {stderr[-500:]}")
+    else:
+        code, _, stderr = await run_docker_command_async(["restart", container_name], timeout=30)
+        deploy_log["stages"]["container"] = {"ok": code == 0, "stderr": stderr[-2000:]}
+        if code != 0:
+            raise HTTPException(status_code=500, detail=f"Docker restart error: {stderr[-500:]}")
+
+    deploy_log["finished_at"] = datetime.now().isoformat()
+    try:
+        hosting_repo.append_deploy_log(hosting_id, deploy_log)
+    except Exception:
+        pass
+
+    return {"status": "redeployed", "git_output": pull.stdout, "container": container_name}
+
+
+@router.post("/hostings/{hosting_id}/webhook")
+async def github_webhook(hosting_id: int, request: Request):
+    """GitHub webhook endpoint — validates HMAC and triggers redeploy."""
+    import hmac as _hmac
+    import hashlib as _hashlib
+
+    body = await request.body()
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+
+    hosting = hosting_repo.get_for_webhook(hosting_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    webhook_token = hosting.get("webhook_token") or ""
+    if not webhook_token:
+        raise HTTPException(status_code=400, detail="Webhook no configurado para este hosting")
+
+    expected = "sha256=" + _hmac.new(
+        webhook_token.encode(), body, _hashlib.sha256
+    ).hexdigest()
+    if not _hmac.compare_digest(expected, sig_header):
+        raise HTTPException(status_code=401, detail="Firma inválida")
+
+    # Only redeploy on push events
+    event_type = request.headers.get("X-GitHub-Event", "")
+    if event_type != "push":
+        return {"status": "ignored", "event": event_type}
+
+    git_config     = hosting.get("git_config") or {}
+    container_name = hosting["container_name"]
+    site_dir       = f"/opt/clients/{container_name}"
+    root_directory = git_config.get("root_directory", "")
+    work_dir       = os.path.join(site_dir, root_directory) if root_directory else site_dir
+    branch         = git_config.get("branch", "main")
+    loop           = asyncio.get_running_loop()
+    deploy_log     = {"started_at": datetime.now().isoformat(), "stages": {}, "triggered_by": "webhook"}
+
+    if not os.path.exists(site_dir) or not os.path.exists(os.path.join(site_dir, ".git")):
+        raise HTTPException(status_code=400, detail="No es un deploy de GitHub")
+
+    pull = await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(
+            ["git", "-C", site_dir, "pull", "origin", branch],
+            capture_output=True, text=True, timeout=60
+        )
+    )
+    deploy_log["stages"]["pull"] = {"ok": pull.returncode == 0, "stdout": pull.stdout[-2000:]}
+    if pull.returncode != 0:
+        try:
+            hosting_repo.append_deploy_log(hosting_id, deploy_log)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"git pull failed: {pull.stderr[-500:]}")
+
+    if git_config.get("dockerfile_path") or git_config.get("framework") == "dockerfile":
+        df_path   = git_config.get("dockerfile_path") or "Dockerfile"
+        image_tag = container_name
+        build_result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                ["docker", "build", "-f", os.path.join(work_dir, df_path), "-t", image_tag, work_dir],
+                capture_output=True, text=True, timeout=300
+            )
+        )
+        deploy_log["stages"]["build"] = {"ok": build_result.returncode == 0}
+        if build_result.returncode == 0:
+            await run_docker_command_async(["stop", container_name], timeout=30)
+            await run_docker_command_async(["rm",   container_name], timeout=10)
+            plan_cfg  = PLANS.get(hosting.get("plan", "free"), PLANS["free"])
+            env_vars  = git_config.get("env_vars", {})
+            port      = int(git_config.get("port", 80))
+            subdomain = hosting.get("subdomain", "")
+            command = [
+                "run", "-d",
+                "--name",    container_name,
+                "--network", "deploy_hosting_network",
+                "--restart", "unless-stopped",
+                "--cpus",    plan_cfg["cpu"],
+                "--memory",  plan_cfg["memory"],
+                *_docker_env_flags(env_vars),
+                *_traefik_labels(container_name, subdomain, port),
+                image_tag,
+            ]
+            code, _, _ = await run_docker_command_async(command, timeout=60)
+            deploy_log["stages"]["container"] = {"ok": code == 0}
+    else:
+        code, _, _ = await run_docker_command_async(["restart", container_name], timeout=30)
+        deploy_log["stages"]["container"] = {"ok": code == 0}
+
+    deploy_log["finished_at"] = datetime.now().isoformat()
+    try:
+        hosting_repo.append_deploy_log(hosting_id, deploy_log)
+    except Exception:
+        pass
+
+    return {"status": "ok"}
+
+
+@router.get("/hostings/{hosting_id}/deploy-logs")
+def get_deploy_logs(hosting_id: int, user: dict = Depends(verify_token)):
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+    return hosting_repo.get_deploy_logs(hosting_id, user_id)
 
 @router.post("/hostings/{hosting_id}/upload-zip")
 @limiter.limit("5/hour")

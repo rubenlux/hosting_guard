@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
+import json
 import logging
 from app.infra.db import get_connection, release_connection, SQL_MINUTES_SINCE_CREATED, SQL_DAYS_REMAINING_14
 
@@ -493,5 +494,93 @@ class HostingRepository:
                 (status, hosting_id),
             )
             conn.commit()
+        finally:
+            release_connection(conn)
+
+    # ── GitHub deploy config ───────────────────────────────────────────────────
+
+    def set_git_config(self, hosting_id: int, git_config: dict, webhook_token: str) -> None:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE hostings SET git_config = %s::jsonb, webhook_token = %s WHERE hosting_id = %s",
+                (json.dumps(git_config), webhook_token, hosting_id),
+            )
+            conn.commit()
+        finally:
+            release_connection(conn)
+
+    def get_git_config(self, hosting_id: int, user_id: int) -> Optional[dict]:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT git_config, webhook_token FROM hostings WHERE hosting_id = %s AND user_id = %s",
+                (hosting_id, user_id),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {"git_config": row["git_config"] or {}, "webhook_token": row["webhook_token"]}
+        finally:
+            release_connection(conn)
+
+    def get_by_webhook_token(self, token: str) -> Optional[dict]:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT hosting_id, user_id, container_name, git_config FROM hostings WHERE webhook_token = %s",
+                (token,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            release_connection(conn)
+
+    def append_deploy_log(self, hosting_id: int, entry: dict) -> None:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE hostings
+                   SET deploy_logs = COALESCE(deploy_logs, '[]'::jsonb) || %s::jsonb
+                   WHERE hosting_id = %s""",
+                (json.dumps([entry]), hosting_id),
+            )
+            conn.commit()
+        finally:
+            release_connection(conn)
+
+    def get_deploy_logs(self, hosting_id: int, user_id: int) -> list:
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT deploy_logs FROM hostings WHERE hosting_id = %s AND user_id = %s",
+                (hosting_id, user_id),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return []
+            logs = row["deploy_logs"] or []
+            return logs[-10:]  # keep last 10 deploys
+        finally:
+            release_connection(conn)
+
+    def get_for_webhook(self, hosting_id: int) -> Optional[dict]:
+        """Internal lookup for webhook validation — no user_id filter."""
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT hosting_id, user_id, container_name, plan, subdomain,
+                          git_config, webhook_token
+                   FROM hostings WHERE hosting_id = %s AND status != 'deleted'""",
+                (hosting_id,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
         finally:
             release_connection(conn)

@@ -339,6 +339,31 @@ _MIGRATIONS_PG = [
         source        TEXT,
         created_at    TIMESTAMPTZ DEFAULT NOW()
     )""",
+
+    # ── GitHub deploy: per-hosting build config + webhook token ─────────────────
+    "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS git_config JSONB",
+    "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS webhook_token TEXT",
+    "ALTER TABLE hostings ADD COLUMN IF NOT EXISTS deploy_logs JSONB DEFAULT '[]'::jsonb",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_hostings_webhook_token ON hostings(webhook_token) WHERE webhook_token IS NOT NULL",
+
+    # ── Custom domains — per-hosting domain management ───────────────────────────
+    """CREATE TABLE IF NOT EXISTS custom_domains (
+        domain_id           SERIAL PRIMARY KEY,
+        user_id             INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        hosting_id          INTEGER NOT NULL REFERENCES hostings(hosting_id) ON DELETE CASCADE,
+        domain              TEXT NOT NULL,
+        domain_type         TEXT NOT NULL DEFAULT 'subdomain',
+        verification_token  TEXT NOT NULL,
+        dns_status          TEXT NOT NULL DEFAULT 'pending',
+        ssl_status          TEXT NOT NULL DEFAULT 'pending',
+        is_primary          INTEGER NOT NULL DEFAULT 0,
+        redirect_to_primary INTEGER NOT NULL DEFAULT 0,
+        created_at          TIMESTAMPTZ DEFAULT NOW(),
+        verified_at         TIMESTAMPTZ,
+        last_checked_at     TIMESTAMPTZ,
+        error_message       TEXT,
+        UNIQUE(domain)
+    )""",
 ]
 
 _INDEXES = [
@@ -797,6 +822,11 @@ _INDEXES = [
            'user_1_wp_canela-app_8cf5a9',
            'user_14_wp_tradingparaprincipiantes_91753e'
          )""",
+
+    # custom_domains indexes
+    "CREATE INDEX IF NOT EXISTS idx_custom_domains_hosting ON custom_domains(hosting_id)",
+    "CREATE INDEX IF NOT EXISTS idx_custom_domains_user ON custom_domains(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_custom_domains_status ON custom_domains(dns_status, last_checked_at)",
 ]
 
 def ensure_monthly_partitions(cursor):

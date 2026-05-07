@@ -30,3 +30,6 @@ if ENABLE_ACTION_EXECUTION:
         "Ejecución de acciones habilitada (ENABLE_ACTION_EXECUTION=true) en entorno '%s'.",
         APP_ENV,
     )
+
+# IP pública del servidor — used for apex DNS (A record) verification and Traefik custom-domain config
+SERVER_IP = os.getenv("SERVER_IP", "")

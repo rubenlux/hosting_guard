@@ -14,6 +14,7 @@ Executes all periodic background jobs:
   - daily_report     (AI admin report at 08:00 UTC)           1 h check
   - detect_security   (attack detection, 10 rules)           60 s
   - cleanup_sessions  (expire/prune session rows)            24 h
+  - check_pending_domains (DNS verify for custom domains)     5 min
   - capacity_forecast (optional, env-gated)                  10 min
 
 Designed to run as a SINGLE instance in docker-compose so jobs are never
@@ -82,6 +83,7 @@ async def _main() -> None:
     from app.infra.audit.session_repository import cleanup_sessions
     from app.services.detect_security_anomalies import detect_security_anomalies
     from app.services.collect_resource_usage import collect_resource_usage
+    from app.services.domain_checker import check_pending_domains
     from app.api.config import ENABLE_CAPACITY_FORECAST
 
     # Single pass of the intelligent orchestrator (throttle / autoscale / restart).
@@ -113,6 +115,7 @@ async def _main() -> None:
     schedule_job(collect_traffic,                interval=300)     # 5 min
     schedule_job(check_all_hostings,             interval=300)     # 5 min
     schedule_job(reconcile_containers,           interval=300)     # 5 min
+    schedule_job(check_pending_domains,          interval=300)     # 5 min
     # ── Every 12 hours ───────────────────────────────────────────────────────
     schedule_job(check_and_expire_free_hostings, interval=43200)   # 12 h
     # ── Daily ────────────────────────────────────────────────────────────────
@@ -123,7 +126,7 @@ async def _main() -> None:
     schedule_job(cleanup_sessions,               interval=86400)   # 24 h
     schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
-    base_count = 14
+    base_count = 15
     if ENABLE_CAPACITY_FORECAST:
         def _run_capacity_forecast():
             try:
