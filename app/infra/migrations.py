@@ -785,6 +785,18 @@ _INDEXES = [
            total_ram_gb  = COALESCE(total_ram_gb,  4),
            total_disk_gb = COALESCE(total_disk_gb, 80)
        WHERE id = 1""",
+    # One-time cleanup: null out disk_mb samples that were collected via df instead
+    # of du -sm. df reports the shared filesystem size (same for every container on
+    # the same volume), producing identical ~11 GB values regardless of actual site size.
+    # After 24 hours this UPDATE matches 0 rows and becomes a permanent no-op.
+    """UPDATE hosting_resource_samples
+       SET disk_mb = NULL
+       WHERE sampled_at > NOW() - INTERVAL '24 hours'
+         AND disk_mb > 1000
+         AND container_name IN (
+           'user_1_wp_canela-app_8cf5a9',
+           'user_14_wp_tradingparaprincipiantes_91753e'
+         )""",
 ]
 
 def ensure_monthly_partitions(cursor):

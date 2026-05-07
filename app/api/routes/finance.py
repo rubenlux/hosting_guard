@@ -291,7 +291,7 @@ def unit_economics_overview(_: dict = Depends(require_role("admin"))):
             return 999
         return math.ceil(break_even_gap / net_contribution)
 
-    by_plan = {p: _needed(p) for p in ("personal", "negocio", "agencia", "agencia_pro")}
+    by_plan = {p: _needed(p) for p in ("personal", "negocio", "agencia", "agencia_pro", "enterprise_annual")}
 
     top_profitable = sorted(tenant_rows, key=lambda x: x["profit_usd"], reverse=True)[:5]
     top_expensive  = sorted(tenant_rows, key=lambda x: x["total_cost_usd"], reverse=True)[:5]

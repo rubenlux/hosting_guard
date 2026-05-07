@@ -69,6 +69,88 @@ def _parse_net(net_str: str):
         return None, None
 
 
+def _parse_du_output(output: str) -> Optional[float]:
+    """Parse first line of 'du -sm' output → MB as float, or None.
+
+    du -sm outputs '<size_mb>\\t<path>' or '<size_mb> <path>'.
+    '90\\t/var/www/html' → 90.0
+    '6 /usr/share/nginx/html' → 6.0
+    empty / error text → None
+    """
+    if not output:
+        return None
+    try:
+        first_line = output.strip().splitlines()[0]
+        return float(first_line.split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def _collect_disk_mb(container_name: str) -> Optional[float]:
+    """Return real site disk usage in MB via du -sm (never df).
+
+    df reports filesystem-level usage, which is the same for every container
+    on a shared volume. du -sm measures only the site's own directory tree.
+
+    Tries three paths in order:
+    1. WordPress webroot inside container  (/var/www/html)
+    2. Host path                           (/opt/clients/<container>)
+    3. Static/nginx webroot inside container (/usr/share/nginx/html)
+    Returns None and logs a warning with all paths tried + stderr on failure.
+    """
+    failures: list[str] = []
+
+    def _du_inside(path: str) -> Optional[float]:
+        try:
+            r = subprocess.run(
+                ["docker", "exec", container_name, "du", "-sm", path],
+                capture_output=True, text=True, timeout=10,
+            )
+            mb = _parse_du_output(r.stdout) if r.returncode == 0 else None
+            if mb is None:
+                failures.append(
+                    f"container:{path} rc={r.returncode} stderr={r.stderr.strip()[:120]!r}"
+                )
+            return mb
+        except Exception as exc:
+            failures.append(f"container:{path} exc={exc}")
+            return None
+
+    def _du_host(path: str) -> Optional[float]:
+        try:
+            r = subprocess.run(
+                ["du", "-sm", path],
+                capture_output=True, text=True, timeout=10,
+            )
+            mb = _parse_du_output(r.stdout) if r.returncode == 0 else None
+            if mb is None:
+                failures.append(
+                    f"host:{path} rc={r.returncode} stderr={r.stderr.strip()[:120]!r}"
+                )
+            return mb
+        except Exception as exc:
+            failures.append(f"host:{path} exc={exc}")
+            return None
+
+    mb = _du_inside("/var/www/html")
+    if mb is not None:
+        return mb
+
+    mb = _du_host(f"/opt/clients/{container_name}")
+    if mb is not None:
+        return mb
+
+    mb = _du_inside("/usr/share/nginx/html")
+    if mb is not None:
+        return mb
+
+    logger.warning(
+        "collect_resource_usage: disk measurement failed for container=%s — %s",
+        container_name, " | ".join(failures),
+    )
+    return None
+
+
 def collect_resource_usage() -> None:
     """Collect docker stats for all active hosting containers and persist samples."""
     from app.infra.db import get_connection, release_connection
@@ -133,21 +215,12 @@ def collect_resource_usage() -> None:
     if not samples:
         return
 
-    # 3b. Disk usage — best-effort df per container (5 s timeout, no hard failure)
+    # 3b. Disk usage — use du -sm (real site bytes), NOT df (reports filesystem usage).
+    # df measures the whole filesystem, not the site — all containers on the same
+    # volume show the same number. du measures only the site directory.
     disk_by_container: dict = {}
     for _, _, cname, _, _, _, _, _ in samples:
-        try:
-            r = subprocess.run(
-                ["docker", "exec", cname, "df", "-k", "/var/www/html"],
-                capture_output=True, text=True, timeout=5,
-            )
-            for df_line in r.stdout.splitlines()[1:]:
-                parts = df_line.split()
-                if len(parts) >= 3:
-                    disk_by_container[cname] = int(parts[2]) / 1024.0  # KB used → MB
-                    break
-        except Exception:
-            pass
+        disk_by_container[cname] = _collect_disk_mb(cname)
 
     # 4. Insert samples one by one (_AdaptedCursor does not support executemany)
     _INSERT = (
