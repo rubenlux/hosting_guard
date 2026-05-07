@@ -125,7 +125,9 @@ def _recommendation(client: dict, plan_ec: dict, margin_pct: float) -> tuple:
     if cpu > 85 and plan == "free":
         return "possible_abuse", f"CPU {cpu:.0f}% on free plan"
     if margin_pct < 0:
-        return "unprofitable", f"margin {margin_pct:.0f}%"
+        # Negative because fixed server cost (split equally) exceeds contribution margin.
+        # This is a scale issue — not a sign the client should change plan.
+        return "baja_escala", "El plan cubre costos variables, pero no su parte del costo fijo con la base actual de clientes."
     if margin_pct < 20:
         return "risk", f"low margin {margin_pct:.0f}%"
     if margin_pct < 40:
@@ -231,7 +233,7 @@ def unit_economics_tenants(_: dict = Depends(require_role("admin"))):
 
         total_cost  = round(sum(cost.values()), 2)
         rec, reason = _recommendation(c, plan_ec, pm["real_margin_percent"])
-        status      = rec if rec in ("upgrade_recommended","possible_abuse") else _status_from_margin(pm["real_margin_percent"])
+        status      = rec if rec in ("upgrade_recommended", "possible_abuse", "baja_escala") else _status_from_margin(pm["real_margin_percent"])
 
         rows.append({
             "user_id":               c["user_id"],
@@ -324,7 +326,7 @@ def unit_economics_overview(_: dict = Depends(require_role("admin"))):
     top_profitable = sorted(tenant_rows, key=lambda x: x["real_profit_usd"], reverse=True)[:5]
     top_expensive  = sorted(tenant_rows, key=lambda x: x["total_cost_usd"], reverse=True)[:5]
     upgrade_rec    = [r for r in tenant_rows if r["recommendation"] in
-                      ("upgrade_recommended", "possible_abuse", "unprofitable")][:10]
+                      ("upgrade_recommended", "possible_abuse")][:10]
 
     def _slim(r: dict) -> dict:
         return {k: r[k] for k in (

@@ -48,6 +48,7 @@ const STATUS_BADGE = {
   review:              { label: 'Revisar',      cls: 'bg-amber-500/15  text-amber-400'    },
   risk:                { label: 'Riesgo',       cls: 'bg-orange-500/15 text-orange-400'   },
   unprofitable:        { label: 'No rentable',  cls: 'bg-red-500/15    text-red-400'      },
+  baja_escala:         { label: 'Baja escala',  cls: 'bg-orange-500/15 text-orange-400'   },
   upgrade_recommended: { label: 'Upgrade',      cls: 'bg-blue-500/15   text-blue-400'     },
   possible_abuse:      { label: 'Posible abuso',cls: 'bg-red-500/15    text-red-500'      },
 };
@@ -172,7 +173,7 @@ function ProfitabilityTable({ tenants }) {
           {sorted.map((t) => {
             const rowCls = t.status === 'unprofitable'
               ? 'bg-red-500/4 border-b border-red-500/8'
-              : t.status === 'risk'
+              : (t.status === 'risk' || t.status === 'baja_escala')
               ? 'bg-orange-500/4 border-b border-orange-500/8'
               : 'border-b border-white/3';
             return (

@@ -216,7 +216,8 @@ function PixelPendingInstall({ ownSite }) {
 
 /* ─── Bar chart (CSS) ─────────────────────────────────────── */
 function HBar({ data, color = '#00ff88', labelWidth = 'w-28' }) {
-  const max = Math.max(...data.map(d => d.value), 1);
+  const max   = Math.max(...data.map(d => d.value), 1);
+  const total = data.reduce((s, d) => s + d.value, 0) || 1;
   return (
     <div className="flex flex-col gap-2">
       {data.map((d, i) => (
@@ -226,7 +227,7 @@ function HBar({ data, color = '#00ff88', labelWidth = 'w-28' }) {
             <div className="h-full rounded transition-all" style={{ width: `${(d.value / max) * 100}%`, background: color }} />
           </div>
           <div className="w-10 text-[10px] text-gray-300 font-mono text-right">{d.value}</div>
-          <div className="w-8 text-[9px] text-gray-600 font-mono">{Math.round((d.value / max) * 100)}%</div>
+          <div className="w-8 text-[9px] text-gray-600 font-mono">{Math.round((d.value / total) * 100)}%</div>
         </div>
       ))}
     </div>

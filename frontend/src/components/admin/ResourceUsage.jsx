@@ -152,16 +152,16 @@ function UserTable({ rows }) {
         Por Cliente
         <span className="ml-auto text-[9px] text-gray-600 font-normal">{rows.length} tenants</span>
       </div>
-      <div className="grid grid-cols-[1fr_55px_55px_70px_70px_60px_60px_60px_60px_70px] gap-1 px-4 py-2 border-b border-white/5 text-[9px] text-gray-600 uppercase tracking-wide">
+      <div className="grid grid-cols-[1fr_55px_55px_70px_70px_60px_60px_60px_65px_70px] gap-1 px-4 py-2 border-b border-white/5 text-[9px] text-gray-600 uppercase tracking-wide">
         <span>Email / Plan</span>
         <span>Billing</span>
         <span>Sites</span>
         <span>CPU avg</span>
         <span>RAM tot.</span>
         <span>Rev/mo</span>
-        <span>Cost/mo</span>
-        <span>Profit</span>
-        <span>Margen</span>
+        <span>Costo rec.</span>
+        <span>Contribución</span>
+        <span>Margen contrib.</span>
         <span>Rec.</span>
       </div>
       <div className="divide-y divide-white/5 max-h-[500px] overflow-y-auto">
@@ -170,10 +170,10 @@ function UserTable({ rows }) {
           const billingCls = u.billing_interval === 'monthly'
             ? 'bg-purple-500/15 text-purple-400'
             : 'bg-blue-500/15 text-blue-400';
-          const profit = (u.revenue || 0) - (u.estimated_cost || 0);
+          const contrib = (u.revenue || 0) - (u.estimated_cost || 0);
           return (
             <div key={u.user_id}
-                 className="grid grid-cols-[1fr_55px_55px_70px_70px_60px_60px_60px_60px_70px] gap-1 items-center px-4 py-2.5 hover:bg-white/3 transition-colors">
+                 className="grid grid-cols-[1fr_55px_55px_70px_70px_60px_60px_60px_65px_70px] gap-1 items-center px-4 py-2.5 hover:bg-white/3 transition-colors">
               <div className="min-w-0">
                 <div className="text-[11px] text-white font-medium truncate">{u.email}</div>
                 <div className="flex items-center gap-1 mt-0.5">
@@ -189,14 +189,17 @@ function UserTable({ rows }) {
               <span className="text-[10px] text-gray-400 font-mono">{fmtMb(u.total_ram_mb)}</span>
               <span className="text-[10px] text-emerald-400 font-mono">{fmtUsd(u.revenue)}</span>
               <span className="text-[10px] text-amber-400 font-mono">{fmtUsd(u.estimated_cost)}</span>
-              <span className={`text-[10px] font-mono font-bold ${marginColor(profit)}`}>{fmtUsd(profit)}</span>
-              <span className={`text-[10px] font-mono font-bold ${marginColor(profit)}`}>
-                {u.revenue > 0 ? `${Math.round((profit / u.revenue) * 100)}%` : '—'}
+              <span className={`text-[10px] font-mono font-bold ${marginColor(contrib)}`}>{fmtUsd(contrib)}</span>
+              <span className={`text-[10px] font-mono font-bold ${marginColor(contrib)}`}>
+                {u.revenue > 0 ? `${Math.round((contrib / u.revenue) * 100)}%` : '—'}
               </span>
               <RecBadge rec={u.recommendation} />
             </div>
           );
         })}
+      </div>
+      <div className="px-4 py-2 border-t border-white/5 text-[8px] text-gray-600 italic">
+        * Contribución = Rev. bruto − costos de recursos (CPU/RAM/disco). No descuenta el costo fijo del servidor. Para rentabilidad real ver Finance → Unit Economics.
       </div>
     </div>
   );
