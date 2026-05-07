@@ -460,7 +460,7 @@ export default function UnitEconomics() {
 
       {/* ── 3. Customer count + break-even gap ── */}
       <div className="grid grid-cols-2 gap-3">
-        <div className="bg-[#0d0d0f] rounded-xl border border-white/5 p-4 flex items-center gap-4">
+        <div className="bg-[#0d0d0f] rounded-xl border border-white/5 p-4 flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-emerald-500/15 flex items-center justify-center">
               <Users className="w-4 h-4 text-emerald-400" />
@@ -468,6 +468,15 @@ export default function UnitEconomics() {
             <div>
               <div className="text-[18px] font-bold text-emerald-400">{overview.profitable_customers_count}</div>
               <div className="text-[9px] text-gray-500">rentables</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-orange-500/15 flex items-center justify-center">
+              <Users className="w-4 h-4 text-orange-400" />
+            </div>
+            <div>
+              <div className="text-[18px] font-bold text-orange-400">{overview.baja_escala_customers_count ?? 0}</div>
+              <div className="text-[9px] text-gray-500">baja escala</div>
             </div>
           </div>
           <div className="flex items-center gap-2">

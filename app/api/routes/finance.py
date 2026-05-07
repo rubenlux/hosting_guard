@@ -127,7 +127,7 @@ def _recommendation(client: dict, plan_ec: dict, margin_pct: float) -> tuple:
     if margin_pct < 0:
         # Negative because fixed server cost (split equally) exceeds contribution margin.
         # This is a scale issue — not a sign the client should change plan.
-        return "baja_escala", "El plan cubre costos variables, pero no su parte del costo fijo con la base actual de clientes."
+        return "baja_escala", "No requiere upgrade por consumo. El resultado negativo se debe a baja escala actual del negocio."
     if margin_pct < 20:
         return "risk", f"low margin {margin_pct:.0f}%"
     if margin_pct < 40:
@@ -305,7 +305,8 @@ def unit_economics_overview(_: dict = Depends(require_role("admin"))):
     break_even_gap = round(max(0.0, monthly_total - mrr_net), 2)
 
     profitable_count   = sum(1 for r in tenant_rows if r["real_profit_usd"] >= 0)
-    unprofitable_count = sum(1 for r in tenant_rows if r["real_profit_usd"] < 0)
+    baja_escala_count  = sum(1 for r in tenant_rows if r["recommendation"] == "baja_escala")
+    unprofitable_count = sum(1 for r in tenant_rows if r["real_profit_usd"] < 0 and r["recommendation"] != "baja_escala")
 
     # Customers needed per plan to cover break-even gap
     def _needed(plan_name: str) -> int:
@@ -349,7 +350,8 @@ def unit_economics_overview(_: dict = Depends(require_role("admin"))):
         "estimated_profit":           profit_total,
         "gross_margin_percent":       gross_margin,
         "break_even_gap_usd":         break_even_gap,
-        "profitable_customers_count": profitable_count,
+        "profitable_customers_count":   profitable_count,
+        "baja_escala_customers_count":  baja_escala_count,
         "unprofitable_customers_count": unprofitable_count,
         "customers_needed_for_break_even_by_plan": by_plan,
         "top_profitable_customers":   [_slim(r) for r in top_profitable],

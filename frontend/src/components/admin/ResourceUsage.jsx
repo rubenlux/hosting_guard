@@ -162,7 +162,7 @@ function UserTable({ rows }) {
         <span>Costo rec.</span>
         <span>Contribución</span>
         <span>Margen contrib.</span>
-        <span>Rec.</span>
+        <span>Estado rec.</span>
       </div>
       <div className="divide-y divide-white/5 max-h-[500px] overflow-y-auto">
         {rows.map((u) => {
@@ -178,7 +178,7 @@ function UserTable({ rows }) {
                 <div className="text-[11px] text-white font-medium truncate">{u.email}</div>
                 <div className="flex items-center gap-1 mt-0.5">
                   <span className="text-[8px] bg-white/8 text-gray-400 px-1 rounded uppercase">{u.plan || 'free'}</span>
-                  {u.subscription_status && u.subscription_status !== 'active' && (
+                  {u.subscription_status && u.subscription_status !== 'active' && u.subscription_status !== 'none' && u.subscription_status !== 'None' && (
                     <span className="text-[8px] bg-amber-500/15 text-amber-400 px-1 rounded">{u.subscription_status}</span>
                   )}
                 </div>
