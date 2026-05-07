@@ -81,6 +81,7 @@ from app.api.routes.backup import router as backup_router
 from app.api.routes.billing import router as billing_router
 from app.api.routes.presence import router as presence_router
 from app.api.routes.wp_audit import router as wp_audit_router
+from app.api.routes.finance import router as finance_router
 app.include_router(pixel_router)
 app.include_router(files_router)
 app.include_router(impersonate_router)
@@ -94,6 +95,7 @@ app.include_router(backup_router)
 app.include_router(billing_router)
 app.include_router(presence_router)
 app.include_router(wp_audit_router)
+app.include_router(finance_router)
 
 
 # Flags de seguridad para cookies de sesión.

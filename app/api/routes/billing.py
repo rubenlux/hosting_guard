@@ -52,7 +52,7 @@ def _ls_headers() -> dict:
 # ── Checkout ──────────────────────────────────────────────────────────────────
 
 class CheckoutRequest(BaseModel):
-    plan: str  # personal | negocio | agencia
+    plan: str  # personal | negocio | agencia | agencia_pro | enterprise_annual | enterprise_monthly
 
 
 @router.post("/checkout")
@@ -60,8 +60,9 @@ async def create_checkout(body: CheckoutRequest, current_user: dict = Depends(ve
     variant_map = _LS.variant_map()
     variant_id = variant_map.get(body.plan)
 
+    _valid = "personal, negocio, agencia, agencia_pro, enterprise_annual, enterprise_monthly"
     if not variant_id:
-        raise HTTPException(status_code=400, detail=f"Plan no válido: {body.plan}. Opciones: personal, negocio, agencia")
+        raise HTTPException(status_code=400, detail=f"Plan no válido: {body.plan}. Opciones: {_valid}")
     if not _LS.API_KEY or not _LS.STORE_ID:
         raise HTTPException(status_code=503, detail="Billing no configurado en el servidor")
 
@@ -183,7 +184,7 @@ async def _process_webhook(event_name: str, meta: dict, data: dict) -> None:
             plan=plan_from_variant,
             plan_started_at=datetime.now(timezone.utc).isoformat(),
             current_period_start=period_start,
-            billing_interval="yearly",
+            billing_interval=_LS.billing_interval_from_plan(plan_from_variant),
             subscription_status="active",
             **base)
         logger.info("User %s → plan=%s sub=%s", uid, plan_from_variant, subscription_id)

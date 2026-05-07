@@ -672,6 +672,112 @@ _INDEXES = [
     "ALTER TABLE hosting_resource_samples ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL",
     "CREATE INDEX IF NOT EXISTS idx_resource_samples_user_time ON hosting_resource_samples(user_id, sampled_at DESC)",
     "ALTER TABLE hosting_resource_samples ADD COLUMN IF NOT EXISTS disk_mb REAL",
+
+    # ── Unit-economics: plan pricing catalog ──────────────────────────────────
+    """CREATE TABLE IF NOT EXISTS plan_economics (
+        plan_name                    TEXT PRIMARY KEY,
+        monthly_price_usd            REAL NOT NULL DEFAULT 0,
+        annual_price_usd             REAL NOT NULL DEFAULT 0,
+        billing_period               TEXT NOT NULL DEFAULT 'annual',
+        included_sites               INTEGER NOT NULL DEFAULT 1,
+        included_ai_queries_month    INTEGER NOT NULL DEFAULT 0,
+        included_backup_gb           REAL NOT NULL DEFAULT 0,
+        included_support_minutes_month INTEGER NOT NULL DEFAULT 0,
+        included_disk_gb             REAL NOT NULL DEFAULT 0,
+        created_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    # Seed plan_economics — idempotent via ON CONFLICT DO UPDATE
+    """INSERT INTO plan_economics
+        (plan_name, monthly_price_usd, annual_price_usd, included_sites,
+         included_ai_queries_month, included_backup_gb, included_support_minutes_month, included_disk_gb)
+       VALUES
+        ('free',        0,   0,   1,   0,   0,   0,   1),
+        ('personal',    9,  108,  1,  20,   2,  15,   5),
+        ('negocio',    19,  228,  3, 100,  10,  30,  15),
+        ('agencia',    39,  468, 10, 300,  30,  60,  50),
+        ('agencia_pro', 59, 708, 25, 700,  75, 120, 100)
+       ON CONFLICT (plan_name) DO UPDATE SET
+        monthly_price_usd            = EXCLUDED.monthly_price_usd,
+        annual_price_usd             = EXCLUDED.annual_price_usd,
+        included_sites               = EXCLUDED.included_sites,
+        included_ai_queries_month    = EXCLUDED.included_ai_queries_month,
+        included_backup_gb           = EXCLUDED.included_backup_gb,
+        included_support_minutes_month = EXCLUDED.included_support_minutes_month,
+        included_disk_gb             = EXCLUDED.included_disk_gb,
+        updated_at                   = NOW()
+    """,
+
+    # ── plan_economics: add new columns (idempotent) ─────────────────────────
+    "ALTER TABLE plan_economics ADD COLUMN IF NOT EXISTS display_name TEXT",
+    "ALTER TABLE plan_economics ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE plan_economics ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 99",
+
+    # Backfill display_name + sort_order for existing plans
+    """UPDATE plan_economics SET
+        display_name = CASE plan_name
+            WHEN 'free'        THEN 'Prueba Gratis'
+            WHEN 'personal'    THEN 'Personal'
+            WHEN 'negocio'     THEN 'Negocio'
+            WHEN 'agencia'     THEN 'Agencia'
+            WHEN 'agencia_pro' THEN 'Agencia Pro'
+            ELSE display_name
+        END,
+        sort_order = CASE plan_name
+            WHEN 'free'        THEN 0
+            WHEN 'personal'    THEN 1
+            WHEN 'negocio'     THEN 2
+            WHEN 'agencia'     THEN 3
+            WHEN 'agencia_pro' THEN 4
+            ELSE sort_order
+        END
+    WHERE plan_name IN ('free', 'personal', 'negocio', 'agencia', 'agencia_pro')""",
+
+    # Add enterprise plans
+    """INSERT INTO plan_economics
+        (plan_name, display_name, monthly_price_usd, annual_price_usd, billing_period,
+         included_sites, included_ai_queries_month, included_backup_gb,
+         included_support_minutes_month, included_disk_gb, is_active, sort_order)
+       VALUES
+        ('enterprise_annual',  'Enterprise Anual',   99,  1188, 'annual',  50, 1500, 200, 300, 250, TRUE, 5),
+        ('enterprise_monthly', 'Enterprise Mensual', 129,    0, 'monthly', 50, 1500, 200, 300, 250, TRUE, 6)
+       ON CONFLICT (plan_name) DO UPDATE SET
+        display_name                   = EXCLUDED.display_name,
+        monthly_price_usd              = EXCLUDED.monthly_price_usd,
+        annual_price_usd               = EXCLUDED.annual_price_usd,
+        billing_period                 = EXCLUDED.billing_period,
+        included_sites                 = EXCLUDED.included_sites,
+        included_ai_queries_month      = EXCLUDED.included_ai_queries_month,
+        included_backup_gb             = EXCLUDED.included_backup_gb,
+        included_support_minutes_month = EXCLUDED.included_support_minutes_month,
+        included_disk_gb               = EXCLUDED.included_disk_gb,
+        is_active                      = EXCLUDED.is_active,
+        sort_order                     = EXCLUDED.sort_order,
+        updated_at                     = NOW()
+    """,
+
+    # ── Unit-economics: server cost settings (singleton row id=1) ─────────────
+    """CREATE TABLE IF NOT EXISTS cost_settings (
+        id                           INTEGER PRIMARY KEY DEFAULT 1,
+        monthly_server_cost_usd      REAL NOT NULL DEFAULT 18.98,
+        total_vcpu                   REAL,
+        total_ram_gb                 REAL,
+        total_disk_gb                REAL,
+        target_utilization_percent   REAL NOT NULL DEFAULT 70,
+        cpu_cost_weight              REAL NOT NULL DEFAULT 0.40,
+        ram_cost_weight              REAL NOT NULL DEFAULT 0.40,
+        disk_cost_weight             REAL NOT NULL DEFAULT 0.15,
+        overhead_cost_weight         REAL NOT NULL DEFAULT 0.05,
+        backup_cost_per_gb_month_usd REAL NOT NULL DEFAULT 0.10,
+        ai_cost_per_query_usd        REAL NOT NULL DEFAULT 0.02,
+        human_support_hourly_cost_usd REAL NOT NULL DEFAULT 10,
+        payment_fee_percent          REAL NOT NULL DEFAULT 6.5,
+        payment_fee_fixed_usd        REAL NOT NULL DEFAULT 0.50,
+        updated_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    """INSERT INTO cost_settings (id, monthly_server_cost_usd)
+       VALUES (1, 18.98)
+       ON CONFLICT (id) DO NOTHING""",
 ]
 
 def ensure_monthly_partitions(cursor):

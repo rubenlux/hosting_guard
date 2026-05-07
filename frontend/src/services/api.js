@@ -881,3 +881,13 @@ export const getAdminResourcesUsers = async () => {
   const response = await api.get('/admin/resources/users');
   return response.data;
 };
+
+export const getUnitEconomicsOverview = async () => {
+  const response = await api.get('/admin/finance/unit-economics/overview');
+  return response.data;
+};
+
+export const getUnitEconomicsTenants = async () => {
+  const response = await api.get('/admin/finance/unit-economics/tenants');
+  return response.data;
+};

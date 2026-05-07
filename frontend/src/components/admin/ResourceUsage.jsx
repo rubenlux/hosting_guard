@@ -152,40 +152,51 @@ function UserTable({ rows }) {
         Por Cliente
         <span className="ml-auto text-[9px] text-gray-600 font-normal">{rows.length} tenants</span>
       </div>
-      <div className="grid grid-cols-[1fr_60px_70px_70px_60px_60px_60px_60px_70px] gap-1 px-4 py-2 border-b border-white/5 text-[9px] text-gray-600 uppercase tracking-wide">
+      <div className="grid grid-cols-[1fr_55px_55px_70px_70px_60px_60px_60px_60px_70px] gap-1 px-4 py-2 border-b border-white/5 text-[9px] text-gray-600 uppercase tracking-wide">
         <span>Email / Plan</span>
+        <span>Billing</span>
         <span>Sites</span>
         <span>CPU avg</span>
         <span>RAM tot.</span>
-        <span>Backup</span>
         <span>Rev/mo</span>
         <span>Cost/mo</span>
+        <span>Profit</span>
         <span>Margen</span>
         <span>Rec.</span>
       </div>
       <div className="divide-y divide-white/5 max-h-[500px] overflow-y-auto">
-        {rows.map((u) => (
-          <div key={u.user_id}
-               className="grid grid-cols-[1fr_60px_70px_70px_60px_60px_60px_60px_70px] gap-1 items-center px-4 py-2.5 hover:bg-white/3 transition-colors">
-            <div className="min-w-0">
-              <div className="text-[11px] text-white font-medium truncate">{u.email}</div>
-              <div className="flex items-center gap-1 mt-0.5">
-                <span className="text-[8px] bg-white/8 text-gray-400 px-1 rounded uppercase">{u.plan || 'free'}</span>
-                {u.subscription_status && u.subscription_status !== 'active' && (
-                  <span className="text-[8px] bg-amber-500/15 text-amber-400 px-1 rounded">{u.subscription_status}</span>
-                )}
+        {rows.map((u) => {
+          const billing = u.billing_interval === 'monthly' ? 'Monthly' : 'Annual';
+          const billingCls = u.billing_interval === 'monthly'
+            ? 'bg-purple-500/15 text-purple-400'
+            : 'bg-blue-500/15 text-blue-400';
+          const profit = (u.revenue || 0) - (u.estimated_cost || 0);
+          return (
+            <div key={u.user_id}
+                 className="grid grid-cols-[1fr_55px_55px_70px_70px_60px_60px_60px_60px_70px] gap-1 items-center px-4 py-2.5 hover:bg-white/3 transition-colors">
+              <div className="min-w-0">
+                <div className="text-[11px] text-white font-medium truncate">{u.email}</div>
+                <div className="flex items-center gap-1 mt-0.5">
+                  <span className="text-[8px] bg-white/8 text-gray-400 px-1 rounded uppercase">{u.plan || 'free'}</span>
+                  {u.subscription_status && u.subscription_status !== 'active' && (
+                    <span className="text-[8px] bg-amber-500/15 text-amber-400 px-1 rounded">{u.subscription_status}</span>
+                  )}
+                </div>
               </div>
+              <span className={`text-[8px] font-bold px-1 py-0.5 rounded text-center ${billingCls}`}>{billing}</span>
+              <span className="text-[10px] text-gray-400 font-mono text-center">{u.hosting_count ?? '—'}</span>
+              <span className={`text-[10px] font-mono ${cpuColor(u.avg_cpu_pct)}`}>{fmtPct(u.avg_cpu_pct)}</span>
+              <span className="text-[10px] text-gray-400 font-mono">{fmtMb(u.total_ram_mb)}</span>
+              <span className="text-[10px] text-emerald-400 font-mono">{fmtUsd(u.revenue)}</span>
+              <span className="text-[10px] text-amber-400 font-mono">{fmtUsd(u.estimated_cost)}</span>
+              <span className={`text-[10px] font-mono font-bold ${marginColor(profit)}`}>{fmtUsd(profit)}</span>
+              <span className={`text-[10px] font-mono font-bold ${marginColor(profit)}`}>
+                {u.revenue > 0 ? `${Math.round((profit / u.revenue) * 100)}%` : '—'}
+              </span>
+              <RecBadge rec={u.recommendation} />
             </div>
-            <span className="text-[10px] text-gray-400 font-mono text-center">{u.hosting_count ?? '—'}</span>
-            <span className={`text-[10px] font-mono ${cpuColor(u.avg_cpu_pct)}`}>{fmtPct(u.avg_cpu_pct)}</span>
-            <span className="text-[10px] text-gray-400 font-mono">{fmtMb(u.total_ram_mb)}</span>
-            <span className="text-[10px] text-gray-400 font-mono">{fmtMb(u.total_backup_mb)}</span>
-            <span className="text-[10px] text-emerald-400 font-mono">{fmtUsd(u.revenue)}</span>
-            <span className="text-[10px] text-gray-400 font-mono">{fmtUsd(u.estimated_cost)}</span>
-            <span className={`text-[10px] font-mono font-bold ${marginColor(u.margin)}`}>{fmtUsd(u.margin)}</span>
-            <RecBadge rec={u.recommendation} />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

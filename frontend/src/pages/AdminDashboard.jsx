@@ -36,6 +36,7 @@ import OnlineUsersCard from '../components/admin/OnlineUsersCard';
 import ActivityTimeline from '../components/admin/ActivityTimeline';
 import SecurityCenter from '../components/admin/SecurityCenter';
 import ResourceUsage from '../components/admin/ResourceUsage';
+import UnitEconomics from '../components/admin/UnitEconomics';
 
 /* ─── helpers ─────────────────────────────────────────────── */
 function groupBy(arr, key) {
@@ -1263,6 +1264,7 @@ export default function AdminDashboard() {
                   </div>
                 </Section>
               </div>
+              <UnitEconomics />
             </>)}
 
             {/* ══ AUDIT LOG ══ */}

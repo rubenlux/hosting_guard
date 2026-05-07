@@ -427,16 +427,23 @@ def get_resources_users(admin: dict = Depends(require_role("admin"))):
     """Per-user (tenant) aggregation: total CPU, RAM, traffic, backup, cost/margin."""
     from app.infra.db import get_connection, release_connection
 
-    # Plan revenue (monthly USD). Adjust to match actual Lemon Squeezy prices.
-    _REVENUE: dict = {"free": 0, "personal": 12, "negocio": 29, "agencia": 79}
     _COST_PER_HOSTING = 2.0  # estimated USD/month per container
 
     conn = get_connection()
     try:
         cur = conn.cursor()
+        cur.execute("SELECT plan_name, monthly_price_usd FROM plan_economics")
+        _plan_rows = cur.fetchall()
+        _REVENUE = (
+            {r["plan_name"]: float(r["monthly_price_usd"] or 0) for r in _plan_rows}
+            if _plan_rows
+            else {"free": 0, "personal": 9, "negocio": 19, "agencia": 39, "agencia_pro": 59}
+        )
         cur.execute(
             """SELECT
-                 u.user_id, u.email, u.plan, u.subscription_status,
+                 u.user_id, u.email, u.plan,
+                 COALESCE(u.billing_interval, 'yearly') AS billing_interval,
+                 u.subscription_status,
                  COUNT(DISTINCT h.hosting_id)                                 AS hosting_count,
                  -- Latest resource snapshot aggregated per user
                  ROUND(AVG(latest.cpu_pct)::numeric, 1)                      AS avg_cpu_pct,
@@ -472,7 +479,7 @@ def get_resources_users(admin: dict = Depends(require_role("admin"))):
                    FROM backups
                    WHERE hosting_id = h.hosting_id AND status = 'completed'
                ) bs ON TRUE
-               GROUP BY u.user_id, u.email, u.plan, u.subscription_status
+               GROUP BY u.user_id, u.email, u.plan, u.billing_interval, u.subscription_status
                ORDER BY total_ram_mb DESC NULLS LAST"""
         )
         rows = [dict(r) for r in cur.fetchall()]
