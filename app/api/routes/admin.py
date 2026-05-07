@@ -369,7 +369,7 @@ def get_resources_tenants(admin: dict = Depends(require_role("admin"))):
                        COALESCE(SUM(errors_5xx), 0)     AS errors_5xx_24h
                    FROM traffic_stats
                    WHERE container_name = s.container_name
-                     AND collected_at >= NOW() - INTERVAL '24 hours'
+                     AND collected_at::TIMESTAMPTZ >= NOW() - INTERVAL '24 hours'
                ) ts ON TRUE
                LEFT JOIN LATERAL (
                    SELECT ROUND(AVG(response_ms)::numeric, 0)::float AS avg_response_ms
@@ -465,7 +465,7 @@ def get_resources_users(admin: dict = Depends(require_role("admin"))):
                           COALESCE(SUM(errors_5xx), 0)     AS errors_5xx
                    FROM traffic_stats
                    WHERE container_name = h.container_name
-                     AND collected_at >= NOW() - INTERVAL '24 hours'
+                     AND collected_at::TIMESTAMPTZ >= NOW() - INTERVAL '24 hours'
                ) ts ON TRUE
                LEFT JOIN LATERAL (
                    SELECT COALESCE(SUM(size_bytes), 0) / 1048576.0 AS backup_mb
