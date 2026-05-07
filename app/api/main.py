@@ -13,7 +13,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 import time as _time_module
-from app.api.config import APP_ENV, ENABLE_ACTION_EXECUTION, ENABLE_AI_ADVISORY
+from app.api.config import APP_ENV, ENABLE_ACTION_EXECUTION, ENABLE_AI_ADVISORY, ENABLE_METRICS
 from app.api.rate_limit import limiter
 from app.api.schemas import DecisionRequest, DecisionResponse, HumanActionRequest
 from app.api.security import create_token, create_refresh_token, verify_token, revoke_token, require_role, require_not_support, SECRET, ALGO, _is_revoked
@@ -52,11 +52,16 @@ from app.infra.db import init_db_pool
 # PostgreSQL default max_connections=100 — stay well under it.
 init_db_pool(minconn=2, maxconn=20)
 
+_IS_PRODUCTION = APP_ENV == "production"
+
 app = FastAPI(
     title="Hosting Guard API",
     description="Decision API for hosting diagnostics and safety evaluation",
     version="1.16.0",
     lifespan=lifespan,
+    docs_url=None if _IS_PRODUCTION else "/docs",
+    redoc_url=None if _IS_PRODUCTION else "/redoc",
+    openapi_url=None if _IS_PRODUCTION else "/openapi.json",
 )
 
 # Servidores de repositorio de usuarios
@@ -90,8 +95,6 @@ app.include_router(billing_router)
 app.include_router(presence_router)
 app.include_router(wp_audit_router)
 
-
-_IS_PRODUCTION = APP_ENV == "production"
 
 # Flags de seguridad para cookies de sesión.
 #
@@ -1376,9 +1379,8 @@ def update_tenant_config(
 
 @app.get("/metrics")
 def metrics():
-    """
-    Expone métricas para Prometheus. Accesible internamente sin token.
-    """
+    if not ENABLE_METRICS:
+        raise HTTPException(status_code=404, detail="Not found")
     return PlainTextResponse(generate_latest())
 
 

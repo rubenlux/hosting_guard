@@ -1,7 +1,7 @@
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Paths that skip security headers entirely (internal Prometheus scrape)
-_SKIP_PATHS = frozenset({"/metrics", "/health", "/health/live", "/health/ready"})
+# Paths that skip security headers (health probes hit these at high frequency)
+_SKIP_PATHS = frozenset({"/health", "/health/live", "/health/ready"})
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -10,6 +10,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         response = await call_next(request)
+
+        # Replace the default "uvicorn" Server header to avoid fingerprinting
+        response.headers["Server"] = "hostingguard"
 
         # Prevent MIME-type sniffing
         response.headers["X-Content-Type-Options"] = "nosniff"
