@@ -1,5 +1,7 @@
 import math
-from fastapi import APIRouter, Depends
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from app.api.security import require_role
 
 router = APIRouter(prefix="/admin/finance", tags=["finance"])
@@ -64,9 +66,19 @@ def _calc_infra_cost(client: dict, cs: dict,
 
     opex = server * (1 - oh_w)
 
-    cpu_frac  = (float(client.get("avg_cpu_pct") or 0)) / max(total_cpu, 1)
-    ram_frac  = (float(client.get("total_ram_mb") or 0)) / max(total_ram, 1)
-    disk_frac = (float(client.get("total_disk_mb") or 0)) / max(total_disk, 1)
+    # Capacity-based fractions: divide by server specs when set,
+    # fall back to proportional share of all clients' totals.
+    server_cpu_pct = (cs.get("total_vcpu") or 0) * 100
+    server_ram_mb  = (cs.get("total_ram_gb") or 0) * 1024
+    server_disk_mb = (cs.get("total_disk_gb") or 0) * 1024
+
+    denom_cpu  = server_cpu_pct if server_cpu_pct > 0 else max(total_cpu,  1)
+    denom_ram  = server_ram_mb  if server_ram_mb  > 0 else max(total_ram,  1)
+    denom_disk = server_disk_mb if server_disk_mb > 0 else max(total_disk, 1)
+
+    cpu_frac  = (float(client.get("avg_cpu_pct") or 0)) / denom_cpu
+    ram_frac  = (float(client.get("total_ram_mb") or 0)) / denom_ram
+    disk_frac = (float(client.get("total_disk_mb") or 0)) / denom_disk
 
     cpu_cost  = round(cpu_w  * opex * cpu_frac,  4)
     ram_cost  = round(ram_w  * opex * ram_frac,  4)
@@ -310,3 +322,80 @@ def unit_economics_overview(_: dict = Depends(require_role("admin"))):
         "upgrade_recommended_customers": [_slim(r) for r in upgrade_rec],
         "total_clients":              n,
     }
+
+
+# ── cost-settings endpoints ───────────────────────────────────────────────────
+
+_UPDATABLE_FIELDS = {
+    "monthly_server_cost_usd", "total_vcpu", "total_ram_gb", "total_disk_gb",
+    "target_utilization_percent",
+    "cpu_cost_weight", "ram_cost_weight", "disk_cost_weight", "overhead_cost_weight",
+    "backup_cost_per_gb_month_usd", "ai_cost_per_query_usd",
+    "human_support_hourly_cost_usd", "payment_fee_percent", "payment_fee_fixed_usd",
+}
+
+
+class CostSettingsPatch(BaseModel):
+    monthly_server_cost_usd:       Optional[float] = None
+    total_vcpu:                    Optional[float] = None
+    total_ram_gb:                  Optional[float] = None
+    total_disk_gb:                 Optional[float] = None
+    target_utilization_percent:    Optional[float] = None
+    cpu_cost_weight:               Optional[float] = None
+    ram_cost_weight:               Optional[float] = None
+    disk_cost_weight:              Optional[float] = None
+    overhead_cost_weight:          Optional[float] = None
+    backup_cost_per_gb_month_usd:  Optional[float] = None
+    ai_cost_per_query_usd:         Optional[float] = None
+    human_support_hourly_cost_usd: Optional[float] = None
+    payment_fee_percent:           Optional[float] = None
+    payment_fee_fixed_usd:         Optional[float] = None
+
+
+@router.get("/cost-settings")
+def get_cost_settings_endpoint(_: dict = Depends(require_role("admin"))):
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        return _get_cost_settings(cur)
+    finally:
+        release_connection(conn)
+
+
+@router.patch("/cost-settings")
+def patch_cost_settings(body: CostSettingsPatch, _: dict = Depends(require_role("admin"))):
+    updates = {k: v for k, v in body.model_dump().items()
+               if v is not None and k in _UPDATABLE_FIELDS}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    weight_keys = {"cpu_cost_weight", "ram_cost_weight", "disk_cost_weight", "overhead_cost_weight"}
+    if any(k in updates for k in weight_keys):
+        from app.infra.db import get_connection, release_connection
+        conn2 = get_connection()
+        try:
+            cur2 = conn2.cursor()
+            cur2.execute("SELECT cpu_cost_weight, ram_cost_weight, disk_cost_weight, overhead_cost_weight FROM cost_settings WHERE id = 1")
+            row = cur2.fetchone() or {}
+        finally:
+            release_connection(conn2)
+        merged = {k: updates.get(k, float(row.get(k) or 0)) for k in weight_keys}
+        total_w = sum(merged.values())
+        if not (0.99 <= total_w <= 1.01):
+            raise HTTPException(status_code=422,
+                detail=f"Los pesos deben sumar 1.0 (actual: {total_w:.3f})")
+
+    set_clause = ", ".join(f"{k} = %({k})s" for k in updates)
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE cost_settings SET {set_clause}, updated_at = NOW() WHERE id = 1",
+            updates,
+        )
+        conn.commit()
+        return _get_cost_settings(cur)
+    finally:
+        release_connection(conn)

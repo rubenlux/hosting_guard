@@ -891,3 +891,13 @@ export const getUnitEconomicsTenants = async () => {
   const response = await api.get('/admin/finance/unit-economics/tenants');
   return response.data;
 };
+
+export const getCostSettings = async () => {
+  const response = await api.get('/admin/finance/cost-settings');
+  return response.data;
+};
+
+export const updateCostSettings = async (patch) => {
+  const response = await api.patch('/admin/finance/cost-settings', patch);
+  return response.data;
+};

@@ -778,6 +778,13 @@ _INDEXES = [
     """INSERT INTO cost_settings (id, monthly_server_cost_usd)
        VALUES (1, 18.98)
        ON CONFLICT (id) DO NOTHING""",
+    # Seed hosting server capacity defaults (2 vCPU, 4 GB RAM, 80 GB disk)
+    # COALESCE keeps any values already set by the admin
+    """UPDATE cost_settings
+       SET total_vcpu    = COALESCE(total_vcpu,    2),
+           total_ram_gb  = COALESCE(total_ram_gb,  4),
+           total_disk_gb = COALESCE(total_disk_gb, 80)
+       WHERE id = 1""",
 ]
 
 def ensure_monthly_partitions(cursor):
