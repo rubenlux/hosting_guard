@@ -125,7 +125,7 @@ function ClientCell({ email, plan, hosting_count }) {
 // ── tab: profitability table ──────────────────────────────────────────────────
 
 function ProfitabilityTable({ tenants }) {
-  const [sortBy,  setSortBy]  = useState('profit_usd');
+  const [sortBy,  setSortBy]  = useState('real_profit_usd');
   const [sortAsc, setSortAsc] = useState(false);
 
   const onSort = (col) => {
@@ -144,16 +144,27 @@ function ProfitabilityTable({ tenants }) {
 
   return (
     <div className="overflow-x-auto">
+      {/* Legend explaining the two profit columns */}
+      <div className="px-3 py-2 flex gap-4 border-b border-white/5 bg-white/2">
+        <span className="text-[8px] text-gray-600">
+          <span className="text-blue-300 font-bold">Contrib. profit</span> = Rev. neto − costos directos (backup, IA, soporte)
+        </span>
+        <span className="text-[8px] text-gray-600">
+          <span className="text-emerald-400 font-bold">Profit real</span> = Contrib. profit − costo fijo asignado (servidor / n clientes)
+        </span>
+      </div>
       <table className="w-full">
         <thead>
           <tr className="border-b border-white/5">
             <th className="px-3 py-2 text-left text-[9px] text-gray-600 uppercase tracking-wide">Cliente</th>
             {th('gross_monthly_revenue', 'Rev. bruto')}
-            {th('payment_fee_monthly', 'Fee pago')}
-            {th('net_monthly_revenue', 'Rev. neto')}
-            {th('total_cost_usd', 'Costo total')}
-            {th('profit_usd', 'Profit')}
-            {th('margin_percent', 'Margen')}
+            {th('payment_fee_monthly',   'Fee pago')}
+            {th('net_monthly_revenue',   'Rev. neto')}
+            {th('customer_direct_cost_usd', 'Costos directos')}
+            {th('contribution_profit_usd',  'Contrib. profit')}
+            {th('allocated_fixed_cost_usd', 'Fijo asign.')}
+            {th('real_profit_usd',          'Profit real')}
+            {th('real_margin_percent',       'Margen')}
             <th className="px-3 py-2 text-left text-[9px] text-gray-600 uppercase tracking-wide">Estado</th>
           </tr>
         </thead>
@@ -168,15 +179,21 @@ function ProfitabilityTable({ tenants }) {
               <tr key={t.user_id} className={`${rowCls} hover:bg-white/3 transition-colors`}>
                 <ClientCell email={t.email} plan={t.plan} hosting_count={t.hosting_count} />
                 <td className="px-3 py-2.5 text-[10px] font-mono text-blue-400">{fmtUsd(t.gross_monthly_revenue)}</td>
-                <td className="px-3 py-2.5 text-[10px] font-mono text-red-400 opacity-70">{fmtUsd(t.payment_fee_monthly)}</td>
+                <td className="px-3 py-2.5 text-[10px] font-mono text-red-400/60">{fmtUsd(t.payment_fee_monthly)}</td>
                 <td className="px-3 py-2.5 text-[10px] font-mono text-blue-300">{fmtUsd(t.net_monthly_revenue)}</td>
-                <td className="px-3 py-2.5 text-[10px] font-mono text-amber-400">{fmtUsd(t.total_cost_usd)}</td>
-                <td className={`px-3 py-2.5 text-[10px] font-mono font-bold ${profitColor(t.profit_usd)}`}>{fmtUsd(t.profit_usd)}</td>
-                <td className={`px-3 py-2.5 text-[10px] font-mono font-bold ${marginColor(t.margin_percent)}`}>{fmtPct(t.margin_percent)}</td>
+                <td className="px-3 py-2.5 text-[10px] font-mono text-amber-400">{fmtUsd(t.customer_direct_cost_usd)}</td>
+                <td className="px-3 py-2.5 text-[10px] font-mono text-blue-300/80">{fmtUsd(t.contribution_profit_usd)}</td>
+                <td className="px-3 py-2.5 text-[10px] font-mono text-red-400/60">−{fmtUsd(t.allocated_fixed_cost_usd)}</td>
+                <td className={`px-3 py-2.5 text-[10px] font-mono font-bold ${profitColor(t.real_profit_usd)}`}>
+                  {fmtUsd(t.real_profit_usd)}
+                </td>
+                <td className={`px-3 py-2.5 text-[10px] font-mono font-bold ${marginColor(t.real_margin_percent)}`}>
+                  {fmtPct(t.real_margin_percent)}
+                </td>
                 <td className="px-3 py-2.5">
                   <StatusBadge status={t.status} />
                   {t.reason && (
-                    <div className="text-[8px] text-gray-600 mt-0.5 max-w-[140px] truncate">{t.reason}</div>
+                    <div className="text-[8px] text-gray-600 mt-0.5 max-w-[120px] truncate">{t.reason}</div>
                   )}
                 </td>
               </tr>
@@ -210,6 +227,9 @@ function CostTable({ tenants }) {
 
   return (
     <div className="overflow-x-auto">
+      <div className="px-3 py-2 border-b border-white/5 bg-white/2 text-[8px] text-gray-600">
+        Asignación proporcional por capacidad del servidor — informativo. El profit real usa costo fijo/n clientes.
+      </div>
       <table className="w-full">
         <thead>
           <tr className="border-b border-white/5">
@@ -288,8 +308,8 @@ function RankingsTab({ overview }) {
         icon={Trophy}
         iconCls="text-amber-400"
         items={overview.top_profitable_customers || []}
-        valueKey="profit_usd"
-        valueLabel="profit/mes"
+        valueKey="real_profit_usd"
+        valueLabel="profit real/mes"
         valueColor={(v) => v >= 0 ? 'text-emerald-400' : 'text-red-400'}
       />
       <RankingList
@@ -336,8 +356,8 @@ function UpgradeTab({ overview }) {
               <div className="text-[9px] text-gray-500 mt-1">{r.reason}</div>
             </div>
             <div className="text-right shrink-0">
-              <div className={`text-[11px] font-mono font-bold ${profitColor(r.profit_usd)}`}>{fmtUsd(r.profit_usd)}</div>
-              <div className="text-[8px] text-gray-600">profit/mes</div>
+              <div className={`text-[11px] font-mono font-bold ${profitColor(r.real_profit_usd)}`}>{fmtUsd(r.real_profit_usd)}</div>
+              <div className="text-[8px] text-gray-600">profit real/mes</div>
             </div>
           </div>
         ))}

@@ -140,6 +140,35 @@ def _status_from_margin(margin_pct: float) -> str:
     return "unprofitable"
 
 
+def _calc_profit_metrics(net_rev: float, cost: dict, server_cost: float, n_clients: int) -> dict:
+    """Compute contribution and real (reconciling) profit metrics.
+
+    contribution_profit = net_revenue − direct variable costs (backup, AI, support)
+    allocated_fixed_cost = server_cost / n_clients  (equal share per tenant)
+    real_profit = contribution_profit − allocated_fixed_cost
+
+    Invariant: Σ real_profit == mrr_net − server_cost − Σ backup_cost
+               == global estimated_profit in the overview endpoint.
+    """
+    allocated_fixed = round(server_cost / max(1, n_clients), 4)
+    direct_variable = round(
+        cost.get("backup_cost_usd", 0) +
+        cost.get("ai_cost_usd", 0) +
+        cost.get("support_cost_usd", 0),
+        4,
+    )
+    contribution = round(net_rev - direct_variable, 2)
+    real_profit   = round(contribution - allocated_fixed, 2)
+    real_margin   = round((real_profit / net_rev * 100) if net_rev > 0 else -100.0, 1)
+    return {
+        "customer_direct_cost_usd":  direct_variable,
+        "contribution_profit_usd":   contribution,
+        "allocated_fixed_cost_usd":  allocated_fixed,
+        "real_profit_usd":           real_profit,
+        "real_margin_percent":       real_margin,
+    }
+
+
 def _build_tenant_rows(cur, plan_ec: dict, cs: dict) -> list:
     cur.execute(
         """SELECT
@@ -190,6 +219,7 @@ def unit_economics_tenants(_: dict = Depends(require_role("admin"))):
     total_ram  = sum(float(c.get("total_ram_mb") or 0) for c in clients)
     total_disk = sum(float(c.get("total_disk_mb") or 0) for c in clients)
     n          = len(clients)
+    server_cost_m = cs.get("monthly_server_cost_usd") or 18.98
 
     rows = []
     for c in clients:
@@ -197,14 +227,11 @@ def unit_economics_tenants(_: dict = Depends(require_role("admin"))):
                              c.get("billing_interval") or "yearly",
                              plan_ec, cs)
         cost = _calc_infra_cost(c, cs, total_cpu, total_ram, total_disk, n)
+        pm   = _calc_profit_metrics(rev["net_monthly_revenue"], cost, server_cost_m, n)
 
         total_cost  = round(sum(cost.values()), 2)
-        net_rev     = rev["net_monthly_revenue"]
-        profit      = round(net_rev - total_cost, 2)
-        margin_pct  = round((profit / net_rev * 100) if net_rev > 0 else -100.0, 1)
-
-        rec, reason = _recommendation(c, plan_ec, margin_pct)
-        status      = rec if rec in ("upgrade_recommended","possible_abuse") else _status_from_margin(margin_pct)
+        rec, reason = _recommendation(c, plan_ec, pm["real_margin_percent"])
+        status      = rec if rec in ("upgrade_recommended","possible_abuse") else _status_from_margin(pm["real_margin_percent"])
 
         rows.append({
             "user_id":               c["user_id"],
@@ -219,15 +246,17 @@ def unit_economics_tenants(_: dict = Depends(require_role("admin"))):
             "total_backup_mb":       float(c.get("total_backup_mb") or 0),
             **rev,
             **cost,
+            **pm,
             "total_cost_usd":        total_cost,
-            "profit_usd":            profit,
-            "margin_percent":        margin_pct,
+            # backward-compat aliases so the overview _slim and old callers still work
+            "profit_usd":            pm["real_profit_usd"],
+            "margin_percent":        pm["real_margin_percent"],
             "status":                status,
             "recommendation":        rec,
             "reason":                reason,
         })
 
-    rows.sort(key=lambda x: x["profit_usd"], reverse=True)
+    rows.sort(key=lambda x: x["real_profit_usd"], reverse=True)
     return {"items": rows, "count": len(rows)}
 
 
@@ -247,6 +276,7 @@ def unit_economics_overview(_: dict = Depends(require_role("admin"))):
     total_ram  = sum(float(c.get("total_ram_mb") or 0) for c in clients)
     total_disk = sum(float(c.get("total_disk_mb") or 0) for c in clients)
     n          = len(clients)
+    server_cost_m = cs.get("monthly_server_cost_usd") or 18.98
 
     tenant_rows = []
     for c in clients:
@@ -254,15 +284,13 @@ def unit_economics_overview(_: dict = Depends(require_role("admin"))):
                              c.get("billing_interval") or "yearly",
                              plan_ec, cs)
         cost = _calc_infra_cost(c, cs, total_cpu, total_ram, total_disk, n)
+        pm   = _calc_profit_metrics(rev["net_monthly_revenue"], cost, server_cost_m, n)
         total_cost  = round(sum(cost.values()), 2)
-        net_rev     = rev["net_monthly_revenue"]
-        profit      = round(net_rev - total_cost, 2)
-        margin_pct  = round((profit / net_rev * 100) if net_rev > 0 else -100.0, 1)
-        rec, reason = _recommendation(c, plan_ec, margin_pct)
-        tenant_rows.append({**c, **rev, **cost,
+        rec, reason = _recommendation(c, plan_ec, pm["real_margin_percent"])
+        tenant_rows.append({**c, **rev, **cost, **pm,
                             "total_cost_usd": total_cost,
-                            "profit_usd": profit,
-                            "margin_percent": margin_pct,
+                            "profit_usd": pm["real_profit_usd"],
+                            "margin_percent": pm["real_margin_percent"],
                             "recommendation": rec, "reason": reason})
 
     mrr_gross = round(sum(r["gross_monthly_revenue"] for r in tenant_rows), 2)
@@ -274,8 +302,8 @@ def unit_economics_overview(_: dict = Depends(require_role("admin"))):
     gross_margin  = round((profit_total / mrr_net * 100) if mrr_net > 0 else -100.0, 1)
     break_even_gap = round(max(0.0, monthly_total - mrr_net), 2)
 
-    profitable_count   = sum(1 for r in tenant_rows if r["profit_usd"] >= 0)
-    unprofitable_count = sum(1 for r in tenant_rows if r["profit_usd"] < 0)
+    profitable_count   = sum(1 for r in tenant_rows if r["real_profit_usd"] >= 0)
+    unprofitable_count = sum(1 for r in tenant_rows if r["real_profit_usd"] < 0)
 
     # Customers needed per plan to cover break-even gap
     def _needed(plan_name: str) -> int:
@@ -293,16 +321,21 @@ def unit_economics_overview(_: dict = Depends(require_role("admin"))):
 
     by_plan = {p: _needed(p) for p in ("personal", "negocio", "agencia", "agencia_pro", "enterprise_annual")}
 
-    top_profitable = sorted(tenant_rows, key=lambda x: x["profit_usd"], reverse=True)[:5]
+    top_profitable = sorted(tenant_rows, key=lambda x: x["real_profit_usd"], reverse=True)[:5]
     top_expensive  = sorted(tenant_rows, key=lambda x: x["total_cost_usd"], reverse=True)[:5]
     upgrade_rec    = [r for r in tenant_rows if r["recommendation"] in
                       ("upgrade_recommended", "possible_abuse", "unprofitable")][:10]
 
     def _slim(r: dict) -> dict:
-        return {k: r[k] for k in
-                ("user_id","email","plan","profit_usd","total_cost_usd",
-                 "gross_monthly_revenue","net_monthly_revenue","margin_percent",
-                 "recommendation","reason","hosting_count")}
+        return {k: r[k] for k in (
+            "user_id", "email", "plan", "hosting_count",
+            "gross_monthly_revenue", "net_monthly_revenue",
+            "customer_direct_cost_usd", "contribution_profit_usd",
+            "allocated_fixed_cost_usd", "real_profit_usd", "real_margin_percent",
+            # backward-compat aliases
+            "profit_usd", "margin_percent", "total_cost_usd",
+            "recommendation", "reason",
+        )}
 
     return {
         "am_i_profitable":            profit_total > 0,
