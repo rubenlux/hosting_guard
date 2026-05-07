@@ -176,8 +176,8 @@ const Pricing = ({ onSelectPlan }) => {
               }`}
             >
               {plan.badge && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                  <span className="bg-primary text-background text-[10px] font-black px-4 py-1 rounded-full tracking-widest">
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                  <span className="bg-primary text-background text-[10px] font-black px-3 py-1 rounded-full tracking-wider whitespace-nowrap">
                     {plan.badge}
                   </span>
                 </div>
