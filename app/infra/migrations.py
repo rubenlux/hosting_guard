@@ -276,6 +276,15 @@ _MIGRATIONS_PG = [
         expires_at TIMESTAMPTZ,
         error TEXT
     )""",
+    """CREATE TABLE IF NOT EXISTS uptime_checks (
+        id SERIAL PRIMARY KEY,
+        hosting_id INTEGER NOT NULL REFERENCES hostings(hosting_id) ON DELETE CASCADE,
+        checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        is_up INTEGER NOT NULL DEFAULT 0,
+        response_ms INTEGER,
+        status_code INTEGER
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_uptime_checks_hosting_time ON uptime_checks(hosting_id, checked_at DESC)",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_backup_codes TEXT",
