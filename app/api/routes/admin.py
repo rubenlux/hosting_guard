@@ -1273,6 +1273,16 @@ def get_unit_economics(_: dict = Depends(require_role("admin"))):
     try:
         cursor = conn.cursor()
 
+        # Plan revenue from plan_economics (source of truth)
+        cursor.execute("SELECT plan_name, monthly_price_usd FROM plan_economics")
+        _pe_rows = cursor.fetchall()
+        PLAN_REVENUE = (
+            {r["plan_name"]: float(r["monthly_price_usd"] or 0) for r in _pe_rows}
+            if _pe_rows
+            else {"free": 0.0, "personal": 9.0, "negocio": 19.0, "agencia": 39.0,
+                  "agencia_pro": 59.0, "enterprise_annual": 99.0, "enterprise_monthly": 129.0}
+        )
+
         # Get active hostings joined with user data
         cursor.execute("""
             SELECT
@@ -1302,14 +1312,6 @@ def get_unit_economics(_: dict = Depends(require_role("admin"))):
         return {"error": str(exc), "tenants": []}
     finally:
         release_connection(conn)
-
-    # Plan monthly revenue estimates (override with real payments when available)
-    PLAN_REVENUE = {
-        "free":     0.0,
-        "personal": 9.0,
-        "negocio":  19.0,
-        "agencia":  39.0,
-    }
 
     tenants = []
     total_cpu_used = total_ram_used = total_disk_used = 0.0
