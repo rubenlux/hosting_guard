@@ -20,6 +20,17 @@ logger = logging.getLogger(__name__)
 _LS_API_BASE = "https://api.lemonsqueezy.com/v1"
 
 
+def _log_billing(user_id: int, event_type: str, title: str,
+                 plan: str | None = None, severity: str = "info") -> None:
+    try:
+        from app.services.activity_service import log_event
+        log_event(user_id=user_id, event_type=event_type, category="billing",
+                  severity=severity, title=title, source="webhook",
+                  metadata={"plan": plan} if plan else {})
+    except Exception:
+        pass
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _verify_signature(body: bytes, signature: str) -> bool:
@@ -94,6 +105,15 @@ async def create_checkout(body: CheckoutRequest, current_user: dict = Depends(ve
         raise HTTPException(status_code=502, detail="Error al crear el checkout en Lemon Squeezy")
 
     url: str = resp.json()["data"]["attributes"]["url"]
+    try:
+        from app.services.activity_service import log_event
+        log_event(user_id=current_user["user_id"],
+                  event_type="checkout_started", category="billing", severity="info",
+                  title=f"Checkout iniciado: plan {body.plan}",
+                  source="dashboard",
+                  metadata={"plan": body.plan, "variant_id": str(variant_id)})
+    except Exception:
+        pass
     return {"url": url}
 
 
@@ -167,12 +187,14 @@ async def _process_webhook(event_name: str, meta: dict, data: dict) -> None:
             subscription_status="active",
             **base)
         logger.info("User %s → plan=%s sub=%s", uid, plan_from_variant, subscription_id)
+        _log_billing(uid, "subscription_created", f"Suscripción creada: plan {plan_from_variant}", plan_from_variant)
 
     elif event_name in ("subscription_updated", "subscription_resumed"):
         _user_repo.update_billing_subscription(uid,
             plan=plan_from_variant,
             subscription_status=status,
             **base)
+        _log_billing(uid, "subscription_updated", f"Suscripción actualizada: plan {plan_from_variant}", plan_from_variant)
 
     elif event_name == "subscription_cancelled":
         # Service remains active until current_period_end — do NOT downgrade plan yet
@@ -183,12 +205,14 @@ async def _process_webhook(event_name: str, meta: dict, data: dict) -> None:
             current_period_end=period_end,
             ls_customer_portal_url=portal_url)
         logger.info("User %s cancelled; active until %s", uid, period_end)
+        _log_billing(uid, "subscription_cancelled", f"Suscripción cancelada; activa hasta {period_end}", severity="warning")
 
     elif event_name == "subscription_expired":
         # Period truly ended — downgrade to free
         _user_repo.update_billing_subscription(uid, plan="free",
             subscription_status="expired", **base)
         logger.info("User %s subscription expired → free", uid)
+        _log_billing(uid, "subscription_cancelled", "Suscripción expirada — downgrade a free", severity="warning")
 
     elif event_name == "subscription_payment_failed":
         _user_repo.update_billing_subscription(uid, subscription_status="past_due", **base)
@@ -202,10 +226,12 @@ async def _process_webhook(event_name: str, meta: dict, data: dict) -> None:
             _user_email=user.get("email"),
         )
         logger.warning("User %s payment failed — past_due", uid)
+        _log_billing(uid, "payment_failed", "Pago fallido — estado: past_due", severity="critical")
 
     elif event_name == "subscription_payment_success":
         _user_repo.update_billing_subscription(uid, subscription_status="active", **base)
         logger.info("User %s payment success, renewed until %s", uid, period_end)
+        _log_billing(uid, "payment_success", f"Pago exitoso — renovado hasta {period_end}")
 
     elif event_name == "order_created":
         # order_created fires alongside subscription_created for new subscriptions.

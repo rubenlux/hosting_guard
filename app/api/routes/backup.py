@@ -161,4 +161,13 @@ def delete_backup(backup_id: int, user: dict = Depends(verify_token)):
         )
 
     _delete(backup_id, user_id=user_id, admin=False)
+    try:
+        from app.services.activity_service import log_event
+        log_event(user_id=user_id, hosting_id=backup["hosting_id"],
+                  event_type="backup_deleted", category="backup", severity="warning",
+                  title=f"Backup eliminado #{backup_id}",
+                  source="dashboard",
+                  metadata={"backup_id": backup_id, "status_was": backup["status"]})
+    except Exception:
+        pass
     return {"status": "deleted", "backup_id": backup_id}

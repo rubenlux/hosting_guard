@@ -133,17 +133,34 @@ def collect_resource_usage() -> None:
     if not samples:
         return
 
+    # 3b. Disk usage — best-effort df per container (5 s timeout, no hard failure)
+    disk_by_container: dict = {}
+    for _, _, cname, _, _, _, _, _ in samples:
+        try:
+            r = subprocess.run(
+                ["docker", "exec", cname, "df", "-k", "/var/www/html"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for df_line in r.stdout.splitlines()[1:]:
+                parts = df_line.split()
+                if len(parts) >= 3:
+                    disk_by_container[cname] = int(parts[2]) / 1024.0  # KB used → MB
+                    break
+        except Exception:
+            pass
+
     # 4. Insert samples one by one (_AdaptedCursor does not support executemany)
     _INSERT = (
         "INSERT INTO hosting_resource_samples"
-        " (hosting_id, user_id, container_name, cpu_pct, mem_mb, mem_limit_mb, net_rx_mb, net_tx_mb)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+        " (hosting_id, user_id, container_name, cpu_pct, mem_mb, mem_limit_mb, net_rx_mb, net_tx_mb, disk_mb)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
     )
     conn = get_connection()
     try:
         cur = conn.cursor()
         for row in samples:
-            cur.execute(_INSERT, row)
+            disk_mb = disk_by_container.get(row[2])  # row[2] = container_name
+            cur.execute(_INSERT, (*row, disk_mb))
         conn.commit()
         logger.info("collect_resource_usage: inserted %d samples", len(samples))
     except Exception as exc:

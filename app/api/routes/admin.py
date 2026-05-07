@@ -129,12 +129,21 @@ async def get_all_hostings_metrics(request: Request, _: dict = Depends(require_r
 
 
 @router.get("/users/{user_id}/full")
-def get_user_full(user_id: int, _: dict = Depends(require_role("admin"))):
+def get_user_full(user_id: int, request: Request, admin: dict = Depends(require_role("admin"))):
     profile = _user_repo.get_user_by_id(user_id)
     if not profile:
         raise HTTPException(status_code=404, detail="User not found")
     for _sensitive in ("password_hash", "totp_secret", "totp_backup_codes"):
         profile.pop(_sensitive, None)
+    try:
+        from app.services.activity_service import log_event as _log
+        _log(user_id=admin["user_id"], actor_type="admin", actor_email=admin.get("email"),
+             event_type="admin_viewed_user", category="admin", severity="info",
+             title=f"Admin vio perfil de {profile.get('email', user_id)}",
+             ip=_get_ip(request), source="admin",
+             metadata={"target_user_id": user_id, "target_email": profile.get("email")})
+    except Exception:
+        pass
 
     hostings = _hosting_repo.get_user_hostings(user_id)
     activity = _hosting_repo.get_orchestrator_events(user_id, limit=30, skip=0)
@@ -170,21 +179,19 @@ def get_user_full(user_id: int, _: dict = Depends(require_role("admin"))):
 
 @router.get("/users/online")
 def get_online_users(admin: dict = Depends(require_role("admin"))):
-    """Return presence summary + all sessions active in the last 30 minutes."""
-    from app.infra.audit.session_repository import get_presence_summary, get_all_active_sessions
+    """Return presence summary + unique users (grouped) with their sessions."""
+    from app.infra.audit.session_repository import get_presence_summary, get_grouped_users
     from app.services.activity_service import mask_ip
     from datetime import datetime, timezone
 
     summary = get_presence_summary()
-    sessions_raw = get_all_active_sessions(limit=200)
+    raw_users = get_grouped_users()
 
     now = datetime.now(timezone.utc)
-    sessions = []
-    for s in sessions_raw:
-        last = s.get("last_seen")
-        if hasattr(last, "total_seconds"):
-            delta_s = last.total_seconds()
-        elif last:
+    users = []
+    for u in raw_users:
+        last = u.get("last_seen")
+        if last:
             diff = now - last if last.tzinfo else now - last.replace(tzinfo=timezone.utc)
             delta_s = diff.total_seconds()
         else:
@@ -197,25 +204,32 @@ def get_online_users(admin: dict = Depends(require_role("admin"))):
         else:
             status = "idle"
 
-        ua = s.get("user_agent") or ""
-        device = _parse_device(ua)
+        sessions = [
+            {
+                **s,
+                "ip":     mask_ip(s.get("ip")),
+                "device": _parse_device(s.get("user_agent") or ""),
+            }
+            for s in u.get("sessions", [])
+        ]
 
-        sessions.append({
-            "session_id":      s["session_id"],
-            "user_id":         s["user_id"],
-            "email":           s["email"],
-            "plan":            s.get("plan", "free"),
-            "role":            s.get("role", "user"),
-            "subscription_status": s.get("subscription_status"),
-            "status":          status,
-            "last_seen":       s.get("last_seen"),
-            "current_path":    s.get("current_path"),
-            "ip":              mask_ip(s.get("ip")),
-            "device":          device,
-            "session_started": s.get("created_at"),
+        users.append({
+            "user_id":            u["user_id"],
+            "email":              u["email"],
+            "plan":               u.get("plan", "free"),
+            "role":               u.get("role", "user"),
+            "subscription_status": u.get("subscription_status"),
+            "status":             status,
+            "last_seen":          u.get("last_seen"),
+            "current_path":       u.get("current_path"),
+            "ip":                 mask_ip(u.get("ip")),
+            "device":             _parse_device(u.get("user_agent") or ""),
+            "session_count":      len(sessions),
+            "sessions":           sessions,
         })
 
-    return {**summary, "sessions": sessions}
+    # keep "sessions" key for any existing callers
+    return {**summary, "users": users, "sessions": users}
 
 
 def _parse_device(ua: str) -> str:
@@ -324,24 +338,167 @@ def get_resources_overview(admin: dict = Depends(require_role("admin"))):
 
 @router.get("/resources/tenants")
 def get_resources_tenants(admin: dict = Depends(require_role("admin"))):
-    """Latest resource snapshot per hosting (for the tenant resource table)."""
+    """Latest resource snapshot per hosting, enriched with traffic, uptime, backup and restart data."""
     from app.infra.db import get_connection, release_connection
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
             """SELECT DISTINCT ON (s.hosting_id)
-                 s.hosting_id, h.name, h.subdomain, u.email AS user_email,
+                 s.hosting_id, h.name, h.subdomain, h.status,
+                 u.email AS user_email, u.plan,
                  s.container_name, s.cpu_pct, s.mem_mb, s.mem_limit_mb,
-                 s.net_rx_mb, s.net_tx_mb, s.sampled_at
+                 s.net_rx_mb, s.net_tx_mb,
+                 COALESCE(s.disk_mb, NULL)              AS disk_mb,
+                 s.sampled_at,
+                 -- Traffic last 24 h
+                 ts.requests_24h, ts.errors_4xx_24h, ts.errors_5xx_24h,
+                 -- Avg response time
+                 uc.avg_response_ms,
+                 -- Backup storage (all completed backups)
+                 COALESCE(bs.backup_mb, 0)              AS backup_storage_mb,
+                 -- Restarts last 24 h
+                 COALESCE(rc.restart_count, 0)          AS restart_count_24h
                FROM hosting_resource_samples s
                JOIN hostings h USING (hosting_id)
                JOIN users u ON u.user_id = h.user_id
+               LEFT JOIN LATERAL (
+                   SELECT
+                       COALESCE(SUM(total_requests), 0) AS requests_24h,
+                       COALESCE(SUM(errors_4xx), 0)     AS errors_4xx_24h,
+                       COALESCE(SUM(errors_5xx), 0)     AS errors_5xx_24h
+                   FROM traffic_stats
+                   WHERE container_name = s.container_name
+                     AND collected_at >= NOW() - INTERVAL '24 hours'
+               ) ts ON TRUE
+               LEFT JOIN LATERAL (
+                   SELECT ROUND(AVG(response_ms)::numeric, 0)::float AS avg_response_ms
+                   FROM uptime_checks
+                   WHERE hosting_id = s.hosting_id
+                     AND checked_at >= NOW() - INTERVAL '24 hours'
+                     AND response_ms IS NOT NULL
+               ) uc ON TRUE
+               LEFT JOIN LATERAL (
+                   SELECT COALESCE(SUM(size_bytes), 0) / 1048576.0 AS backup_mb
+                   FROM backups
+                   WHERE hosting_id = s.hosting_id AND status = 'completed'
+               ) bs ON TRUE
+               LEFT JOIN LATERAL (
+                   SELECT COUNT(*) AS restart_count
+                   FROM activity_events
+                   WHERE hosting_id = s.hosting_id
+                     AND event_type = 'hosting_restarted'
+                     AND created_at >= NOW() - INTERVAL '24 hours'
+               ) rc ON TRUE
                WHERE s.sampled_at >= NOW() - INTERVAL '5 minutes'
                ORDER BY s.hosting_id, s.sampled_at DESC"""
         )
         rows = [dict(r) for r in cur.fetchall()]
+
+        for r in rows:
+            r["recommendation"] = _compute_recommendation(r)
+
         rows.sort(key=lambda x: x.get("cpu_pct") or 0, reverse=True)
+        return {"items": rows, "count": len(rows)}
+    finally:
+        release_connection(conn)
+
+
+def _compute_recommendation(r: dict) -> str:
+    cpu  = r.get("cpu_pct") or 0
+    mem  = r.get("mem_mb") or 0
+    lim  = r.get("mem_limit_mb") or 0
+    e5xx = r.get("errors_5xx_24h") or 0
+    rst  = r.get("restart_count_24h") or 0
+    plan = r.get("plan", "free")
+    mem_ratio = (mem / lim) if lim else 0
+
+    if rst > 3 or e5xx > 20:
+        return "revisar"
+    if (cpu > 80 or mem_ratio > 0.9) and plan == "free":
+        return "posible_abuso"
+    if cpu > 70 or mem_ratio > 0.85:
+        return "upgrade"
+    return "ok"
+
+
+@router.get("/resources/users")
+def get_resources_users(admin: dict = Depends(require_role("admin"))):
+    """Per-user (tenant) aggregation: total CPU, RAM, traffic, backup, cost/margin."""
+    from app.infra.db import get_connection, release_connection
+
+    # Plan revenue (monthly USD). Adjust to match actual Lemon Squeezy prices.
+    _REVENUE: dict = {"free": 0, "personal": 12, "negocio": 29, "agencia": 79}
+    _COST_PER_HOSTING = 2.0  # estimated USD/month per container
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT
+                 u.user_id, u.email, u.plan, u.subscription_status,
+                 COUNT(DISTINCT h.hosting_id)                                 AS hosting_count,
+                 -- Latest resource snapshot aggregated per user
+                 ROUND(AVG(latest.cpu_pct)::numeric, 1)                      AS avg_cpu_pct,
+                 ROUND(SUM(latest.mem_mb)::numeric, 0)                       AS total_ram_mb,
+                 ROUND(SUM(latest.disk_mb)::numeric, 0)                      AS total_disk_mb,
+                 ROUND(SUM(latest.net_rx_mb)::numeric, 1)                    AS total_net_rx_mb,
+                 ROUND(SUM(latest.net_tx_mb)::numeric, 1)                    AS total_net_tx_mb,
+                 -- Traffic last 24 h (all hostings)
+                 COALESCE(SUM(ts.requests_24h), 0)                           AS requests_24h,
+                 COALESCE(SUM(ts.errors_4xx), 0) + COALESCE(SUM(ts.errors_5xx), 0) AS errors_24h,
+                 -- Backup storage
+                 COALESCE(SUM(bs.backup_mb), 0)                              AS total_backup_mb
+               FROM users u
+               JOIN hostings h ON h.user_id = u.user_id AND h.status NOT IN ('deleted','expired')
+               -- Latest resource sample per hosting (within 5 min)
+               LEFT JOIN LATERAL (
+                   SELECT cpu_pct, mem_mb, disk_mb, net_rx_mb, net_tx_mb
+                   FROM hosting_resource_samples
+                   WHERE hosting_id = h.hosting_id
+                     AND sampled_at >= NOW() - INTERVAL '5 minutes'
+                   ORDER BY sampled_at DESC LIMIT 1
+               ) latest ON TRUE
+               LEFT JOIN LATERAL (
+                   SELECT COALESCE(SUM(total_requests), 0) AS requests_24h,
+                          COALESCE(SUM(errors_4xx), 0)     AS errors_4xx,
+                          COALESCE(SUM(errors_5xx), 0)     AS errors_5xx
+                   FROM traffic_stats
+                   WHERE container_name = h.container_name
+                     AND collected_at >= NOW() - INTERVAL '24 hours'
+               ) ts ON TRUE
+               LEFT JOIN LATERAL (
+                   SELECT COALESCE(SUM(size_bytes), 0) / 1048576.0 AS backup_mb
+                   FROM backups
+                   WHERE hosting_id = h.hosting_id AND status = 'completed'
+               ) bs ON TRUE
+               GROUP BY u.user_id, u.email, u.plan, u.subscription_status
+               ORDER BY total_ram_mb DESC NULLS LAST"""
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+        for r in rows:
+            plan = r.get("plan") or "free"
+            revenue = _REVENUE.get(plan, 0)
+            cost    = float(r.get("hosting_count") or 0) * _COST_PER_HOSTING
+            margin  = revenue - cost
+
+            r["estimated_cost"] = round(cost, 2)
+            r["revenue"]        = revenue
+            r["margin"]         = round(margin, 2)
+
+            cpu  = r.get("avg_cpu_pct") or 0
+            ram  = r.get("total_ram_mb") or 0
+            err  = r.get("errors_24h") or 0
+            if margin < 0 and plan != "free":
+                r["recommendation"] = "margen_negativo"
+            elif (cpu > 70 or ram > 800) and plan == "free":
+                r["recommendation"] = "posible_abuso"
+            elif cpu > 70 or err > 50:
+                r["recommendation"] = "revisar"
+            else:
+                r["recommendation"] = "ok"
+
         return {"items": rows, "count": len(rows)}
     finally:
         release_connection(conn)
@@ -1512,6 +1669,16 @@ async def admin_upgrade_plan(
             f"Hostings afectados: {len(hostings)}."
         ),
     )
+    try:
+        from app.services.activity_service import log_event as _log
+        _log(user_id=admin["user_id"], actor_type="admin", actor_email=admin.get("email"),
+             event_type="admin_changed_plan", category="admin", severity="warning",
+             title=f"Admin cambió plan de {user.get('email', user_id)} → {body.plan}",
+             ip=_get_ip(request), source="admin",
+             metadata={"target_user_id": user_id, "target_email": user.get("email"),
+                       "new_plan": body.plan, "hostings_updated": len(hostings)})
+    except Exception:
+        pass
     return {
         "ok": True,
         "plan": body.plan,
@@ -1557,6 +1724,17 @@ async def admin_delete_user(user_id: int, admin: dict = Depends(require_role("ad
     deleted = _user_repo.delete_user(user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    try:
+        from app.services.activity_service import log_event as _log
+        _log(user_id=admin["user_id"], actor_type="admin", actor_email=admin.get("email"),
+             event_type="admin_deleted_user", category="admin", severity="critical",
+             title=f"Admin eliminó cuenta: {target['email']}",
+             source="admin",
+             metadata={"deleted_user_id": user_id, "deleted_email": target["email"],
+                       "hostings_removed": len(hostings)})
+    except Exception:
+        pass
 
     return {
         "ok": True,
@@ -1713,6 +1891,15 @@ def admin_broadcast_notification(
         ip=_get_ip(request),
         details=f"target={body.target_type} sent={count} title={body.title[:60]!r}",
     )
+    try:
+        from app.services.activity_service import log_event as _log
+        _log(user_id=admin["user_id"], actor_type="admin", actor_email=admin.get("email"),
+             event_type="admin_sent_notification", category="admin", severity="info",
+             title=f"Admin envió notificación: {body.title[:80]}",
+             ip=_get_ip(request), source="admin",
+             metadata={"target_type": body.target_type, "sent": count, "category": body.category})
+    except Exception:
+        pass
 
     return {"ok": True, "sent": count, "target_type": body.target_type}
 
@@ -1810,6 +1997,15 @@ def resolve_security_event(
         ip=_get_ip(request),
         details=f"event_id={event_id}",
     )
+    try:
+        from app.services.activity_service import log_event as _log
+        _log(user_id=admin["user_id"], actor_type="admin", actor_email=admin.get("email"),
+             event_type="admin_resolved_security_event", category="admin", severity="info",
+             title=f"Admin resolvió evento de seguridad #{event_id}",
+             ip=_get_ip(request), source="admin",
+             metadata={"security_event_id": event_id})
+    except Exception:
+        pass
     return {"ok": True, "event_id": event_id}
 
 

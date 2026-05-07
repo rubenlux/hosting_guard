@@ -111,15 +111,15 @@ def get_online_users(window_seconds: int = _ONLINE_SECONDS) -> list:
 
 
 def get_presence_summary() -> dict:
-    """Count sessions by presence bucket."""
+    """Count *unique users* by presence bucket."""
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
             """SELECT
-                 COUNT(*) FILTER (WHERE last_seen >= NOW() - INTERVAL '2 minutes')  AS online_now,
-                 COUNT(*) FILTER (WHERE last_seen >= NOW() - INTERVAL '15 minutes') AS active_15m,
-                 COUNT(*) FILTER (WHERE last_seen >= NOW() - INTERVAL '30 minutes') AS idle_30m
+                 COUNT(DISTINCT user_id) FILTER (WHERE last_seen >= NOW() - INTERVAL '2 minutes')  AS online_now,
+                 COUNT(DISTINCT user_id) FILTER (WHERE last_seen >= NOW() - INTERVAL '15 minutes') AS active_15m,
+                 COUNT(DISTINCT user_id) FILTER (WHERE last_seen >= NOW() - INTERVAL '30 minutes') AS idle_30m
                FROM user_sessions
                WHERE is_active = TRUE"""
         )
@@ -129,8 +129,58 @@ def get_presence_summary() -> dict:
         release_connection(conn)
 
 
+def get_grouped_users() -> list:
+    """Return unique users with their active sessions collapsed into a 'sessions' list.
+
+    Ordered by most recent last_seen. Only sessions active in the last 30 min.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT s.session_id, s.user_id, s.email, s.ip, s.user_agent,
+                      s.current_path, s.last_seen, s.created_at,
+                      u.plan, u.role, u.subscription_status
+               FROM user_sessions s
+               LEFT JOIN users u USING (user_id)
+               WHERE s.is_active = TRUE
+                 AND s.last_seen >= NOW() - INTERVAL '30 minutes'
+               ORDER BY s.last_seen DESC"""
+        )
+        sessions = [dict(r) for r in cur.fetchall()]
+
+        # Group by user_id — first row per user is most recent (due to ORDER BY)
+        users: dict = {}
+        for s in sessions:
+            uid = s["user_id"]
+            if uid not in users:
+                users[uid] = {
+                    "user_id":            uid,
+                    "email":              s["email"],
+                    "plan":               s.get("plan", "free"),
+                    "role":               s.get("role", "user"),
+                    "subscription_status": s.get("subscription_status"),
+                    "last_seen":          s["last_seen"],
+                    "current_path":       s["current_path"],
+                    "ip":                 s["ip"],
+                    "user_agent":         s["user_agent"],
+                    "sessions":           [],
+                }
+            users[uid]["sessions"].append({
+                "session_id":    s["session_id"],
+                "ip":            s["ip"],
+                "user_agent":    s["user_agent"],
+                "current_path":  s["current_path"],
+                "last_seen":     s["last_seen"],
+                "session_started": s["created_at"],
+            })
+        return list(users.values())
+    finally:
+        release_connection(conn)
+
+
 def get_all_active_sessions(limit: int = 100) -> list:
-    """All sessions active in the last 30 min — for the admin table."""
+    """All sessions active in the last 30 min — kept for backwards compatibility."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -151,18 +201,24 @@ def get_all_active_sessions(limit: int = 100) -> list:
         release_connection(conn)
 
 
-def cleanup_sessions(inactive_days: int = 30) -> int:
-    """Mark expired sessions inactive; delete rows older than inactive_days. Returns deleted count."""
+def cleanup_sessions(inactive_days: int = 7) -> int:
+    """Mark stale sessions inactive; hard-delete rows not seen for inactive_days. Returns deleted count."""
     conn = get_connection()
     try:
         cur = conn.cursor()
-        # Mark expired (token TTL passed)
+        # Mark sessions inactive when last_seen > 30 minutes (state-based, not token TTL)
+        cur.execute(
+            """UPDATE user_sessions SET is_active = FALSE
+               WHERE is_active = TRUE
+                 AND last_seen < NOW() - INTERVAL '30 minutes'"""
+        )
+        # Also mark expired by token TTL
         cur.execute(
             "UPDATE user_sessions SET is_active = FALSE WHERE expires_at < NOW() AND is_active = TRUE"
         )
-        # Hard-delete very old rows
+        # Hard-delete rows not seen for inactive_days (prevents unbounded growth)
         cur.execute(
-            "DELETE FROM user_sessions WHERE created_at < NOW() - (%s || ' days')::INTERVAL",
+            "DELETE FROM user_sessions WHERE last_seen < NOW() - (%s || ' days')::INTERVAL",
             (str(inactive_days),),
         )
         deleted = cur.rowcount

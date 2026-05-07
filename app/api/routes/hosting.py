@@ -977,6 +977,17 @@ async def upload_zip(
 
     container_name = hosting["container_name"]
 
+    try:
+        from app.services.activity_service import log_event as _log
+        _log(user_id=user_id, hosting_id=hosting_id,
+             event_type="static_zip_upload_started", category="hosting", severity="info",
+             title=f"ZIP upload iniciado: {hosting.get('name') or hosting_id}",
+             message=file.filename,
+             ip=request.client.host if request.client else None, source="dashboard",
+             metadata={"filename": file.filename})
+    except Exception:
+        pass
+
     site_dir = f"/opt/clients/{container_name}"
     # Record BEFORE makedirs — bind-mount only if dir already existed
     has_host_mount = os.path.isdir(site_dir)
@@ -1112,8 +1123,27 @@ async def upload_zip(
         }
 
     except HTTPException:
+        try:
+            from app.services.activity_service import log_event as _log
+            _log(user_id=user_id, hosting_id=hosting_id,
+                 event_type="static_zip_upload_failed", category="hosting", severity="warning",
+                 title=f"ZIP rechazado: {hosting.get('name') or hosting_id}",
+                 ip=request.client.host if request.client else None, source="dashboard",
+                 metadata={"filename": file.filename})
+        except Exception:
+            pass
         raise
     except Exception as e:
+        try:
+            from app.services.activity_service import log_event as _log
+            _log(user_id=user_id, hosting_id=hosting_id,
+                 event_type="static_zip_upload_failed", category="hosting", severity="warning",
+                 title=f"Error desplegando ZIP: {hosting.get('name') or hosting_id}",
+                 message=str(e)[:200],
+                 ip=request.client.host if request.client else None, source="dashboard",
+                 metadata={"filename": file.filename})
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         # Limpiar archivos temporales

@@ -373,6 +373,17 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
             f"Backup importado exitosamente. Tipo: {btype}. Dominio: {old_domain} → {new_domain}",
             simulated=False,
         )
+        try:
+            from app.services.activity_service import log_event as _alog
+            _alog(user_id=user_id, hosting_id=hosting_id,
+                  event_type="import_completed", category="import", severity="info",
+                  title=f"Importación completada: {site_name}",
+                  message=f"Tipo: {btype}. Dominio: {old_domain} → {new_domain}",
+                  source="import",
+                  metadata={"job_id": job_id, "btype": btype,
+                            "old_domain": old_domain, "new_domain": new_domain})
+        except Exception:
+            pass
 
         _import_repo.set_status(job_id, "completed")
         _log(job_id, f"✓ Importación completada. Sitio disponible en https://{new_domain}")
@@ -393,6 +404,15 @@ def _run_pipeline(job_id: int, hosting_id: int, user_id: int, file_path: Path, s
             _hosting_repo.log_orchestrator_event(
                 "", user_id, "import_failed", str(exc), simulated=False
             )
+        except Exception:
+            pass
+        try:
+            from app.services.activity_service import log_event as _alog
+            _alog(user_id=user_id, hosting_id=hosting_id,
+                  event_type="import_failed", category="import", severity="warning",
+                  title=f"Importación fallida: {locals().get('site_name', hosting_id)}",
+                  message=str(exc)[:300], source="import",
+                  metadata={"job_id": job_id, "error": str(exc)[:200]})
         except Exception:
             pass
         notify(
@@ -791,6 +811,15 @@ async def import_site(
             )
         except Exception:
             logger.exception("failed to log upload rejection security event")
+        try:
+            from app.services.activity_service import log_event as _alog
+            _alog(user_id=user_id, hosting_id=hosting_id,
+                  event_type="import_validation_failed", category="import", severity="warning",
+                  title=f"Import rechazado por validación: {file.filename}",
+                  message=exc.detail, source="import",
+                  metadata={"job_id": job_id, "reason": exc.reason, "suffix": suffix})
+        except Exception:
+            pass
         raise HTTPException(status_code=400, detail=exc.detail)
 
     # Save optional SQL file
@@ -848,6 +877,18 @@ async def import_site(
         category="migration", severity="info", channel="both",
         action_url="/dashboard",
     )
+    try:
+        from app.services.activity_service import log_event as _alog
+        _alog(user_id=user_id, hosting_id=hosting_id,
+              event_type="import_started", category="import", severity="info",
+              title=f"Importación iniciada: {hosting['name']}",
+              ip=request.client.host if request.client else None,
+              user_agent=request.headers.get("user-agent"),
+              source="dashboard",
+              metadata={"job_id": job_id, "filename": file.filename,
+                        "size_bytes": total, "suffix": suffix})
+    except Exception:
+        pass
 
     from app.infra.arq_pool import get_arq_pool
     pool = get_arq_pool()

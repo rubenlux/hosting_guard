@@ -876,3 +876,8 @@ export const getAdminResourcesTenants = async () => {
   const response = await api.get('/admin/resources/tenants');
   return response.data;
 };
+
+export const getAdminResourcesUsers = async () => {
+  const response = await api.get('/admin/resources/users');
+  return response.data;
+};
