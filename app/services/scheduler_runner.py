@@ -112,7 +112,7 @@ async def _main() -> None:
     # ── Sub-minute ───────────────────────────────────────────────────────────
     schedule_job(detect_security_anomalies,      interval=60)      # 60 s — attack detection
     schedule_job(collect_wp_log_attacks,         interval=60)      # 60 s — WP attack log parser
-    schedule_job(aggregate_wp_attacks,           interval=65)      # 65 s — WP attack → security_events
+    schedule_job(aggregate_wp_attacks,           interval=65,  initial_delay=25)  # runs after collector
     schedule_job(poll_prometheus_alerts,         interval=60)      # 1 min
     schedule_job(collect_resource_usage,         interval=60)      # 60 s — CPU/RAM per container
     # ── Every 5 minutes ──────────────────────────────────────────────────────

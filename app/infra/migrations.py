@@ -827,6 +827,18 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_custom_domains_hosting ON custom_domains(hosting_id)",
     "CREATE INDEX IF NOT EXISTS idx_custom_domains_user ON custom_domains(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_custom_domains_status ON custom_domains(dns_status, last_checked_at)",
+
+    # ── security_events: one open incident per (event_type, hosting_id) ─────────
+    # Dedup any existing duplicates before creating the unique partial index.
+    """DELETE FROM security_events a
+       USING security_events b
+       WHERE a.status   = 'open'
+         AND b.status   = 'open'
+         AND a.event_type = b.event_type
+         AND a.hosting_id = b.hosting_id
+         AND a.hosting_id IS NOT NULL
+         AND a.event_id  < b.event_id""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_open_wp_security_event ON security_events (event_type, hosting_id) WHERE status = 'open'",
 ]
 
 def ensure_monthly_partitions(cursor):

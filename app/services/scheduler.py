@@ -20,15 +20,18 @@ logger = logging.getLogger(__name__)
 _tasks: set = set()
 
 
-def schedule_job(fn: Callable, interval: int) -> None:
+def schedule_job(fn: Callable, interval: int, initial_delay: int = 0) -> None:
     """
     Schedule a callable to run repeatedly every `interval` seconds.
 
+    initial_delay: seconds to wait before the first run (default 0).
     Supports both sync and async callables:
     - async functions are awaited directly on the event loop
     - sync functions are dispatched to a thread executor
     """
     async def _loop():
+        if initial_delay:
+            await asyncio.sleep(initial_delay)
         logger.info("job %s started (interval=%ds)", fn.__name__, interval)
         while True:
             t0 = asyncio.get_event_loop().time()

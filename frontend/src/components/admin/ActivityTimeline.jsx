@@ -33,9 +33,20 @@ const SEVERITY_STYLE = {
 const CATEGORIES = ['', 'auth', 'hosting', 'backup', 'billing', 'import', 'wordpress', 'security', 'system'];
 const SEVERITIES = ['', 'info', 'warning', 'critical'];
 
+function actorLabel(e) {
+  if (e.actor_type === 'external') {
+    if (e.ip) return `IP: ${e.ip}`;
+    if (e.metadata?.source_ip) return `IP: ${e.metadata.source_ip}`;
+    return 'Visitante externo';
+  }
+  if (e.actor_type === 'system') return 'Sistema';
+  return e.actor_email || (e.user_id ? `user:${e.user_id}` : '—');
+}
+
 function EventRow({ e }) {
   const [expanded, setExpanded] = useState(false);
   const icon = CATEGORY_ICON[e.category] || <Info className="w-3.5 h-3.5 text-gray-400" />;
+  const isExternal = e.actor_type === 'external';
 
   return (
     <div className="border-b border-white/5 last:border-0">
@@ -56,9 +67,12 @@ function EventRow({ e }) {
             {e.category && (
               <span className="text-[8px] bg-white/5 text-gray-500 px-1.5 py-0.5 rounded uppercase">{e.category}</span>
             )}
+            {isExternal && (
+              <span className="text-[8px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-1.5 py-0.5 rounded uppercase">externo</span>
+            )}
           </div>
           <div className="flex items-center gap-3 mt-0.5">
-            <span className="text-[9px] text-gray-500 truncate">{e.actor_email || `user:${e.user_id}`}</span>
+            <span className="text-[9px] text-gray-500 truncate">{actorLabel(e)}</span>
             {e.hosting_id && (
               <span className="text-[9px] text-gray-600 font-mono">hosting:{e.hosting_id}</span>
             )}
@@ -79,10 +93,26 @@ function EventRow({ e }) {
             <p className="text-[10px] text-gray-400 leading-relaxed">{e.message}</p>
           )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-            {e.source && <Detail label="Source" val={e.source} />}
-            {e.actor_type && <Detail label="Actor" val={e.actor_type} />}
-            {e.ip && <Detail label="IP" val={e.ip} />}
-            {e.event_type && <Detail label="Type" val={e.event_type} />}
+            {e.source && <Detail label="Fuente" val={e.source} />}
+            {e.event_type && <Detail label="Tipo" val={e.event_type} />}
+            {isExternal ? (
+              <>
+                {(e.ip || e.metadata?.source_ip) && (
+                  <Detail label="IP origen" val={e.ip || e.metadata.source_ip} />
+                )}
+                {e.user_id && (
+                  <Detail label="Cliente" val={e.actor_email || `user:${e.user_id}`} />
+                )}
+                {e.metadata?.user_agent && (
+                  <Detail label="User-Agent" val={e.metadata.user_agent} />
+                )}
+              </>
+            ) : (
+              <>
+                {e.actor_type && <Detail label="Actor" val={e.actor_type} />}
+                {e.ip && <Detail label="IP" val={e.ip} />}
+              </>
+            )}
           </div>
           {e.metadata && Object.keys(e.metadata).length > 0 && (
             <pre className="text-[9px] text-gray-500 bg-[#0d0d0f] rounded p-2 overflow-x-auto font-mono border border-white/5 mt-1">
