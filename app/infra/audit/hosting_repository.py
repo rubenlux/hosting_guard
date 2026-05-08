@@ -233,7 +233,7 @@ class HostingRepository:
         cursor.execute("DELETE FROM site_alerts WHERE site_id = %s", (hosting_id,))
         cursor.execute("DELETE FROM ai_diagnosis WHERE hosting_id = %s", (hosting_id,))
         cursor.execute("DELETE FROM import_jobs WHERE hosting_id = %s", (hosting_id,))
-        cursor.execute("DELETE FROM pixel_events WHERE site_id = %s", (hosting_id,))
+        cursor.execute("DELETE FROM pixel_events WHERE site_id = %s::text", (hosting_id,))
         # orchestrator_events for the WP container
         cursor.execute(
             "DELETE FROM orchestrator_events WHERE container_name = ("
