@@ -1,6 +1,9 @@
 import asyncio
+import logging
 import subprocess
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Optional, Literal, List
 
@@ -831,7 +834,26 @@ async def admin_terminate_hosting(
         if r.returncode != 0 and "No such container" not in (r.stderr or ""):
             docker_errors.append(f"{cname}: {(r.stderr or '').strip()[:120]}")
 
-    # 2. Audit log BEFORE modifying DB
+    # 2. Clean up custom domains: remove Traefik configs + delete DB records
+    try:
+        from app.infra.audit.domain_repository import DomainRepository
+        from app.services.domain_checker import remove_traefik_config
+        _domain_repo = DomainRepository()
+        hosting_user_id = hosting["user_id"]
+        domains = _domain_repo.get_domains(hosting_id, hosting_user_id)
+        for d in domains:
+            try:
+                remove_traefik_config(d["domain_id"])
+            except Exception:
+                pass
+            try:
+                _domain_repo.delete_domain(d["domain_id"], hosting_user_id)
+            except Exception:
+                pass
+    except Exception as _exc:
+        logger.warning("admin_terminate: domain cleanup error for hosting %s: %s", hosting_id, _exc)
+
+    # 3. Audit log BEFORE modifying DB
     _hosting_repo.log_orchestrator_event(
         container, hosting["user_id"],
         "admin_terminate",
@@ -839,7 +861,21 @@ async def admin_terminate_hosting(
         + (f" | docker_errors: {docker_errors}" if docker_errors else ""),
     )
 
-    # 3. Hard-delete: removes all child records + hosting row completely
+    # 4. Activity event log
+    try:
+        from app.services.activity_service import log_event as _log_activity
+        _log_activity(
+            user_id=hosting["user_id"], hosting_id=hosting_id,
+            event_type="hosting_terminated_by_admin",
+            category="hosting", severity="critical",
+            title=f"Hosting terminado por admin: {hosting.get('name', str(hosting_id))}",
+            message=f"Admin: {admin['email']} | Razón: {reason}",
+            source="admin",
+        )
+    except Exception:
+        pass
+
+    # 5. Hard-delete: removes all child records + hosting row completely
     _hosting_repo.admin_delete_hosting(hosting_id, db_container=db_container)
 
     return {

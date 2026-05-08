@@ -342,3 +342,83 @@ Todos los checks limpian el `site_dir` clonado antes de devolver el error 400 pa
 - `Root Directory: client`, `Install Command: npm install --legacy-peer-deps`, `Build Command: CI=false NODE_OPTIONS=--openssl-legacy-provider npm run build`, `Output Directory: build`
 - Deploy: fase 1 build → fase 2 encuentra `client/build/index.html` → fase 3 nginx sirve `client/build/` → PASS
 - Si falta `client/build/index.html`: falla antes de lanzar nginx, nunca queda en 403.
+
+---
+
+## 2026-05-08 — CORS real, /admin/staff 500, terminate hosting, zona peligrosa usuario, path traversal
+
+### BLOQUE 1 — /admin/staff corregido (staff_repository.py)
+
+**Problema:** `GET /admin/staff` devolvía 500 con traceback:
+```
+psycopg2.errors.UndefinedColumn: column "created_at_ts" does not exist
+HINT: Perhaps you meant to reference the column "staff_accounts.created_at".
+```
+El navegador mostraba esto como "CORS error" porque la respuesta 500 no tenía headers CORS (antes del fix de orden de middlewares).
+
+**Root cause:** La migración define `created_at TEXT NOT NULL` tanto en `staff_accounts` como en `staff_activity_log`, pero `staff_repository.py` referenciaba `created_at_ts` en todas sus queries (INSERT, SELECT, ORDER BY, WHERE, EXTRACT).
+
+**Fix:** Reemplazados todos los usos de `created_at_ts` por `created_at` en `app/infra/audit/staff_repository.py` (9 locations). Eliminados alias redundantes `l.created_at AS created_at` en queries con `l.*`.
+
+### BLOQUE 2 — CORS en respuestas de error
+
+**Estado:** Ya en producción desde sesión anterior.
+- `SlowAPIMiddleware` se registra antes que `CORSMiddleware` → CORS envuelve rate-limiting → 429s tienen CORS headers.
+- `@app.exception_handler(Exception)` (global_exception_handler, `app/api/main.py` línea 1125) captura excepciones dentro de `ExceptionMiddleware`, que está dentro de `CORSMiddleware` → 500s tienen CORS headers.
+- Con el fix del BLOQUE 1, el 500 de `/admin/staff` ya no ocurre.
+
+### BLOQUE 3 — Admin terminate limpia custom_domains
+
+**Problema:** `DELETE /admin/hostings/{id}/terminate` no limpiaba:
+1. Archivos de configuración de Traefik para dominios propios
+2. Registros en tabla `custom_domains`
+3. Activity event en `activity_events`
+
+**Fix en `app/api/routes/admin.py`:**
+- Paso 2 nuevo: obtiene todos los dominios del hosting via `DomainRepository.get_domains()`, llama `remove_traefik_config()` por cada uno y `delete_domain()`.
+- Paso 4 nuevo: llama `log_event()` con `event_type="hosting_terminated_by_admin"`, severity="critical".
+- Añadido `import logging` + `logger = logging.getLogger(__name__)` al archivo.
+
+### BLOQUE 4 — Usuario final puede eliminar su hosting
+
+**Implementado en sesión anterior (completado hoy):**
+
+Backend `app/api/routes/hosting.py`:
+- `POST /hostings/{hosting_id}/terminate` con `verify_token`, ownership check, rate-limit 3/hour.
+- Limpia custom_domains (Traefik + DB) antes de eliminar hosting.
+- Registra `hosting_termination_requested` en activity log.
+- Llama `_do_delete_hosting()` para teardown completo.
+
+API service `frontend/src/services/api.js`:
+- `terminateHosting(hostingId, reason, description)` → `POST /hostings/{id}/terminate`.
+
+Frontend `frontend/src/components/dashboard/sections/ConfigSection.jsx`:
+- Nueva sección "Zona peligrosa" con selector de hosting, razón (4 opciones), descripción opcional, confirmación por nombre de proyecto.
+- Acepta prop `onHostingDeleted()` — al terminar, espera 1.8s y llama callback.
+- 401 detectado → mensaje "Sesión expirada".
+
+`frontend/src/pages/Dashboard.jsx`:
+- Pasa `onHostingDeleted={() => { refresh(); setSidebarSection(null); navigate('/sites'); }}` a ConfigSection.
+- Al eliminar: actualiza lista de hostings + navega a Mis Sitios.
+
+`frontend/src/pages/AdminDashboard.jsx` (TerminateModal):
+- 401 detectado → muestra "Sesión expirada. Volvé a iniciar sesión e intentá de nuevo."
+
+### BLOQUE 5 — GitHub Deploy estático (PI-countries)
+
+**Estado:** Ya implementado en sesión anterior (validado hoy).
+- Dos fases: build → validación de `index.html` → nginx.
+- `public/` excluido de `_find_serve_dir`.
+- Auto-detección: `react-scripts` → `build`, `vite` → `dist`.
+- Path traversal: `root_directory`, `dockerfile_path`, `output_directory` protegidos con `os.path.realpath()` + `startswith(real_base + os.sep)`.
+- Caso PI-countries: `root_directory=client`, `output_directory=build` → sirve `client/build/` vía nginx sin 403.
+
+### Archivos modificados
+- `app/infra/audit/staff_repository.py`
+- `app/api/routes/admin.py`
+- `app/api/routes/hosting.py` (ya modificado sesión anterior, verificado)
+- `app/api/main.py` (ya modificado sesión anterior, verificado)
+- `frontend/src/pages/AdminDashboard.jsx`
+- `frontend/src/pages/Dashboard.jsx`
+- `frontend/src/components/dashboard/sections/ConfigSection.jsx`
+- `frontend/src/services/api.js`

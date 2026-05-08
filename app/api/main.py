@@ -1034,7 +1034,13 @@ app.add_middleware(_BodySizeMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CorrelationMiddleware)
 
-# CORS — solo orígenes reales de producción.
+# Rate Limiting — added before CORS so CORS wraps it.
+# SlowAPI 429 responses would bypass CORS headers if SlowAPI were outer.
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+# CORS — added after SlowAPI = outermost of credentialed endpoints.
+# All responses (including 429s from SlowAPI) get CORS headers from here.
 # allow_origin_regex=r".*" fue eliminado: con allow_credentials=True permitía
 # que cualquier origen (incluidos dominios comprometidos) enviara cookies de sesión.
 app.add_middleware(
@@ -1047,10 +1053,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Correlation-ID"],
 )
-
-# Rate Limiting
-app.state.limiter = limiter
-app.add_middleware(SlowAPIMiddleware)
 
 # Pixel CORS — outermost layer, handles /pixel/event and /pixel.js from any origin.
 #

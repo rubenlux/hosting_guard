@@ -501,6 +501,68 @@ async def delete_hosting(hosting_id: int, user: dict = Depends(require_support_w
     user_id: int = int(user["user_id"])
     return await _do_delete_hosting(hosting_id, user_id)
 
+class _TerminateRequest(BaseModel):
+    reason: str
+    description: Optional[str] = None
+
+
+@router.post("/hostings/{hosting_id}/terminate")
+@limiter.limit("3/hour")
+async def terminate_hosting_by_user(
+    hosting_id: int,
+    request: Request,
+    body: _TerminateRequest,
+    user: dict = Depends(verify_token),
+):
+    """
+    User-initiated hosting termination.
+
+    Cleans up custom domain Traefik configs, removes domain DB records,
+    then hard-deletes containers + hosting row.
+    """
+    user_id: int = int(user["user_id"])
+
+    # ── 1. Clean up custom domains ───────────────────────────────────────────
+    try:
+        from app.infra.audit.domain_repository import DomainRepository
+        from app.services.domain_checker import remove_traefik_config
+        domain_repo = DomainRepository()
+        domains = domain_repo.get_domains(hosting_id, user_id)
+        for d in domains:
+            try:
+                remove_traefik_config(d["domain_id"])
+            except Exception:
+                pass
+            try:
+                domain_repo.delete_domain(d["domain_id"], user_id)
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("terminate_hosting: domain cleanup error for hosting %s: %s", hosting_id, exc)
+
+    # ── 2. Log reason before deletion (hosting row disappears after) ─────────
+    try:
+        from app.services.activity_service import log_event as _log
+        hosting_pre = hosting_repo.get_hosting(hosting_id, user_id)
+        site_name = (hosting_pre or {}).get("name") or str(hosting_id)
+        full_reason = body.reason
+        if body.description:
+            full_reason += f" — {body.description}"
+        _log(
+            user_id=user_id, hosting_id=hosting_id,
+            event_type="hosting_termination_requested",
+            category="hosting", severity="warning",
+            title=f"Solicitud de eliminación: {site_name}",
+            message=full_reason,
+            source="dashboard",
+        )
+    except Exception:
+        pass
+
+    # ── 3. Delete containers + hosting row ───────────────────────────────────
+    return await _do_delete_hosting(hosting_id, user_id)
+
+
 @router.post("/hostings/{hosting_id}/restart")
 @limiter.limit("3/minute")
 async def restart_hosting(hosting_id: int, request: Request, user: dict = Depends(verify_token), _cap: None = Depends(docker_capacity)):

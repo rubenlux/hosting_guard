@@ -425,6 +425,7 @@ const Dashboard = () => {
                     setUser={setUser}
                     hostings={hostings}
                     logoutAction={logoutAction}
+                    onHostingDeleted={() => { refresh(); setSidebarSection(null); navigate('/sites'); }}
                   />
                 )}
               </div>

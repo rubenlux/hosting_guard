@@ -4,7 +4,7 @@ import {
   Globe, Trash2, Download, ChevronDown, ChevronUp, LogOut,
   Smartphone, AlertTriangle, Zap
 } from 'lucide-react';
-import { updateProfile, updateNotificationPrefs, uploadAvatar, resetWpPassword } from '../../../services/api';
+import { updateProfile, updateNotificationPrefs, uploadAvatar, resetWpPassword, terminateHosting } from '../../../services/api';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const Field = ({ label, value, onChange, type = 'text', readOnly = false, placeholder = '', as: Tag = 'input', children }) => (
@@ -90,7 +90,7 @@ const WP_PREFS = [
 ];
 
 // ── Main component ────────────────────────────────────────────────────────────
-const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
+const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction, onHostingDeleted }) => {
   // Profile
   const [profile, setProfile] = useState({
     first_name: user.first_name || '',
@@ -147,6 +147,46 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
   // Privacy / Delete
   const [deletePhase,  setDeletePhase]  = useState(0); // 0 idle, 1 confirm, 2 typing
   const [deleteInput,  setDeleteInput]  = useState('');
+
+  // Zona peligrosa — terminate hosting
+  const [dangerHosting,    setDangerHosting]    = useState('');
+  const [dangerPhase,      setDangerPhase]      = useState(0); // 0 idle, 1 modal
+  const [dangerReason,     setDangerReason]     = useState('');
+  const [dangerDesc,       setDangerDesc]       = useState('');
+  const [dangerConfirmTxt, setDangerConfirmTxt] = useState('');
+  const [dangerLoading,    setDangerLoading]    = useState(false);
+  const [dangerErr,        setDangerErr]        = useState('');
+  const [dangerDone,       setDangerDone]       = useState('');
+
+  const selectedHostingObj = hostings.find(h => String(h.hosting_id) === String(dangerHosting)) || null;
+
+  const handleTerminateHosting = async () => {
+    if (!selectedHostingObj) return;
+    if (dangerConfirmTxt !== selectedHostingObj.name) return;
+    if (!dangerReason) { setDangerErr('Seleccioná una razón.'); return; }
+    setDangerLoading(true);
+    setDangerErr('');
+    try {
+      const deletedName = selectedHostingObj.name;
+      await terminateHosting(selectedHostingObj.hosting_id, dangerReason, dangerDesc);
+      setDangerDone(deletedName);
+      setDangerPhase(0);
+      setDangerHosting('');
+      setDangerReason('');
+      setDangerDesc('');
+      setDangerConfirmTxt('');
+      if (onHostingDeleted) setTimeout(onHostingDeleted, 1800);
+    } catch (ex) {
+      const status = ex?.response?.status;
+      if (status === 401) {
+        setDangerErr('Sesión expirada. Volvé a iniciar sesión e intentá de nuevo.');
+      } else {
+        setDangerErr(ex?.response?.data?.detail || 'Error eliminando el sitio. Intentá de nuevo.');
+      }
+    } finally {
+      setDangerLoading(false);
+    }
+  };
 
   const initials = ((profile.first_name?.[0] || '') + (profile.last_name?.[0] || '')) || user.email?.[0]?.toUpperCase() || '?';
   const setP = k => e => setProfile(f => ({ ...f, [k]: e.target.value }));
@@ -427,8 +467,147 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction }) => {
         </div>
       </SectionCard>
 
-      {/* ── 6. Privacidad ── */}
-      <SectionCard icon={Globe} iconColor="#ef4444" title="Privacidad y datos" defaultOpen={false}>
+      {/* ── 6. Zona peligrosa — eliminar sitio ── */}
+      <SectionCard icon={Trash2} iconColor="#ef4444" title="Zona peligrosa" defaultOpen={false}>
+        <div style={{ paddingTop: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 4 }}>Eliminar sitio</div>
+          <div style={{ fontSize: 11, color: '#555', marginBottom: 16 }}>
+            Esta acción elimina permanentemente el contenedor Docker, la base de datos y todos los datos del sitio.
+            No se puede deshacer.
+          </div>
+
+          {dangerDone && (
+            <div style={{ background: 'rgba(0,255,136,0.07)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: 10, padding: '12px 16px', fontSize: 12, color: '#00ff88', marginBottom: 16 }}>
+              Sitio <strong>{dangerDone}</strong> eliminado correctamente.
+            </div>
+          )}
+
+          {hostings.length === 0 ? (
+            <div style={{ fontSize: 12, color: '#555' }}>No tenés sitios activos.</div>
+          ) : (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                  Seleccioná el sitio a eliminar
+                </label>
+                <select
+                  value={dangerHosting}
+                  onChange={e => { setDangerHosting(e.target.value); setDangerPhase(0); setDangerErr(''); setDangerDone(''); setDangerConfirmTxt(''); setDangerReason(''); setDangerDesc(''); }}
+                  style={{ width: '100%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '9px 12px', color: dangerHosting ? '#fff' : '#555', fontSize: 13, outline: 'none', colorScheme: 'dark' }}
+                >
+                  <option value="" style={{ background: '#1a1a1a', color: '#666' }}>— Elegí un sitio —</option>
+                  {hostings.map(h => (
+                    <option key={h.hosting_id} value={h.hosting_id} style={{ background: '#1a1a1a', color: '#fff' }}>
+                      {h.name} ({h.subdomain}.hostingguard.lat)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {dangerHosting && dangerPhase === 0 && (
+                <button
+                  onClick={() => setDangerPhase(1)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 14px', color: '#ef4444', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  <Trash2 size={13} /> Eliminar sitio definitivamente
+                </button>
+              )}
+
+              {dangerHosting && dangerPhase === 1 && (
+                <div style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <AlertTriangle size={16} color="#ef4444" style={{ flexShrink: 0, marginTop: 1 }} />
+                    <div style={{ fontSize: 12, color: '#ef4444', fontWeight: 600, lineHeight: 1.5 }}>
+                      Vas a eliminar <strong>{selectedHostingObj?.name}</strong>. Esta acción es permanente e irreversible.
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                      Razón <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <select
+                      value={dangerReason}
+                      onChange={e => setDangerReason(e.target.value)}
+                      style={{ width: '100%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '9px 12px', color: dangerReason ? '#fff' : '#555', fontSize: 13, outline: 'none', colorScheme: 'dark' }}
+                    >
+                      <option value="" style={{ background: '#1a1a1a', color: '#666' }}>— Seleccioná una razón —</option>
+                      <option value="Solicitud del cliente" style={{ background: '#1a1a1a', color: '#fff' }}>Solicitud del cliente</option>
+                      <option value="Ya no lo necesito" style={{ background: '#1a1a1a', color: '#fff' }}>Ya no lo necesito</option>
+                      <option value="Problemas técnicos" style={{ background: '#1a1a1a', color: '#fff' }}>Problemas técnicos</option>
+                      <option value="Otro" style={{ background: '#1a1a1a', color: '#fff' }}>Otro</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                      Descripción adicional <span style={{ color: '#555' }}>(opcional)</span>
+                    </label>
+                    <textarea
+                      value={dangerDesc}
+                      onChange={e => setDangerDesc(e.target.value)}
+                      placeholder="Información adicional..."
+                      rows={2}
+                      style={{ width: '100%', boxSizing: 'border-box', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '9px 12px', color: '#fff', fontSize: 13, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                      Escribí el nombre del sitio para confirmar: <span style={{ color: '#ef4444', fontFamily: 'monospace' }}>{selectedHostingObj?.name}</span>
+                    </label>
+                    <input
+                      value={dangerConfirmTxt}
+                      onChange={e => setDangerConfirmTxt(e.target.value)}
+                      placeholder={selectedHostingObj?.name}
+                      style={{ width: '100%', boxSizing: 'border-box', background: 'rgba(255,255,255,0.04)', border: `1px solid ${dangerConfirmTxt === selectedHostingObj?.name ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.1)'}`, borderRadius: 8, padding: '9px 12px', color: '#fff', fontSize: 13, outline: 'none', fontFamily: 'monospace', transition: 'border-color 0.15s' }}
+                    />
+                  </div>
+
+                  {dangerErr && (
+                    <div style={{ fontSize: 12, color: '#ef4444' }}>{dangerErr}</div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      disabled={dangerConfirmTxt !== selectedHostingObj?.name || !dangerReason || dangerLoading}
+                      onClick={handleTerminateHosting}
+                      style={{
+                        flex: 1,
+                        background: (dangerConfirmTxt === selectedHostingObj?.name && dangerReason && !dangerLoading) ? '#ef4444' : 'rgba(239,68,68,0.15)',
+                        border: 'none',
+                        borderRadius: 8,
+                        padding: '10px 16px',
+                        color: '#fff',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: (dangerConfirmTxt === selectedHostingObj?.name && dangerReason && !dangerLoading) ? 'pointer' : 'not-allowed',
+                        opacity: (dangerConfirmTxt === selectedHostingObj?.name && dangerReason && !dangerLoading) ? 1 : 0.5,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        transition: 'background 0.15s',
+                      }}
+                    >
+                      {dangerLoading ? 'Eliminando...' : <><Trash2 size={13} /> Eliminar sitio definitivamente</>}
+                    </button>
+                    <button
+                      onClick={() => { setDangerPhase(0); setDangerErr(''); setDangerConfirmTxt(''); setDangerReason(''); setDangerDesc(''); }}
+                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '10px 16px', color: '#888', fontSize: 12, cursor: 'pointer' }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </SectionCard>
+
+      {/* ── 7. Privacidad y datos ── */}
+      <SectionCard icon={Globe} iconColor="#818cf8" title="Privacidad y datos" defaultOpen={false}>
         <div style={{ paddingTop: 20 }}>
           {/* Download data */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>

@@ -263,6 +263,11 @@ export const adminGetHostingLogs = async (hostingId, since = null) => {
     return response.data;
 };
 
+export const terminateHosting = async (hostingId, reason, description = '') => {
+    const response = await api.post(`/hostings/${hostingId}/terminate`, { reason, description });
+    return response.data;
+};
+
 export const adminTerminateHosting = async (hostingId, reason) => {
     const response = await api.delete(`/admin/hostings/${hostingId}/terminate`, { data: { reason } });
     return response.data;

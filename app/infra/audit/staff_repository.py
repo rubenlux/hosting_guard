@@ -17,7 +17,7 @@ class StaffRepository:
             cursor = conn.cursor()
             now = datetime.now(timezone.utc)
             cursor.execute(
-                "INSERT INTO staff_accounts (admin_id, email, password_hash, full_name, role, is_active, created_at_ts) "
+                "INSERT INTO staff_accounts (admin_id, email, password_hash, full_name, role, is_active, created_at) "
                 "VALUES (%s, %s, %s, %s, %s, 1, %s) RETURNING staff_id",
                 (admin_id, email, password_hash, full_name, role, now),
             )
@@ -39,7 +39,7 @@ class StaffRepository:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT staff_id, admin_id, email, password_hash, full_name, role, is_active, "
-                "created_at_ts AS created_at, "
+                "created_at,"
                 "last_login_at FROM staff_accounts WHERE email = %s", 
                 (email,)
             )
@@ -55,7 +55,7 @@ class StaffRepository:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT staff_id, admin_id, email, password_hash, full_name, role, is_active, "
-                "created_at_ts AS created_at, "
+                "created_at,"
                 "last_login_at FROM staff_accounts WHERE staff_id = %s", 
                 (staff_id,)
             )
@@ -71,8 +71,8 @@ class StaffRepository:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT staff_id, admin_id, email, full_name, role, is_active, "
-                "created_at_ts AS created_at, "
-                "last_login_at FROM staff_accounts ORDER BY created_at_ts DESC"
+                "created_at,"
+                "last_login_at FROM staff_accounts ORDER BY created_at DESC"
             )
             return [dict(row) for row in cursor.fetchall()]
         finally:
@@ -141,7 +141,7 @@ class StaffRepository:
             cursor.execute(
                 """INSERT INTO staff_activity_log
                    (staff_id, action_type, target_user_id, target_hosting_id,
-                    description, duration_seconds, ip_address, session_id, created_at_ts)
+                    description, duration_seconds, ip_address, session_id, created_at)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING log_id""",
                 (staff_id, action_type, target_user_id, target_hosting_id, description,
                  duration_seconds, ip_address, session_id, now),
@@ -166,10 +166,10 @@ class StaffRepository:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT l.*, l.created_at_ts AS created_at, "
+                "SELECT l.*,"
                 "u.email AS target_email FROM staff_activity_log l "
                 "LEFT JOIN users u ON l.target_user_id = u.user_id "
-                "WHERE l.staff_id = %s ORDER BY l.created_at_ts DESC LIMIT %s",
+                "WHERE l.staff_id = %s ORDER BY l.created_at DESC LIMIT %s",
                 (staff_id, limit),
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -182,13 +182,13 @@ class StaffRepository:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                """SELECT l.*, l.created_at_ts AS created_at,
+                """SELECT l.*,
                           s.email AS staff_email, s.full_name AS staff_name,
                           s.role AS staff_role, u.email AS target_email
                    FROM staff_activity_log l
                    JOIN staff_accounts s ON l.staff_id = s.staff_id
                    LEFT JOIN users u ON l.target_user_id = u.user_id
-                   ORDER BY l.created_at_ts DESC LIMIT %s""",
+                   ORDER BY l.created_at DESC LIMIT %s""",
                 (limit,),
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -212,9 +212,9 @@ class StaffRepository:
                      COUNT(CASE WHEN l.action_type = 'hosting_restarted' THEN 1 END) AS restarts,
                      COUNT(CASE WHEN l.action_type = 'issue_resolved' THEN 1 END) AS issues_resolved,
                      COUNT(CASE WHEN l.action_type = 'logs_viewed' THEN 1 END) AS logs_viewed,
-                     MAX(l.created_at_ts) AS last_activity_at
+                     MAX(l.created_at) AS last_activity_at
                    FROM staff_accounts s
-                   LEFT JOIN staff_activity_log l ON s.staff_id = l.staff_id AND l.created_at_ts >= %s
+                   LEFT JOIN staff_activity_log l ON s.staff_id = l.staff_id AND l.created_at >= %s
                    GROUP BY s.staff_id, s.email, s.full_name, s.role, s.is_active, s.last_login_at
                    ORDER BY total_actions DESC""",
                 (since,),
@@ -230,10 +230,10 @@ class StaffRepository:
         try:
             cursor = conn.cursor()
             # Uso nativo puro de TIMESTAMPTZ
-            hour_expr = "EXTRACT(HOUR FROM created_at_ts)::INTEGER"
+            hour_expr = "EXTRACT(HOUR FROM created_at)::INTEGER"
             cursor.execute(
                 f"SELECT {hour_expr} AS hour, COUNT(*) AS events FROM staff_activity_log "
-                "WHERE staff_id = %s AND created_at_ts >= %s "
+                "WHERE staff_id = %s AND created_at >= %s "
                 "GROUP BY hour ORDER BY hour",
                 (staff_id, since),
             )

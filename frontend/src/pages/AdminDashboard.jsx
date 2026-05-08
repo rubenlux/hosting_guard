@@ -2144,7 +2144,12 @@ function TerminateModal({ hosting, onConfirm, onCancel }) {
     try {
       await onConfirm(reason.trim());
     } catch (ex) {
-      setErr(ex?.response?.data?.detail || 'Error terminando hosting');
+      const status = ex?.response?.status;
+      if (status === 401) {
+        setErr('Sesión expirada. Volvé a iniciar sesión e intentá de nuevo.');
+      } else {
+        setErr(ex?.response?.data?.detail || 'Error terminando hosting');
+      }
       setSaving(false);
     }
   };
