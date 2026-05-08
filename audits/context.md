@@ -296,3 +296,49 @@ main.py
 - Fix: mismo patrón `realpath` antes de construir el comando Docker
 
 Todos los checks limpian el `site_dir` clonado antes de devolver el error 400 para evitar residuos en disco.
+
+---
+
+## Cambios — 2026-05-08
+
+### Backend: GitHub Deploy — fix Create React App / TLDs compuestos en subdirectorios
+
+**Caso real detectado:** repo `PI-countries` con `client/public/index.html` (plantilla CRA) era tomado como output publicable. El sitio real está en `client/build/index.html` luego del build.
+
+**`app/api/routes/hosting.py`** — 5 cambios:
+
+**1. `_find_serve_dir` — eliminar `public` de candidatos**
+- `public` fue removido de la lista de directorios buscados. Era la primera opción y coincidía con la plantilla de Create React App, causando que se sirviera la plantilla de desarrollo en lugar del build.
+- Lista actualizada: `["dist", "build", "www", "_site", "frontend/dist", "out"]`
+
+**2. Strategy C (node build) — arquitectura dos fases**
+- Antes: un solo `docker run -d sh -c "npm install && npm run build && npx serve dist"` — si el build fallaba, el deploy retornaba OK igual porque el contenedor arrancaba en background.
+- Ahora:
+  - **Fase 1**: `docker run --rm` sincrónico para install + build. Si falla, limpia `site_dir` y devuelve 500 con error de build.
+  - **Fase 2**: Verifica que `{output_directory}/index.html` exista en el host. Si no existe, falla con mensaje claro: `"No encontramos index.html en el output configurado ({dir}). En Create React App normalmente es build; en Vite normalmente es dist."`
+  - **Fase 3**: Lanza `nginx:alpine` con `-v {serve_root}:/usr/share/nginx/html:ro` — más eficiente que `npx serve`, nunca sirve la plantilla.
+
+**3. Auto-detección de `output_directory`**
+- Si `data.output_directory` no está especificado, se detecta automáticamente desde `package.json`:
+  - `react-scripts` en deps o en build script → `build/`
+  - `vite` en deps o en build script → `dist/`
+  - Otros → auto-detect post-build buscando `build`, `dist`, `out`, `_site`
+
+**4. Deploy log detallado**
+- `build_info`: `root_directory`, `package_json` (bool), `install_command`, `build_command`, `output_directory`
+- `build`: stdout/stderr del build (3000 chars)
+- `output_check`: `output_directory` resuelto + `index_html_found` (bool)
+- `container`: resultado del `docker run nginx`
+
+**5. `strategy` en `git_config` + redeploy correcto**
+- Se persiste `strategy: "dockerfile" | "server" | "static_built" | "static_pure"` en `git_config` al hacer el deploy inicial.
+- Redeploy y webhook ahora usan `strategy`:
+  - `dockerfile` → rebuild completo Docker
+  - `static_built` → re-ejecuta `docker run --rm npm install && build`, luego `docker restart nginx`
+  - `server` / `static_pure` → `docker restart` (archivos ya actualizados por git pull)
+- Antes del fix, un redeploy de una app React no re-buildea: hacía `docker restart` del contenedor `npx serve` (que servía el build anterior).
+
+**Acceptance case resuelto:**
+- `Root Directory: client`, `Install Command: npm install --legacy-peer-deps`, `Build Command: CI=false NODE_OPTIONS=--openssl-legacy-provider npm run build`, `Output Directory: build`
+- Deploy: fase 1 build → fase 2 encuentra `client/build/index.html` → fase 3 nginx sirve `client/build/` → PASS
+- Si falta `client/build/index.html`: falla antes de lanzar nginx, nunca queda en 403.

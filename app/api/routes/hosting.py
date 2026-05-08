@@ -109,7 +109,8 @@ def _safe_extract_zip(zf: zipfile.ZipFile, extracted_dir: Path) -> None:
 
 
 def _find_serve_dir(site_dir: str) -> str:
-    for subdir in ["public", "dist", "build", "www", "_site", "frontend/dist"]:
+    # "public" is intentionally excluded — it's a CRA source template, not a build output
+    for subdir in ["dist", "build", "www", "_site", "frontend/dist", "out"]:
         candidate = f"{site_dir}/{subdir}"
         if os.path.exists(f"{candidate}/index.html"):
             return candidate
@@ -899,6 +900,8 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 detail=f"root_directory '{data.root_directory}' no existe en el repo.")
 
         # ── Stage 2: Container launch (3 strategies) ─────────────────────────
+        has_package_json  = False          # set in Strategy C; used in git_config
+        _resolved_out_dir = data.output_directory  # may be overridden in Strategy C
 
         if data.dockerfile_path or data.framework == "dockerfile":
             # Strategy A: build & run from Dockerfile
@@ -958,38 +961,106 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
             ]
 
         else:
-            # Strategy C: static or Node build → serve
+            # Strategy C: static or Node build → nginx serve
             import json as _json
+            pkg = {}
             has_package_json = False
             pkg_path = os.path.join(work_dir, "package.json")
             if os.path.exists(pkg_path):
                 try:
                     with open(pkg_path) as f:
                         pkg = _json.load(f)
-                    scripts = pkg.get("scripts", {})
-                    deps    = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                    scripts  = pkg.get("scripts", {})
+                    all_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
                     has_package_json = (
                         data.build_command is not None or
                         ("build" in scripts and any(
-                            k in deps for k in ["react", "vue", "vite", "next", "nuxt", "svelte"]
+                            k in all_deps for k in ["react", "vue", "vite", "next", "nuxt", "svelte"]
                         ))
                     )
                 except Exception:
+                    pkg = {}
                     has_package_json = False
 
             if has_package_json:
                 install_cmd = data.install_command or "npm install"
                 build_cmd   = data.build_command   or "npm run build"
-                out_dir     = data.output_directory or None
-                if out_dir:
-                    serve_part = f"npx serve {out_dir} -l 80"
+
+                # Auto-detect output dir from package.json when not specified
+                all_deps    = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                build_script = pkg.get("scripts", {}).get("build", "")
+                if data.output_directory:
+                    out_dir = data.output_directory
+                elif "react-scripts" in all_deps or "react-scripts" in build_script:
+                    out_dir = "build"
+                elif "vite" in all_deps or "vite" in build_script:
+                    out_dir = "dist"
                 else:
-                    serve_part = (
-                        "if [ -d dist ]; then npx serve dist -l 80; "
-                        "elif [ -d build ]; then npx serve build -l 80; "
-                        "else npx serve . -l 80; fi"
+                    out_dir = None  # resolved after build
+
+                deploy_log["stages"]["build_info"] = {
+                    "root_directory":   data.root_directory or ".",
+                    "package_json":     True,
+                    "install_command":  install_cmd,
+                    "build_command":    build_cmd,
+                    "output_directory": out_dir or "(auto-detect after build)",
+                }
+
+                # Phase 1 — build synchronously in a disposable container
+                _build_run = await loop.run_in_executor(
+                    None,
+                    lambda: subprocess.run(
+                        ["docker", "run", "--rm",
+                         "-v", f"{work_dir}:/app",
+                         "-w", "/app",
+                         *_docker_env_flags(data.env_vars),
+                         "node:20-alpine",
+                         "sh", "-c", f"{install_cmd} && {build_cmd}"],
+                        capture_output=True, text=True, timeout=300
                     )
-                cmd_str = f"{install_cmd} && {build_cmd} && {serve_part}"
+                )
+                deploy_log["stages"]["build"] = {
+                    "ok":     _build_run.returncode == 0,
+                    "stdout": _build_run.stdout[-3000:],
+                    "stderr": _build_run.stderr[-3000:],
+                }
+                if _build_run.returncode != 0:
+                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
+                    raise HTTPException(status_code=500,
+                        detail=f"Build error: {_build_run.stderr[-500:]}")
+
+                # Phase 2 — validate output: index.html must exist
+                if out_dir:
+                    _has_index = os.path.exists(os.path.join(work_dir, out_dir, "index.html"))
+                else:
+                    _has_index = False
+                    for _cand in ["build", "dist", "out", "_site"]:
+                        if os.path.exists(os.path.join(work_dir, _cand, "index.html")):
+                            out_dir    = _cand
+                            _has_index = True
+                            break
+
+                deploy_log["stages"]["output_check"] = {
+                    "output_directory": out_dir,
+                    "index_html_found": _has_index,
+                }
+
+                if not _has_index:
+                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
+                    raise HTTPException(status_code=500, detail=(
+                        f"No encontramos index.html en el output configurado "
+                        f"({out_dir or 'ninguno'}). "
+                        "En Create React App normalmente es build; en Vite normalmente es dist."
+                    ))
+
+                # Phase 3 — serve built assets with nginx
+                serve_root  = os.path.join(work_dir, out_dir)
+                _real_serve = os.path.realpath(serve_root)
+                if not (_real_serve == _real_work or _real_serve.startswith(_real_work + os.sep)):
+                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
+                    raise HTTPException(status_code=400, detail="output_directory no puede salir de root_directory")
+
+                _resolved_out_dir = out_dir  # saved for git_config below
                 command = [
                     "run", "-d",
                     "--name",    container_name,
@@ -997,11 +1068,9 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     "--restart", "unless-stopped",
                     "--cpus",    plan["cpu"],
                     "--memory",  plan["memory"],
-                    "-v", f"{work_dir}:/app",
-                    "-w", "/app",
-                    *_docker_env_flags(data.env_vars),
+                    "-v", f"{serve_root}:/usr/share/nginx/html:ro",
                     *_traefik_labels(container_name, subdomain, data.port),
-                    "node:20-alpine", "sh", "-c", cmd_str,
+                    "nginx:alpine",
                 ]
             else:
                 # Pure static — resolve output dir
@@ -1010,12 +1079,18 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     if data.output_directory
                     else _find_serve_dir(work_dir)
                 )
-                # Security: output_directory must stay inside work_dir
                 if data.output_directory:
                     _real_serve = os.path.realpath(serve_root)
                     if not (_real_serve == _real_work or _real_serve.startswith(_real_work + os.sep)):
                         await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
                         raise HTTPException(status_code=400, detail="output_directory no puede salir de root_directory")
+
+                deploy_log["stages"]["build_info"] = {
+                    "root_directory":   data.root_directory or ".",
+                    "package_json":     False,
+                    "output_directory": data.output_directory or "(auto-detect)",
+                }
+                _resolved_out_dir = data.output_directory
                 command = [
                     "run", "-d",
                     "--name",    container_name,
@@ -1047,6 +1122,12 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
         # Persist build config + generate webhook token
         import secrets as _secrets
         webhook_token = _secrets.token_hex(24)
+        _strategy = (
+            "dockerfile"    if (data.dockerfile_path or data.framework == "dockerfile") else
+            "server"        if data.start_command else
+            "static_built"  if has_package_json else
+            "static_pure"
+        )
         git_config = {
             "repo_url":         data.repo_url,
             "branch":           data.branch,
@@ -1054,11 +1135,12 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
             "install_command":  data.install_command,
             "build_command":    data.build_command,
             "start_command":    data.start_command,
-            "output_directory": data.output_directory,
+            "output_directory": _resolved_out_dir if _strategy in ("static_built", "static_pure") else data.output_directory,
             "port":             data.port,
             "framework":        data.framework,
             "dockerfile_path":  data.dockerfile_path,
             "env_vars":         data.env_vars,
+            "strategy":         _strategy,
         }
         hosting_repo.set_git_config(hosting_id, git_config, webhook_token)
         deploy_log["finished_at"] = datetime.now().isoformat()
@@ -1121,6 +1203,8 @@ async def redeploy_from_github(hosting_id: int, request: Request, user: dict = D
     if pull.returncode != 0:
         raise HTTPException(status_code=500, detail=f"git pull failed: {pull.stderr[-500:]}")
 
+    strategy = git_config.get("strategy", "")
+
     if git_config.get("dockerfile_path") or git_config.get("framework") == "dockerfile":
         df_path   = git_config.get("dockerfile_path") or "Dockerfile"
         image_tag = container_name
@@ -1160,7 +1244,37 @@ async def redeploy_from_github(hosting_id: int, request: Request, user: dict = D
         deploy_log["stages"]["container"] = {"ok": code == 0, "stderr": stderr[-2000:]}
         if code != 0:
             raise HTTPException(status_code=500, detail=f"Docker run error: {stderr[-500:]}")
+
+    elif strategy == "static_built":
+        # Node build strategy: re-run build with the same commands, then restart nginx
+        install_cmd = git_config.get("install_command") or "npm install"
+        build_cmd   = git_config.get("build_command")   or "npm run build"
+        env_vars    = git_config.get("env_vars", {})
+        _build_run  = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                ["docker", "run", "--rm",
+                 "-v", f"{work_dir}:/app",
+                 "-w", "/app",
+                 *_docker_env_flags(env_vars),
+                 "node:20-alpine",
+                 "sh", "-c", f"{install_cmd} && {build_cmd}"],
+                capture_output=True, text=True, timeout=300
+            )
+        )
+        deploy_log["stages"]["build"] = {
+            "ok":     _build_run.returncode == 0,
+            "stderr": _build_run.stderr[-3000:],
+        }
+        if _build_run.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Build error: {_build_run.stderr[-500:]}")
+        code, _, stderr = await run_docker_command_async(["restart", container_name], timeout=30)
+        deploy_log["stages"]["container"] = {"ok": code == 0, "stderr": stderr[-2000:]}
+        if code != 0:
+            raise HTTPException(status_code=500, detail=f"Docker restart error: {stderr[-500:]}")
+
     else:
+        # server (Strategy B) or pure static: git pull already updated files; restart is enough
         code, _, stderr = await run_docker_command_async(["restart", container_name], timeout=30)
         deploy_log["stages"]["container"] = {"ok": code == 0, "stderr": stderr[-2000:]}
         if code != 0:
@@ -1230,6 +1344,8 @@ async def github_webhook(hosting_id: int, request: Request):
             pass
         raise HTTPException(status_code=500, detail=f"git pull failed: {pull.stderr[-500:]}")
 
+    strategy = git_config.get("strategy", "")
+
     if git_config.get("dockerfile_path") or git_config.get("framework") == "dockerfile":
         df_path   = git_config.get("dockerfile_path") or "Dockerfile"
         image_tag = container_name
@@ -1261,6 +1377,30 @@ async def github_webhook(hosting_id: int, request: Request):
             ]
             code, _, _ = await run_docker_command_async(command, timeout=60)
             deploy_log["stages"]["container"] = {"ok": code == 0}
+
+    elif strategy == "static_built":
+        install_cmd = git_config.get("install_command") or "npm install"
+        build_cmd   = git_config.get("build_command")   or "npm run build"
+        env_vars    = git_config.get("env_vars", {})
+        _build_run  = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                ["docker", "run", "--rm",
+                 "-v", f"{work_dir}:/app",
+                 "-w", "/app",
+                 *_docker_env_flags(env_vars),
+                 "node:20-alpine",
+                 "sh", "-c", f"{install_cmd} && {build_cmd}"],
+                capture_output=True, text=True, timeout=300
+            )
+        )
+        deploy_log["stages"]["build"] = {"ok": _build_run.returncode == 0}
+        if _build_run.returncode == 0:
+            code, _, _ = await run_docker_command_async(["restart", container_name], timeout=30)
+            deploy_log["stages"]["container"] = {"ok": code == 0}
+        else:
+            deploy_log["stages"]["container"] = {"ok": False, "error": "build failed, nginx not restarted"}
+
     else:
         code, _, _ = await run_docker_command_async(["restart", container_name], timeout=30)
         deploy_log["stages"]["container"] = {"ok": code == 0}
