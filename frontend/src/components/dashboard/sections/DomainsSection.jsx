@@ -8,15 +8,63 @@ import { getDomains, addDomain, deleteDomain, verifyDomain, setPrimaryDomain } f
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+// Compound TLDs that require 3 labels for a registrable domain (eTLD+1).
+const COMPOUND_TLDS = new Set([
+  // Argentina
+  'com.ar','net.ar','org.ar','gov.ar','gob.ar','edu.ar','int.ar','mil.ar','tur.ar',
+  // UK
+  'co.uk','org.uk','me.uk','net.uk','ltd.uk','plc.uk','gov.uk','nhs.uk',
+  // Australia
+  'com.au','net.au','org.au','edu.au','gov.au','id.au',
+  // Brazil
+  'com.br','net.br','org.br','edu.br','gov.br','mil.br',
+  // Mexico
+  'com.mx','net.mx','org.mx','edu.mx','gob.mx',
+  // New Zealand
+  'co.nz','net.nz','org.nz','govt.nz',
+  // South Africa
+  'co.za','org.za','net.za','edu.za','gov.za',
+  // Spain
+  'com.es','org.es','gob.es','edu.es',
+  // Colombia
+  'com.co','net.co','org.co','gov.co','edu.co',
+  // Chile
+  'com.cl','net.cl','org.cl','gob.cl',
+  // Peru
+  'com.pe','net.pe','org.pe','gob.pe','edu.pe',
+  // Venezuela
+  'com.ve','net.ve','org.ve','gov.ve',
+  // India
+  'co.in','net.in','org.in','gov.in',
+  // Japan
+  'co.jp','ne.jp','or.jp','ac.jp','go.jp',
+  // China
+  'com.cn','net.cn','org.cn','gov.cn','edu.cn',
+  // Hong Kong
+  'com.hk','net.hk','org.hk',
+  // Singapore
+  'com.sg','net.sg','org.sg','edu.sg',
+]);
+
+function getRegistrableDomain(domain) {
+  const d = domain.trim().toLowerCase().replace(/\.$/, '');
+  const parts = d.split('.');
+  if (parts.length < 2) return d;
+  const compound = parts.slice(-2).join('.');
+  if (COMPOUND_TLDS.has(compound) && parts.length >= 3) return parts.slice(-3).join('.');
+  return parts.slice(-2).join('.');
+}
+
 function isApex(domain) {
   const d = domain.trim().toLowerCase().replace(/\.$/, '');
-  return d.split('.').length === 2;
+  return d === getRegistrableDomain(d);
 }
 
 function subLabel(domain) {
-  const parts = domain.trim().toLowerCase().split('.');
-  if (parts.length === 2) return '@';
-  return parts.slice(0, parts.length - 2).join('.');
+  const d = domain.trim().toLowerCase().replace(/\.$/, '');
+  const reg = getRegistrableDomain(d);
+  if (d === reg) return '@';
+  return d.slice(0, d.length - reg.length - 1);
 }
 
 function cleanValue(v) {

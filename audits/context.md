@@ -216,3 +216,83 @@ main.py
 - Grilla de upgrade: ahora muestra 4 columnas (Personal / Negocio / Agencia / Agencia Pro)
 - Bloque **Enterprise** ($99/mes anual, $129 mensual) con toggle Anual/Mensual, features en 2 columnas, botón de checkout
 - `PLAN_ORDER` extendido: `['free', 'personal', 'negocio', 'agencia', 'agencia_pro', 'enterprise']`
+
+---
+
+## Cambios — 2026-05-07 (continuación)
+
+### Frontend: DomainsSection — mini guía para usuarios no técnicos
+
+**`frontend/src/components/dashboard/sections/DomainsSection.jsx`**
+- Pill superior con dominio temporal (`Tu dominio temporal: X.hostingguard.lat`) en verde
+- Mini guía **"Conectar tu dominio en 3 pasos"** visible siempre antes del input:
+  - Paso 1 (azul): Agregá tu dominio
+  - Paso 2 (violeta): Copiá el registro DNS
+  - Paso 3 (verde): Verificá y activá SSL
+- Nota destacada: "No necesitás transferir tu dominio ni cambiar de proveedor"
+- Sección **"¿Dónde configuro esto?"** con lista de proveedores: Cloudflare, GoDaddy, Namecheap, DonWeb, Nic Argentina, Hostinger
+- Chips clickeables con ejemplos válidos (`ejemplo.com`, `www.ejemplo.com`, `app.ejemplo.com`) — se ocultan cuando el usuario empieza a escribir
+- Hint de tipo en tiempo real (`→ Dominio raíz` / `→ Subdominio`) al tipear
+- Instrucciones post-agregar etiquetadas como **"Paso 2"** con nota de propagación DNS
+
+### Frontend + Backend: Detección apex/subdominio con TLDs compuestos
+
+**Problema:** `canela-app.com.ar` se detectaba como subdominio (lógica naive `split('.').length === 2`).
+
+**`frontend/src/components/dashboard/sections/DomainsSection.jsx`**
+- Eliminadas `isApex` y `subLabel` naive
+- Añadido `COMPOUND_TLDS` (Set JS) con 40+ entradas: `.com.ar`, `.net.ar`, `.co.uk`, `.com.au`, `.com.br`, `.com.mx`, `.co.nz`, `.co.za`, `.co.jp`, `.com.cn`, `.com.hk`, `.com.sg`, etc.
+- `getRegistrableDomain(domain)`: si los últimos 2 labels están en `COMPOUND_TLDS` y hay al menos 3 labels → toma 3 labels como dominio registrable; si no, toma 2
+- `isApex(domain)`: `d === getRegistrableDomain(d)`
+- `subLabel(domain)`: `d.slice(0, d.length - registrable.length - 1)` — ahora retorna `www` para `www.canela-app.com.ar` (antes retornaba `www.canela-app`)
+
+**`app/services/domain_checker.py`**
+- Añadido `_COMPOUND_TLDS` (frozenset Python) con las mismas entradas
+- `_registrable_domain(domain)`: misma lógica que el frontend
+- `_is_apex(domain)`: `d == _registrable_domain(d)`
+- `dns_instructions()`: reemplazado `domain.count(".") == 1` por `_is_apex(domain)`
+
+**Acceptance confirmado:**
+| Dominio | Resultado |
+|---|---|
+| `canela-app.com.ar` | apex → A record |
+| `www.canela-app.com.ar` | subdominio → CNAME |
+| `app.canela-app.com.ar` | subdominio → CNAME |
+| `ejemplo.com` | apex → A record |
+| `www.ejemplo.com` | subdominio → CNAME |
+
+### Backend: Validación completa GitHub Deploy avanzado
+
+**Resultados por caso:**
+
+| Caso | Estrategia | Veredicto |
+|---|---|---|
+| Static root `.` | C (node build) | PASS |
+| Frontend `/frontend` | C (node build) | PASS |
+| Monorepo `/apps/web` | C (node build) | PASS |
+| FastAPI `/backend` | B (app server) | PASS |
+| Dockerfile `/backend/Dockerfile` | A (Dockerfile) | PASS |
+
+**Webhook:**
+- Sin firma → 401
+- Firma inválida → 401
+- Firma válida + evento no-push → 200 ignored
+- Firma válida + push → redeploy ejecutado, `triggered_by: "webhook"` en deploy_log
+
+### Bug crítico corregido — Path traversal en GitHub Deploy
+
+**`app/api/routes/hosting.py`** — 3 vulnerabilidades encontradas y corregidas:
+
+**BUG 1 — `root_directory` path traversal (CRÍTICO)**
+- Causa: `os.path.join(site_dir, "../../etc")` escapaba el repo clonado y se montaba como volumen Docker en el contenedor del usuario
+- Fix: `os.path.realpath()` + check `startswith(real_site + os.sep)` post-clone; si falla, limpia `site_dir` y devuelve 400
+
+**BUG 2 — `dockerfile_path` path traversal (CRÍTICO)**
+- Causa: `docker build -f {work_dir}/../../etc/hosts` podía leer archivos fuera del repositorio
+- Fix: mismo patrón `realpath` contra `_real_work` antes de invocar `docker build`
+
+**BUG 3 — `output_directory` path traversal en nginx (MODERADO)**
+- Causa: `os.path.join(work_dir, "../../etc")` se usaba como fuente del volumen `-v path:/usr/share/nginx/html:ro` montando un path arbitrario del host
+- Fix: mismo patrón `realpath` antes de construir el comando Docker
+
+Todos los checks limpian el `site_dir` clonado antes de devolver el error 400 para evitar residuos en disco.

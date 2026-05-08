@@ -885,7 +885,16 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
 
         # work_dir is the directory we install/build/run from
         work_dir = os.path.join(site_dir, data.root_directory) if data.root_directory else site_dir
+
+        # Security: prevent path traversal out of the cloned repo
+        _real_work = os.path.realpath(work_dir)
+        _real_site = os.path.realpath(site_dir)
+        if not (_real_work == _real_site or _real_work.startswith(_real_site + os.sep)):
+            await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
+            raise HTTPException(status_code=400, detail="root_directory no puede salir del repositorio")
+
         if not os.path.isdir(work_dir):
+            await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
             raise HTTPException(status_code=400,
                 detail=f"root_directory '{data.root_directory}' no existe en el repo.")
 
@@ -894,6 +903,13 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
         if data.dockerfile_path or data.framework == "dockerfile":
             # Strategy A: build & run from Dockerfile
             df_path = data.dockerfile_path or "Dockerfile"
+
+            # Security: dockerfile must stay inside work_dir
+            _df_full = os.path.realpath(os.path.join(work_dir, df_path))
+            if not (_df_full == _real_work or _df_full.startswith(_real_work + os.sep)):
+                await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
+                raise HTTPException(status_code=400, detail="dockerfile_path no puede salir de root_directory")
+
             image_tag = container_name
             build_result = await loop.run_in_executor(
                 None,
@@ -994,6 +1010,12 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     if data.output_directory
                     else _find_serve_dir(work_dir)
                 )
+                # Security: output_directory must stay inside work_dir
+                if data.output_directory:
+                    _real_serve = os.path.realpath(serve_root)
+                    if not (_real_serve == _real_work or _real_serve.startswith(_real_work + os.sep)):
+                        await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
+                        raise HTTPException(status_code=400, detail="output_directory no puede salir de root_directory")
                 command = [
                     "run", "-d",
                     "--name",    container_name,

@@ -24,6 +24,62 @@ TRAEFIK_DYNAMIC_DIR = os.getenv("TRAEFIK_DYNAMIC_DIR", "/opt/traefik-dynamic")
 SERVER_IP = os.getenv("SERVER_IP", "")
 DOMAIN = "hostingguard.lat"
 
+# Compound TLDs (eTLD-2) that require 3 labels for a registrable domain.
+# Kept as a frozenset for O(1) lookup; covers the most common ccSLD registries.
+_COMPOUND_TLDS: frozenset[str] = frozenset([
+    # Argentina
+    "com.ar","net.ar","org.ar","gov.ar","gob.ar","edu.ar","int.ar","mil.ar","tur.ar",
+    # UK
+    "co.uk","org.uk","me.uk","net.uk","ltd.uk","plc.uk","gov.uk","nhs.uk",
+    # Australia
+    "com.au","net.au","org.au","edu.au","gov.au","id.au",
+    # Brazil
+    "com.br","net.br","org.br","edu.br","gov.br","mil.br",
+    # Mexico
+    "com.mx","net.mx","org.mx","edu.mx","gob.mx",
+    # New Zealand
+    "co.nz","net.nz","org.nz","govt.nz",
+    # South Africa
+    "co.za","org.za","net.za","edu.za","gov.za",
+    # Spain
+    "com.es","org.es","gob.es","edu.es",
+    # Colombia
+    "com.co","net.co","org.co","gov.co","edu.co",
+    # Chile
+    "com.cl","net.cl","org.cl","gob.cl",
+    # Peru
+    "com.pe","net.pe","org.pe","gob.pe","edu.pe",
+    # Venezuela
+    "com.ve","net.ve","org.ve","gov.ve",
+    # India
+    "co.in","net.in","org.in","gov.in",
+    # Japan
+    "co.jp","ne.jp","or.jp","ac.jp","go.jp",
+    # China
+    "com.cn","net.cn","org.cn","gov.cn","edu.cn",
+    # Hong Kong
+    "com.hk","net.hk","org.hk",
+    # Singapore
+    "com.sg","net.sg","org.sg","edu.sg",
+])
+
+
+def _registrable_domain(domain: str) -> str:
+    """Return the registrable domain (eTLD+1), handling compound TLDs."""
+    d = domain.lower().rstrip(".")
+    parts = d.split(".")
+    if len(parts) < 2:
+        return d
+    if len(parts) >= 3 and ".".join(parts[-2:]) in _COMPOUND_TLDS:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
+def _is_apex(domain: str) -> bool:
+    d = domain.lower().strip().rstrip(".")
+    return d == _registrable_domain(d)
+
+
 _PRIVATE_NETS = [
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
@@ -93,7 +149,7 @@ def verify_dns(domain: str, subdomain: str) -> dict:
 
 def dns_instructions(domain: str, subdomain: str) -> dict:
     """Return human-readable DNS configuration instructions."""
-    is_apex = domain.count(".") == 1 or domain.startswith("@")
+    is_apex = _is_apex(domain) or domain.startswith("@")
     www = domain.startswith("www.")
     bare = domain.removeprefix("www.") if www else domain
 
