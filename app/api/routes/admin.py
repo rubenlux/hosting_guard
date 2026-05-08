@@ -802,7 +802,7 @@ async def admin_purge_deleted_hostings(
     return {"ok": True, "purged": len(purged), "errors": errors, "detail": purged}
 
 
-@router.delete("/hostings/{hosting_id}/terminate")
+@router.api_route("/hostings/{hosting_id}/terminate", methods=["DELETE", "POST"])
 @limiter.limit("10/minute")
 async def admin_terminate_hosting(
     hosting_id: int,

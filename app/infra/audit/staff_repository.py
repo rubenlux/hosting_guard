@@ -72,7 +72,7 @@ class StaffRepository:
             cursor.execute(
                 "SELECT staff_id, admin_id, email, full_name, role, is_active, "
                 "created_at,"
-                "last_login_at FROM staff_accounts ORDER BY created_at DESC"
+                "last_login_at FROM staff_accounts ORDER BY created_at::timestamptz DESC"
             )
             return [dict(row) for row in cursor.fetchall()]
         finally:
@@ -169,7 +169,7 @@ class StaffRepository:
                 "SELECT l.*,"
                 "u.email AS target_email FROM staff_activity_log l "
                 "LEFT JOIN users u ON l.target_user_id = u.user_id "
-                "WHERE l.staff_id = %s ORDER BY l.created_at DESC LIMIT %s",
+                "WHERE l.staff_id = %s ORDER BY l.created_at::timestamptz DESC LIMIT %s",
                 (staff_id, limit),
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -188,7 +188,7 @@ class StaffRepository:
                    FROM staff_activity_log l
                    JOIN staff_accounts s ON l.staff_id = s.staff_id
                    LEFT JOIN users u ON l.target_user_id = u.user_id
-                   ORDER BY l.created_at DESC LIMIT %s""",
+                   ORDER BY l.created_at::timestamptz DESC LIMIT %s""",
                 (limit,),
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -214,7 +214,7 @@ class StaffRepository:
                      COUNT(CASE WHEN l.action_type = 'logs_viewed' THEN 1 END) AS logs_viewed,
                      MAX(l.created_at) AS last_activity_at
                    FROM staff_accounts s
-                   LEFT JOIN staff_activity_log l ON s.staff_id = l.staff_id AND l.created_at >= %s
+                   LEFT JOIN staff_activity_log l ON s.staff_id = l.staff_id AND l.created_at::timestamptz >= %s
                    GROUP BY s.staff_id, s.email, s.full_name, s.role, s.is_active, s.last_login_at
                    ORDER BY total_actions DESC""",
                 (since,),
@@ -230,10 +230,10 @@ class StaffRepository:
         try:
             cursor = conn.cursor()
             # Uso nativo puro de TIMESTAMPTZ
-            hour_expr = "EXTRACT(HOUR FROM created_at)::INTEGER"
+            hour_expr = "EXTRACT(HOUR FROM created_at::timestamptz)::INTEGER"
             cursor.execute(
                 f"SELECT {hour_expr} AS hour, COUNT(*) AS events FROM staff_activity_log "
-                "WHERE staff_id = %s AND created_at >= %s "
+                "WHERE staff_id = %s AND created_at::timestamptz >= %s "
                 "GROUP BY hour ORDER BY hour",
                 (staff_id, since),
             )
