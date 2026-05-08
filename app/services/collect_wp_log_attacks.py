@@ -81,19 +81,72 @@ def _is_cloudflare_ip(ip: Optional[str]) -> bool:
         return False
 
 
-def _classify_ip(ip: Optional[str]) -> dict:
-    """Return IP classification fields for event metadata."""
-    if not ip:
+def _first_valid_ip(xff: str) -> Optional[str]:
+    """Return the first syntactically valid IP from an X-Forwarded-For string."""
+    for part in xff.split(","):
+        candidate = part.strip()
+        try:
+            ipaddress.ip_address(candidate)
+            return candidate
+        except ValueError:
+            continue
+    return None
+
+
+def _classify_ip(
+    source_ip: Optional[str],
+    *,
+    cf_connecting_ip: Optional[str] = None,
+    x_forwarded_for: Optional[str] = None,
+    x_real_ip: Optional[str] = None,
+) -> dict:
+    """Return IP classification fields for event metadata.
+
+    Priority: CF-Connecting-IP > X-Forwarded-For > X-Real-IP > source_ip.
+    client_ip is always equal to source_ip when no forwarding header is
+    available — never left None when source_ip is present.
+    """
+    if cf_connecting_ip:
         return {
-            "source_ip": None, "client_ip": None,
-            "ip_source": "unknown", "ip_confidence": "unknown",
+            "source_ip":     source_ip,
+            "client_ip":     cf_connecting_ip,
+            "ip_source":     "cf_connecting_ip",
+            "ip_confidence": "forwarded",
         }
-    confidence = "proxy_observed" if _is_cloudflare_ip(ip) else "direct"
+
+    if x_forwarded_for:
+        real = _first_valid_ip(x_forwarded_for)
+        if real:
+            return {
+                "source_ip":     source_ip,
+                "client_ip":     real,
+                "ip_source":     "x_forwarded_for",
+                "ip_confidence": "forwarded",
+            }
+
+    if x_real_ip:
+        return {
+            "source_ip":     source_ip,
+            "client_ip":     x_real_ip,
+            "ip_source":     "x_real_ip",
+            "ip_confidence": "forwarded",
+        }
+
+    # No forwarding headers available — client_ip = source_ip, never NULL
+    if not source_ip:
+        return {
+            "source_ip":     None,
+            "client_ip":     None,
+            "ip_source":     "unknown",
+            "ip_confidence": "unknown",
+        }
+
+    confidence = "proxy_observed" if _is_cloudflare_ip(source_ip) else "direct"
     return {
-        "source_ip":      ip,
-        "client_ip":      ip,
-        "ip_source":      "remote_addr",
-        "ip_confidence":  confidence,
+        "source_ip":     source_ip,
+        "client_ip":     source_ip,
+        "ip_source":     "remote_addr",
+        "ip_confidence": confidence,
     }
 
 
