@@ -10,8 +10,6 @@ optionally for incident summarization via the admin API.
 Rules implemented:
   AUTH_BRUTE_FORCE_IP      — ≥10 failed logins from same IP in 10 min
   AUTH_BRUTE_FORCE_EMAIL   — ≥5  failed logins for same email in 10 min
-  WP_LOGIN_BRUTE_FORCE     — ≥20 wp_login_failed events per hosting in 10 min
-  WP_XMLRPC_ATTACK         — ≥10 wp_xmlrpc events per hosting in 10 min
   OWNERSHIP_PROBING        — ≥3  ownership_denied per user/IP in 30 min
   WEBHOOK_ATTACK           — ≥3  invalid_webhook_signature per IP in 10 min
   UPLOAD_ATTACK            — ≥3  upload_rejected per user in 30 min
@@ -20,6 +18,9 @@ Rules implemented:
   RATE_LIMIT_ABUSE         — ≥10 rate_limit_hit per IP in 5 min
   WP_USER_ESCALATION       — wp_user_role_changed to admin in last 10 min
   WP_CORE_UPDATE           — unexpected WordPress core update event
+
+WordPress attack rules (WP_LOGIN_BRUTE_FORCE, XMLRPC_ATTACK) are handled by
+aggregate_wp_attacks.py which runs after collect_wp_log_attacks.
 """
 import logging
 from typing import Optional
@@ -32,8 +33,6 @@ def detect_security_anomalies() -> None:
     try:
         _rule_auth_brute_force_ip()
         _rule_auth_brute_force_email()
-        _rule_wp_login_brute_force()
-        _rule_wp_xmlrpc_attack()
         _rule_ownership_probing()
         _rule_webhook_attack()
         _rule_upload_attack()
@@ -116,49 +115,6 @@ def _rule_auth_brute_force_email() -> None:
             f"Múltiples intentos fallidos en cuenta: {r['email']}",
             message=f"{r['cnt']} intentos fallidos de login en los últimos 10 minutos para {r['email']}.",
             metadata={"email": r["email"], "attempt_count": r["cnt"], "window_minutes": 10},
-        )
-
-
-def _rule_wp_login_brute_force() -> None:
-    rows = _query("""
-        SELECT hosting_id, COUNT(*) AS cnt, MAX(ip) AS last_ip
-        FROM activity_events
-        WHERE event_type  = 'wp_login_failed'
-          AND category    = 'auth'
-          AND created_at >= NOW() - INTERVAL '10 minutes'
-          AND hosting_id IS NOT NULL
-        GROUP BY hosting_id
-        HAVING COUNT(*) >= 20
-    """)
-    for r in rows:
-        _log(
-            "critical", "wordpress_auth", "WP_LOGIN_BRUTE_FORCE",
-            f"Fuerza bruta en wp-login.php (hosting:{r['hosting_id']})",
-            message=f"{r['cnt']} intentos de login WordPress en 10 minutos.",
-            hosting_id=r["hosting_id"],
-            ip=r.get("last_ip"),
-            metadata={"attempt_count": r["cnt"], "window_minutes": 10},
-        )
-
-
-def _rule_wp_xmlrpc_attack() -> None:
-    rows = _query("""
-        SELECT hosting_id, COUNT(*) AS cnt, MAX(ip) AS last_ip
-        FROM activity_events
-        WHERE event_type  = 'wp_xmlrpc_attack'
-          AND created_at >= NOW() - INTERVAL '10 minutes'
-          AND hosting_id IS NOT NULL
-        GROUP BY hosting_id
-        HAVING COUNT(*) >= 10
-    """)
-    for r in rows:
-        _log(
-            "warning", "wordpress_auth", "XMLRPC_ATTACK",
-            f"Ataque XML-RPC detectado (hosting:{r['hosting_id']})",
-            message=f"{r['cnt']} peticiones a xmlrpc.php en 10 minutos.",
-            hosting_id=r["hosting_id"],
-            ip=r.get("last_ip"),
-            metadata={"request_count": r["cnt"]},
         )
 
 
