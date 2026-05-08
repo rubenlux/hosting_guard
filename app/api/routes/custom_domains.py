@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -15,6 +16,37 @@ _domain_repo  = DomainRepository()
 _hosting_repo = HostingRepository()
 
 DOMAIN = "hostingguard.lat"
+
+# ── Domain validation ─────────────────────────────────────────────────────────
+
+_LABEL_RE = re.compile(r'^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$')
+_INVALID_CHARS_RE = re.compile(r'[ /:#?@\\]')
+
+_RESERVED_DOMAINS = {
+    "hostingguard.lat",
+    "api.hostingguard.lat",
+    "www.hostingguard.lat",
+    "localhost",
+    "localhost.localdomain",
+}
+
+
+def _validate_domain_name(raw: str) -> None:
+    if not raw or len(raw) > 253:
+        raise HTTPException(status_code=400, detail="Dominio inválido o demasiado largo")
+    if _INVALID_CHARS_RE.search(raw):
+        raise HTTPException(status_code=400, detail="El dominio contiene caracteres inválidos")
+    if raw in _RESERVED_DOMAINS:
+        raise HTTPException(status_code=400, detail="Dominio reservado del sistema")
+    if raw == DOMAIN or raw.endswith(f".{DOMAIN}"):
+        raise HTTPException(status_code=400, detail=f"No podés usar dominios de {DOMAIN}")
+    if "." not in raw:
+        raise HTTPException(status_code=400, detail="El dominio debe tener al menos un punto")
+    for label in raw.split("."):
+        if not label or len(label) > 63:
+            raise HTTPException(status_code=400, detail=f"Etiqueta de dominio inválida: '{label}'")
+        if not _LABEL_RE.match(label):
+            raise HTTPException(status_code=400, detail=f"Etiqueta de dominio inválida: '{label}'")
 
 
 class AddDomainRequest(BaseModel):
@@ -49,10 +81,7 @@ def add_domain(
     hosting = _get_hosting_or_404(hosting_id, user_id)
 
     raw = body.domain.lower().strip()
-    if not raw or "." not in raw:
-        raise HTTPException(status_code=400, detail="Dominio inválido")
-    if raw.endswith(f".{DOMAIN}"):
-        raise HTTPException(status_code=400, detail="No podés usar subdominios de hostingguard.lat")
+    _validate_domain_name(raw)
 
     existing = _domain_repo.get_by_domain_name(raw)
     if existing:

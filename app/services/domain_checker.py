@@ -12,6 +12,7 @@ Traefik dynamic config:
   Traefik must be configured with --providers.file.directory pointing there.
   One file per verified domain: domain-{domain_id}.yml
 """
+import ipaddress
 import os
 import logging
 import socket
@@ -22,6 +23,26 @@ logger = logging.getLogger(__name__)
 TRAEFIK_DYNAMIC_DIR = os.getenv("TRAEFIK_DYNAMIC_DIR", "/opt/traefik-dynamic")
 SERVER_IP = os.getenv("SERVER_IP", "")
 DOMAIN = "hostingguard.lat"
+
+_PRIVATE_NETS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+
+def _is_private(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+        return any(addr in net for net in _PRIVATE_NETS)
+    except ValueError:
+        return False
 
 
 # ── DNS check ────────────────────────────────────────────────────────────────
@@ -42,6 +63,10 @@ def verify_dns(domain: str, subdomain: str) -> dict:
     if not domain_ip:
         return {"ok": False, "resolved_ip": None, "method": None,
                 "error": f"No se pudo resolver {domain}. Verificá que el DNS esté configurado."}
+
+    if _is_private(domain_ip):
+        return {"ok": False, "resolved_ip": domain_ip, "method": None,
+                "error": f"El dominio resuelve a una IP privada o reservada ({domain_ip}). No se puede activar."}
 
     # Method 1: direct A record matches SERVER_IP
     if SERVER_IP and domain_ip == SERVER_IP:

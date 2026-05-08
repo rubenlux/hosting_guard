@@ -1,21 +1,47 @@
 import { useState } from 'react';
 import {
   CreditCard, Zap, Check, Clock, ExternalLink,
-  AlertTriangle, ChevronRight, Loader2, CalendarCheck,
+  AlertTriangle, ChevronRight, Loader2, CalendarCheck, Building2,
 } from 'lucide-react';
 import { createBillingCheckout } from '../../../services/api';
 
-// ── Plan catalog (annual only) ────────────────────────────────────────────────
+// ── Plan catalog ──────────────────────────────────────────────────────────────
 const PLANS = {
-  free:     { label: 'Prueba Gratis', color: '#666',    priceMonthly: 0,  features: ['1 sitio web', 'Subdominio incluido', 'WordPress one-click', 'SSL automático', 'IA Advisory básico', 'Soporte por email'] },
-  personal: { label: 'Personal',      color: '#60a5fa', priceMonthly: 9,  features: ['1 sitio web', 'Subdominio incluido', 'WordPress one-click', 'SSL automático', 'IA Advisory básico', 'Backups semanales', 'Soporte por email'] },
-  negocio:  { label: 'Negocio',       color: '#a78bfa', priceMonthly: 19, features: ['3 sitios web', 'Subdominio incluido', 'Dominio propio', 'WordPress one-click', 'SSL automático', 'IA Advisory avanzado', 'Backups diarios', 'Soporte prioritario'] },
-  agencia:  { label: 'Agencia',       color: '#f59e0b', priceMonthly: 39, features: ['Sitios ilimitados', 'Subdominios ilimitados', 'Dominios propios', 'WordPress one-click', 'SSL automático', 'IA Advisory premium con Claude', 'Backups diarios', 'Soporte dedicado', 'API access'] },
-  // Legacy plan name aliases
-  basic:    null,
-  pro:      null,
-  business: null,
+  free: {
+    label: 'Prueba Gratis', color: '#666', priceMonthly: 0,
+    features: ['1 sitio web', 'Subdominio incluido', 'WordPress one-click', 'SSL automático', 'IA Advisory básico (10 consultas/mes)', 'Soporte por email'],
+  },
+  personal: {
+    label: 'Personal', color: '#60a5fa', priceMonthly: 9,
+    features: ['1 sitio web', 'Subdominio incluido', 'WordPress one-click', 'SSL automático', 'IA Advisory básico (20 consultas/mes)', 'Backups semanales (2 GB)', 'Soporte por email', 'Uso justo incluido'],
+  },
+  negocio: {
+    label: 'Negocio', color: '#a78bfa', priceMonthly: 19,
+    features: ['3 sitios web', 'Subdominio incluido', 'Dominio propio (opcional)', 'WordPress one-click', 'SSL automático', 'IA Advisory avanzado (100 consultas/mes)', 'Backups diarios (10 GB)', 'Soporte prioritario', 'Uso justo incluido'],
+  },
+  agencia: {
+    label: 'Agencia', color: '#f59e0b', priceMonthly: 39,
+    features: ['Hasta 10 sitios web', 'Subdominios incluidos', 'Dominios propios (opcional)', 'WordPress one-click', 'SSL automático', 'IA Advisory premium (300 consultas/mes)', 'Backups diarios (30 GB)', 'Soporte prioritario', 'API access', 'Uso justo incluido'],
+  },
+  agencia_pro: {
+    label: 'Agencia Pro', color: '#f97316', priceMonthly: 59,
+    features: ['Hasta 25 sitios web', 'Subdominios incluidos', 'Dominios propios (opcional)', 'WordPress one-click', 'SSL automático', 'IA Advisory premium ampliado (700 consultas/mes)', 'Backups diarios con mayor retención (75 GB)', 'Soporte prioritario avanzado', 'API access', 'Monitoreo avanzado', 'Reportes de salud', 'Uso justo incluido'],
+  },
+  // Legacy aliases
+  basic: null, pro: null, business: null,
 };
+
+const ENTERPRISE = {
+  annual:  { id: 'enterprise_annual',  price: '$99',  yearlyLabel: '$1.188/año', cta: 'Elegir Enterprise Anual' },
+  monthly: { id: 'enterprise_monthly', price: '$129', yearlyLabel: null,         cta: 'Elegir Enterprise Mensual' },
+};
+
+const ENTERPRISE_FEATURES = [
+  'Hasta 50 sitios web', 'Soporte prioritario dedicado', 'Monitoreo avanzado',
+  'Onboarding asistido', 'API access', 'Recursos ampliados',
+  'Backups avanzados (200 GB)', 'Auditoría y reportes', 'Consultoría técnica',
+  'Plan personalizado disponible', 'Uso justo incluido',
+];
 
 // Normalize legacy plan names
 const normalizePlan = (plan) => {
@@ -25,7 +51,7 @@ const normalizePlan = (plan) => {
   return plan || 'free';
 };
 
-const PLAN_ORDER = ['free', 'personal', 'negocio', 'agencia'];
+const PLAN_ORDER = ['free', 'personal', 'negocio', 'agencia', 'agencia_pro', 'enterprise'];
 
 const STATUS_LABELS = {
   active:       { label: 'Activa',          color: '#10b981' },
@@ -41,7 +67,8 @@ const fmt = (iso) => iso ? new Date(iso).toLocaleDateString('es', { day: '2-digi
 // ── BillingSection ────────────────────────────────────────────────────────────
 
 const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoading }) => {
-  const [upgrading, setUpgrading] = useState(null); // plan slug being checked out
+  const [upgrading, setUpgrading]           = useState(null);
+  const [enterpriseBilling, setEnterpriseBilling] = useState('annual');
 
   const currentPlanSlug = normalizePlan(user.plan);
   const currentPlan     = PLANS[currentPlanSlug] || PLANS.free;
@@ -181,11 +208,11 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
         <div style={{ fontSize: 12, fontWeight: 700, color: '#444', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 14 }}>
           Planes anuales — Facturación anual · Ahorra vs. mensual
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-          {['personal', 'negocio', 'agencia'].map((slug) => {
-            const plan = PLANS[slug];
-            const planIdx = PLAN_ORDER.indexOf(slug);
-            const isCurrent = slug === currentPlanSlug;
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12 }}>
+          {['personal', 'negocio', 'agencia', 'agencia_pro'].map((slug) => {
+            const plan     = PLANS[slug];
+            const planIdx  = PLAN_ORDER.indexOf(slug);
+            const isCurrent  = slug === currentPlanSlug;
             const isDowngrade = planIdx < currentIdx;
             const yearlyPrice = plan.priceMonthly * 12;
 
@@ -267,6 +294,95 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
           })}
         </div>
       </div>
+
+      {/* ── Enterprise block ───────────────────────────────────────────────── */}
+      {(() => {
+        const isEnterp   = currentPlanSlug === 'enterprise';
+        const eb         = ENTERPRISE[enterpriseBilling];
+        return (
+          <div style={{
+            marginTop: 12,
+            background: isEnterp ? 'rgba(0,255,136,0.04)' : '#0e0e0e',
+            border: `1px solid ${isEnterp ? 'rgba(0,255,136,0.25)' : 'rgba(255,255,255,0.07)'}`,
+            borderRadius: 14, padding: '20px 24px',
+            display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start',
+          }}>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <Building2 size={16} color="#00ff88" />
+                <span style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>Enterprise</span>
+              </div>
+              <div style={{ fontSize: 12, color: '#555', marginBottom: 14 }}>
+                Para organizaciones con necesidades avanzadas de infraestructura, seguridad y soporte.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px' }}>
+                {ENTERPRISE_FEATURES.map(f => (
+                  <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Check size={10} color={isEnterp ? '#00ff88' : '#444'} />
+                    <span style={{ fontSize: 11, color: isEnterp ? '#aaa' : '#555' }}>{f}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 12, minWidth: 180 }}>
+              {/* Anual / Mensual toggle */}
+              {!isEnterp && (
+                <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', fontSize: 12 }}>
+                  {['annual', 'monthly'].map(k => (
+                    <button key={k} onClick={() => setEnterpriseBilling(k)} style={{
+                      padding: '6px 14px', fontWeight: 700, cursor: 'pointer', border: 'none',
+                      background: enterpriseBilling === k ? '#00ff88' : 'transparent',
+                      color: enterpriseBilling === k ? '#000' : '#555',
+                      transition: 'all 0.15s',
+                    }}>
+                      {k === 'annual' ? 'Anual' : 'Mensual'}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                  <span style={{ fontSize: 28, fontWeight: 900, color: '#fff' }}>{eb.price}</span>
+                  <span style={{ fontSize: 11, color: '#555' }}>/mes</span>
+                </div>
+                {eb.yearlyLabel && (
+                  <div style={{ fontSize: 11, color: '#444', textAlign: 'right' }}>{eb.yearlyLabel}</div>
+                )}
+              </div>
+
+              {isEnterp ? (
+                <div style={{
+                  padding: '8px 20px', borderRadius: 8, textAlign: 'center',
+                  background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.3)',
+                  color: '#00ff88', fontSize: 12, fontWeight: 700,
+                }}>
+                  Plan actual
+                </div>
+              ) : (
+                <button
+                  onClick={() => handleUpgrade(eb.id)}
+                  disabled={upgrading !== null}
+                  style={{
+                    padding: '9px 20px', borderRadius: 8, cursor: upgrading ? 'wait' : 'pointer',
+                    background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.25)',
+                    color: '#00ff88', fontSize: 12, fontWeight: 700,
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    opacity: upgrading && upgrading !== eb.id ? 0.5 : 1,
+                    transition: 'opacity 0.15s',
+                  }}
+                >
+                  {upgrading === eb.id
+                    ? <><Loader2 size={12} className="animate-spin" /> Abriendo checkout…</>
+                    : <>{eb.cta} <ChevronRight size={12} /></>
+                  }
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Autoscale toggle ──────────────────────────────────────────────── */}
       <div

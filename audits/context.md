@@ -119,3 +119,100 @@ main.py
 └── Background Tasks    → expiration_scheduler (cada 12h)
 
 
+---
+
+## Cambios — 2026-05-07
+
+### Backend: GitHub Deploy extendido (`app/api/routes/hosting.py`)
+
+- **`GitDeployRequest`** ampliado con 9 campos nuevos: `root_directory`, `install_command`, `build_command`, `start_command`, `output_directory`, `port`, `framework`, `dockerfile_path`, `env_vars`
+- **3 estrategias de deploy**:
+  - A: Dockerfile (`dockerfile_path` o `framework=dockerfile`) → `docker build` + `docker run`
+  - B: App server (`start_command`) → imagen base + `sh -c "install && start"`
+  - C: Static/Node → detección de `package.json` + `serve`, o nginx puro
+- **`git_config` + `webhook_token`** persistidos en DB después del deploy
+- **`deploy_log`** con stages por deploy almacenado en `deploy_logs` JSONB
+- **Redeploy mejorado** (`POST /hostings/{id}/redeploy`): usa `git_config` almacenado; Dockerfile → rebuild completo; demás → git pull + restart
+- **Webhook** (`POST /hostings/{id}/webhook`): validación HMAC SHA-256 contra `webhook_token`, solo dispara en eventos `push`, triggerea redeploy automático
+- **Deploy logs** (`GET /hostings/{id}/deploy-logs`): retorna últimos 10 deploys
+
+### Backend: Dominios propios
+
+**`app/infra/migrations.py`**
+- Tabla `custom_domains` con columnas: `domain_id`, `user_id`, `hosting_id`, `domain`, `domain_type`, `dns_status`, `ssl_status`, `verified_at`, `last_checked_at`, `error_message`, `verification_token`, `is_primary`
+- Columnas `git_config JSONB`, `webhook_token TEXT`, `deploy_logs JSONB` en tabla `hostings`
+- Índices en `custom_domains`
+
+**`app/infra/audit/domain_repository.py`** (nuevo)
+- `add_domain`, `get_domains`, `get_domain`, `get_by_domain_name`
+- `update_status` (keyword-only args para dns_status, ssl_status, error_message, verified)
+- `set_primary`, `delete_domain`, `get_pending_domains` (JOIN con hostings, retorna dominios pendientes no chequeados en 5 min)
+
+**`app/infra/audit/hosting_repository.py`**
+- `set_git_config(hosting_id, git_config, webhook_token)` 
+- `get_git_config(hosting_id, user_id)` → devuelve git_config + webhook_token
+- `get_by_webhook_token(token)` → lookup interno para webhook
+- `get_for_webhook(hosting_id)` → lookup sin filtro user_id para validación HMAC
+- `append_deploy_log(hosting_id, entry)` → append a JSONB array
+- `get_deploy_logs(hosting_id, user_id)` → últimos 10
+
+**`app/services/domain_checker.py`** (nuevo)
+- `verify_dns(domain, subdomain)` → compara IP via `socket.gethostbyname()` contra `SERVER_IP` (A record) o IP del subdominio (CNAME chain)
+- `dns_instructions(domain, subdomain)` → instrucciones CNAME o A según tipo de dominio (apex vs subdominio)
+- `write_traefik_config(domain_id, domain, container_name, port, redirect_www)` → escribe YAML en `TRAEFIK_DYNAMIC_DIR`; incluye router HTTP→HTTPS y router HTTPS con Let's Encrypt
+- `remove_traefik_config(domain_id)` → elimina YAML
+- `check_pending_domains()` → job para scheduler, verifica todos los dominios pending/failed
+
+**`app/api/routes/custom_domains.py`** (nuevo)
+- `GET /hostings/{id}/domains` → lista dominios del hosting
+- `POST /hostings/{id}/domains` → agrega dominio (valida no sea subdominio nuestro, no esté duplicado), devuelve instrucciones DNS
+- `DELETE /hostings/{id}/domains/{domain_id}` → elimina dominio + config Traefik
+- `POST /hostings/{id}/domains/{domain_id}/verify` → verifica DNS manualmente; si OK escribe Traefik config + SSL
+- `POST /hostings/{id}/domains/{domain_id}/set-primary` → marca como primario (solo dominios activos)
+- Usa `log_event` de `app.services.activity_service` (no ActivityRepository que no existe)
+
+**`app/api/config.py`**
+- `SERVER_IP = os.getenv("SERVER_IP", "")` → IP pública del servidor para verificación A record apex
+
+**`app/api/main.py`**
+- Registrado `custom_domains_router`
+
+**`app/services/scheduler_runner.py`**
+- Job `check_pending_domains` cada 300s (5 min)
+- Job count actualizado a 15
+
+### Bug crítico corregido
+- `custom_domains.py` y `domain_checker.py` importaban `ActivityRepository` de un módulo inexistente (`app.infra.audit.activity_repository`) → server crash al iniciar. Corregido a `log_event` de `app.services.activity_service`.
+
+### Frontend: Dominios propios
+
+**`frontend/src/components/dashboard/sections/DomainsSection.jsx`** (reescrito)
+- Componente `DomainManager` por hosting: add/delete/verify/set-primary via API real
+- Panel de instrucciones DNS dinámico (se muestra al agregar o si verificación falla)
+- Badges de estado: `dns_status` (pending/active/failed) + `ssl_status`
+- Botón "Verificar" manual, botón "Primario" para dominios activos
+- Input con validación, mensajes de error inline
+
+**`frontend/src/services/api.js`**
+- `redeployHosting(id)`, `getDeployLogs(id)`
+- `getDomains(hostingId)`, `addDomain(hostingId, domain)`
+- `deleteDomain(hostingId, domainId)`, `verifyDomain(hostingId, domainId)`
+- `setPrimaryDomain(hostingId, domainId)`
+- `deployFromGithub` actualizado para aceptar `extra` config (todos los campos avanzados)
+
+### Frontend: GitHub Deploy — configuración avanzada
+
+**`frontend/src/components/HostingCreationForm.jsx`**
+- Sección "Configuración avanzada" colapsable en el formulario GitHub
+- Campos: `root_directory`, `install_command`, `build_command`, `start_command`, `output_directory`, `port`, `dockerfile_path`
+- Editor de variables de entorno: pares key/value dinámicos (agregar/eliminar filas)
+- Todos los campos son opcionales; se pasan al backend solo si tienen valor
+
+### Frontend: Facturación — nuevos planes
+
+**`frontend/src/components/dashboard/sections/BillingSection.jsx`**
+- Agregado plan **Agencia Pro** ($59/mes, $708/año) con color naranja (#f97316)
+- Features actualizadas para todos los planes (copiadas de `Pricing.jsx`)
+- Grilla de upgrade: ahora muestra 4 columnas (Personal / Negocio / Agencia / Agencia Pro)
+- Bloque **Enterprise** ($99/mes anual, $129 mensual) con toggle Anual/Mensual, features en 2 columnas, botón de checkout
+- `PLAN_ORDER` extendido: `['free', 'personal', 'negocio', 'agencia', 'agencia_pro', 'enterprise']`
