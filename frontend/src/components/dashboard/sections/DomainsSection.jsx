@@ -1,51 +1,395 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Globe, Copy, Check, ExternalLink, ChevronDown, ChevronUp,
-  Plus, Trash2, RefreshCw, Star, AlertTriangle, Info, Loader2, X,
+  Plus, Trash2, RefreshCw, Star, AlertTriangle, Info,
+  Loader2, X, ShieldCheck, Clock, CheckCircle2, XCircle,
 } from 'lucide-react';
 import { getDomains, addDomain, deleteDomain, verifyDomain, setPrimaryDomain } from '../../../services/api';
 
-const CopyBtn = ({ text }) => {
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function isApex(domain) {
+  const d = domain.trim().toLowerCase().replace(/\.$/, '');
+  return d.split('.').length === 2;
+}
+
+function subLabel(domain) {
+  const parts = domain.trim().toLowerCase().split('.');
+  if (parts.length === 2) return '@';
+  return parts.slice(0, parts.length - 2).join('.');
+}
+
+function cleanValue(v) {
+  return (v || '').replace(/\.$/, '');
+}
+
+// ── CopyBtn ───────────────────────────────────────────────────────────────────
+
+function CopyBtn({ text, label = 'Copiar' }) {
   const [copied, setCopied] = useState(false);
   const handle = () => {
     navigator.clipboard.writeText(text);
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    setTimeout(() => setCopied(false), 1800);
   };
   return (
-    <button
-      onClick={handle}
-      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', color: copied ? '#00ff88' : '#888', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, transition: 'all 0.15s' }}
-    >
+    <button onClick={handle} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px',
+      background: copied ? 'rgba(0,255,136,0.1)' : 'rgba(255,255,255,0.06)',
+      border: `1px solid ${copied ? 'rgba(0,255,136,0.3)' : 'rgba(255,255,255,0.1)'}`,
+      borderRadius: 6, cursor: 'pointer', color: copied ? '#00ff88' : '#aaa',
+      fontSize: 11, fontWeight: 600, transition: 'all 0.15s', whiteSpace: 'nowrap',
+    }}>
       {copied ? <Check size={11} /> : <Copy size={11} />}
-      {copied ? 'Copiado' : 'Copiar'}
+      {copied ? 'Copiado' : label}
     </button>
   );
-};
+}
 
-const DNS_STATUS_BADGE = {
-  pending:  { label: 'Pendiente', color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
-  active:   { label: 'Activo',    color: '#00ff88', bg: 'rgba(0,255,136,0.08)' },
-  failed:   { label: 'Error',     color: '#ef4444', bg: 'rgba(239,68,68,0.1)' },
-};
+// ── DNS table ─────────────────────────────────────────────────────────────────
 
-const SSL_STATUS_BADGE = {
-  pending:  { label: 'SSL pendiente', color: '#f59e0b' },
-  active:   { label: 'SSL activo',    color: '#00ff88' },
-  failed:   { label: 'SSL error',     color: '#ef4444' },
-};
+function DnsTable({ instructions, subdomainFull }) {
+  if (!instructions) return null;
+  const host  = instructions.type === 'A' ? '@' : subLabel(instructions.name || '');
+  const value = cleanValue(instructions.value);
+  const isA   = instructions.type === 'A';
+
+  return (
+    <div style={{
+      background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 10, overflow: 'hidden', marginBottom: 12,
+    }}>
+      {/* header */}
+      <div style={{
+        padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+        display: 'flex', alignItems: 'center', gap: 8,
+        background: isA ? 'rgba(249,115,22,0.06)' : 'rgba(96,165,250,0.06)',
+      }}>
+        <Info size={13} color={isA ? '#f97316' : '#60a5fa'} />
+        <span style={{ fontSize: 12, fontWeight: 700, color: isA ? '#f97316' : '#60a5fa' }}>
+          {isA ? 'Registro A — para dominio raíz' : 'Registro CNAME — para subdominio'}
+        </span>
+      </div>
+
+      {/* column headers */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: '80px 100px 1fr 60px',
+        padding: '7px 14px', borderBottom: '1px solid rgba(255,255,255,0.04)',
+        fontSize: 10, color: '#555', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em',
+      }}>
+        <span>Tipo</span><span>Host/Nombre</span><span>Valor/Destino</span><span>TTL</span>
+      </div>
+
+      {/* values */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: '80px 100px 1fr 60px',
+        padding: '10px 14px', alignItems: 'center', gap: 6,
+      }}>
+        <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 800, color: isA ? '#f97316' : '#60a5fa' }}>
+          {instructions.type}
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#ddd' }}>{host}</span>
+          <CopyBtn text={host} label="Copiar" />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#fff', wordBreak: 'break-all' }}>{value}</span>
+          <CopyBtn text={value} label="Copiar" />
+        </div>
+        <span style={{ fontSize: 12, color: '#555' }}>Auto</span>
+      </div>
+
+      {/* note */}
+      <div style={{
+        padding: '8px 14px', borderTop: '1px solid rgba(255,255,255,0.04)',
+        fontSize: 11, color: '#666', lineHeight: 1.6,
+        background: 'rgba(255,255,255,0.02)',
+      }}>
+        {isA
+          ? `Creá un registro A con nombre @ y el valor ${value}. Si tu proveedor no acepta @, usá el dominio raíz directamente.`
+          : `Creá un registro CNAME con nombre ${host} apuntando a ${value}. No incluyas el nombre del dominio en el valor.`}
+      </div>
+    </div>
+  );
+}
+
+// ── DNS status stepper ────────────────────────────────────────────────────────
+
+function StatusStepper({ dns_status, ssl_status }) {
+  const steps = [
+    {
+      key: 'dns',
+      label: 'DNS',
+      status: dns_status,
+      desc: { active: 'Verificado', pending: 'Verificando...', failed: 'Error' },
+    },
+    {
+      key: 'ssl',
+      label: 'SSL',
+      status: ssl_status || 'pending',
+      desc: { active: 'Activo', pending: 'Emitiendo...', failed: 'Error' },
+    },
+    {
+      key: 'done',
+      label: 'Activo',
+      status: dns_status === 'active' && ssl_status === 'active' ? 'active' : 'pending',
+      desc: { active: 'Listo', pending: 'Esperando' },
+    },
+  ];
+  const colors = { active: '#00ff88', pending: '#f59e0b', failed: '#ef4444' };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      {steps.map((s, i) => {
+        const c = colors[s.status] || '#555';
+        return (
+          <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: '50%', border: `2px solid ${c}`,
+                background: s.status === 'active' ? `${c}18` : 'transparent',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {s.status === 'active'
+                  ? <CheckCircle2 size={13} color={c} />
+                  : s.status === 'failed'
+                    ? <XCircle size={13} color={c} />
+                    : <Clock size={11} color={c} />}
+              </div>
+              <span style={{ fontSize: 9, color: c, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {s.label}
+              </span>
+            </div>
+            {i < steps.length - 1 && (
+              <div style={{ width: 24, height: 1, background: 'rgba(255,255,255,0.1)', marginBottom: 10 }} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── DomainCard ────────────────────────────────────────────────────────────────
+
+function DomainCard({ domain: d, hostingId, subdomainFull, onRefresh }) {
+  const [verifying, setVerifying] = useState(false);
+  const [deleting,  setDeleting]  = useState(false);
+  const [showDns,   setShowDns]   = useState(d.dns_status !== 'active');
+  const [verifyResult, setVerifyResult] = useState(null);
+
+  const apex    = isApex(d.domain);
+  const isPrimary = d.is_primary === 1;
+
+  // build DNS instructions from stored domain type + subdomainFull
+  const dnsInstructions = {
+    type:  apex ? 'A' : 'CNAME',
+    name:  d.domain,
+    value: apex ? (d.server_ip || 'IP del servidor') : `${subdomainFull}.`,
+  };
+
+  const handleVerify = async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const res = await verifyDomain(hostingId, d.domain_id);
+      setVerifyResult(res);
+      if (res.ok) setShowDns(false);
+      await onRefresh();
+    } catch (err) {
+      setVerifyResult({ ok: false, error: err?.response?.data?.detail || 'Error al verificar' });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm(`¿Eliminar el dominio ${d.domain}?`)) return;
+    setDeleting(true);
+    try {
+      await deleteDomain(hostingId, d.domain_id);
+      await onRefresh();
+    } catch {
+      setDeleting(false);
+    }
+  };
+
+  const handleSetPrimary = async () => {
+    try {
+      await setPrimaryDomain(hostingId, d.domain_id);
+      await onRefresh();
+    } catch {/* silent */}
+  };
+
+  const dnsOk  = d.dns_status === 'active';
+  const sslOk  = d.ssl_status === 'active';
+  const failed = d.dns_status === 'failed';
+  const borderColor = dnsOk && sslOk ? 'rgba(0,255,136,0.2)' : failed ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.08)';
+
+  return (
+    <div style={{
+      background: '#111', border: `1px solid ${borderColor}`,
+      borderRadius: 12, overflow: 'hidden', marginBottom: 10,
+    }}>
+      {/* Card header */}
+      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#fff', fontFamily: 'monospace' }}>
+              {d.domain}
+            </span>
+            <span style={{
+              fontSize: 10, padding: '2px 7px', borderRadius: 20, fontWeight: 700,
+              background: apex ? 'rgba(249,115,22,0.1)' : 'rgba(96,165,250,0.1)',
+              color: apex ? '#f97316' : '#60a5fa',
+            }}>
+              {apex ? 'Dominio raíz' : 'Subdominio'}
+            </span>
+            {isPrimary && (
+              <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, background: 'rgba(0,255,136,0.1)', color: '#00ff88', fontWeight: 700 }}>
+                ★ Primario
+              </span>
+            )}
+          </div>
+          <StatusStepper dns_status={d.dns_status} ssl_status={d.ssl_status} />
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {!dnsOk && (
+            <button onClick={handleVerify} disabled={verifying} style={{
+              display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px',
+              background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.25)',
+              borderRadius: 8, cursor: verifying ? 'wait' : 'pointer', color: '#60a5fa',
+              fontSize: 12, fontWeight: 700, opacity: verifying ? 0.6 : 1,
+            }}>
+              {verifying ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              {verifying ? 'Verificando...' : 'Ya configuré mi DNS, verificar ahora'}
+            </button>
+          )}
+          {dnsOk && !isPrimary && (
+            <button onClick={handleSetPrimary} style={{
+              display: 'flex', alignItems: 'center', gap: 5, padding: '6px 10px',
+              background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.2)',
+              borderRadius: 8, cursor: 'pointer', color: '#00ff88', fontSize: 12, fontWeight: 700,
+            }}>
+              <Star size={12} /> Hacer primario
+            </button>
+          )}
+          <button onClick={handleDelete} disabled={deleting} style={{
+            display: 'flex', alignItems: 'center', gap: 4, padding: '6px 10px',
+            background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.15)',
+            borderRadius: 8, cursor: deleting ? 'wait' : 'pointer', color: '#ef4444',
+            fontSize: 12, fontWeight: 600, opacity: deleting ? 0.5 : 1,
+          }}>
+            {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+            Eliminar
+          </button>
+        </div>
+      </div>
+
+      {/* Verification error result */}
+      {verifyResult && !verifyResult.ok && (
+        <div style={{
+          margin: '0 16px 12px', padding: '10px 14px',
+          background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
+          borderRadius: 8,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <AlertTriangle size={13} color="#ef4444" />
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#ef4444' }}>No pudimos verificar el DNS todavía</span>
+          </div>
+          <div style={{ fontSize: 12, color: '#aaa', lineHeight: 1.7 }}>
+            {verifyResult.error}
+          </div>
+          {verifyResult.resolved_ip && (
+            <div style={{ marginTop: 8, fontSize: 11, color: '#888' }}>
+              <span style={{ color: '#f59e0b' }}>Detectamos: </span>
+              <span style={{ fontFamily: 'monospace' }}>{verifyResult.resolved_ip}</span>
+              {' — '}revisá que el registro DNS esté bien configurado.
+            </div>
+          )}
+          <div style={{ marginTop: 6, fontSize: 11, color: '#555' }}>
+            Los cambios DNS pueden tardar desde algunos minutos hasta 24 horas en propagarse.
+          </div>
+        </div>
+      )}
+
+      {/* Stored error message (from scheduler check) */}
+      {!verifyResult && d.error_message && !dnsOk && (
+        <div style={{
+          margin: '0 16px 12px', padding: '10px 14px',
+          background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)',
+          borderRadius: 8,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <AlertTriangle size={13} color="#f59e0b" />
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b' }}>Último intento de verificación</span>
+          </div>
+          <div style={{ fontSize: 12, color: '#aaa', lineHeight: 1.7 }}>{d.error_message}</div>
+          <div style={{ marginTop: 6, fontSize: 11, color: '#555' }}>
+            Los cambios DNS pueden tardar desde algunos minutos hasta 24 horas en propagarse.
+          </div>
+        </div>
+      )}
+
+      {/* DNS instructions */}
+      {!dnsOk && (
+        <div style={{ padding: '0 16px 14px' }}>
+          <button
+            onClick={() => setShowDns(v => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, marginBottom: showDns ? 10 : 0,
+              background: 'none', border: 'none', cursor: 'pointer', color: '#60a5fa',
+              fontSize: 12, fontWeight: 600, padding: 0,
+            }}
+          >
+            {showDns ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            {showDns ? 'Ocultar instrucciones DNS' : 'Ver instrucciones DNS'}
+          </button>
+
+          {showDns && (
+            <DnsTable instructions={dnsInstructions} subdomainFull={subdomainFull} />
+          )}
+        </div>
+      )}
+
+      {/* Active: success message */}
+      {dnsOk && sslOk && (
+        <div style={{
+          margin: '0 16px 14px', padding: '10px 14px',
+          background: 'rgba(0,255,136,0.06)', border: '1px solid rgba(0,255,136,0.15)',
+          borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <ShieldCheck size={14} color="#00ff88" />
+          <span style={{ fontSize: 12, color: '#00ff88', fontWeight: 600 }}>
+            Dominio activo con SSL. Tu sitio es accesible en https://{d.domain}
+          </span>
+          <div style={{ marginLeft: 'auto' }}>
+            <a href={`https://${d.domain}`} target="_blank" rel="noreferrer" style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              color: '#555', fontSize: 11, textDecoration: 'none',
+            }}>
+              <ExternalLink size={11} /> Abrir
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── DomainManager (per hosting) ───────────────────────────────────────────────
 
 function DomainManager({ hosting }) {
-  const [domains, setDomains]         = useState([]);
-  const [loading, setLoading]         = useState(true);
-  const [adding, setAdding]           = useState(false);
-  const [newDomain, setNewDomain]     = useState('');
-  const [addError, setAddError]       = useState('');
-  const [verifying, setVerifying]     = useState({});
-  const [deleting, setDeleting]       = useState({});
-  const [instructions, setInstructions] = useState(null);
+  const [domains,   setDomains]   = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [adding,    setAdding]    = useState(false);
+  const [newDomain, setNewDomain] = useState('');
+  const [addError,  setAddError]  = useState('');
+  const [addedInstructions, setAddedInstructions] = useState(null);
 
-  const subdomain = hosting.subdomain || '';
+  const subdomain     = hosting.subdomain || '';
   const subdomainFull = subdomain.includes('.') ? subdomain : `${subdomain}.hostingguard.lat`;
 
   const load = useCallback(async () => {
@@ -62,6 +406,8 @@ function DomainManager({ hosting }) {
 
   useEffect(() => { load(); }, [load]);
 
+  const previewType = newDomain.trim() ? (isApex(newDomain.trim()) ? 'apex' : 'subdomain') : null;
+
   const handleAdd = async () => {
     const raw = newDomain.trim().toLowerCase();
     if (!raw) return;
@@ -70,7 +416,7 @@ function DomainManager({ hosting }) {
     try {
       const result = await addDomain(hosting.hosting_id, raw);
       setNewDomain('');
-      setInstructions(result.instructions);
+      setAddedInstructions(result.instructions);
       await load();
     } catch (err) {
       setAddError(err?.response?.data?.detail || 'Error al agregar el dominio');
@@ -79,162 +425,122 @@ function DomainManager({ hosting }) {
     }
   };
 
-  const handleVerify = async (domainId) => {
-    setVerifying(v => ({ ...v, [domainId]: true }));
-    try {
-      const result = await verifyDomain(hosting.hosting_id, domainId);
-      if (!result.ok && result.instructions) {
-        setInstructions(result.instructions);
-      }
-      await load();
-    } catch {
-      // silent
-    } finally {
-      setVerifying(v => ({ ...v, [domainId]: false }));
-    }
-  };
-
-  const handleDelete = async (domainId) => {
-    setDeleting(d => ({ ...d, [domainId]: true }));
-    try {
-      await deleteDomain(hosting.hosting_id, domainId);
-      await load();
-    } catch {
-      // silent
-    } finally {
-      setDeleting(d => ({ ...d, [domainId]: false }));
-    }
-  };
-
-  const handleSetPrimary = async (domainId) => {
-    try {
-      await setPrimaryDomain(hosting.hosting_id, domainId);
-      await load();
-    } catch {
-      // silent
-    }
-  };
-
   if (loading) {
     return (
-      <div style={{ padding: '24px 0', display: 'flex', alignItems: 'center', gap: 8, color: '#555' }}>
-        <Loader2 size={14} className="animate-spin" /> Cargando dominios...
+      <div style={{ padding: '20px 0', display: 'flex', alignItems: 'center', gap: 8, color: '#555', fontSize: 12 }}>
+        <Loader2 size={13} className="animate-spin" /> Cargando dominios...
       </div>
     );
   }
 
   return (
     <div style={{ paddingTop: 16 }}>
-      {/* DNS instructions panel */}
-      {instructions && (
-        <div style={{ background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.18)', borderRadius: 10, padding: 14, marginBottom: 16, position: 'relative' }}>
-          <button onClick={() => setInstructions(null)} style={{ position: 'absolute', top: 10, right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#555' }}>
-            <X size={13} />
-          </button>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' }}>
-            <Info size={13} color="#60a5fa" />
-            <span style={{ fontSize: 12, color: '#60a5fa', fontWeight: 700 }}>Configurá el DNS en tu proveedor</span>
+
+      {/* Educational intro */}
+      <div style={{
+        background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 10, padding: '12px 14px', marginBottom: 16, fontSize: 12, color: '#777', lineHeight: 1.8,
+      }}>
+        <span style={{ color: '#aaa', fontWeight: 600 }}>Tu dominio temporal:</span>{' '}
+        <span style={{ fontFamily: 'monospace', color: '#00ff88' }}>{subdomainFull}</span>
+        <br />
+        Para usar tu propio dominio, no necesitás transferirlo ni cambiar de proveedor.
+        Solo tenés que agregar unos registros DNS en el panel donde lo compraste (GoDaddy, Namecheap, Cloudflare, etc.).
+      </div>
+
+      {/* Existing domains */}
+      {domains.map(d => (
+        <DomainCard
+          key={d.domain_id}
+          domain={d}
+          hostingId={hosting.hosting_id}
+          subdomainFull={subdomainFull}
+          onRefresh={load}
+        />
+      ))}
+
+      {/* Add domain form */}
+      <div style={{
+        background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)',
+        borderRadius: 10, padding: '14px', marginTop: domains.length ? 8 : 0,
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#888', marginBottom: 10 }}>
+          {domains.length === 0 ? 'Agregar dominio propio' : 'Agregar otro dominio'}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <div style={{ flex: 1, position: 'relative' }}>
+            <input
+              value={newDomain}
+              onChange={e => { setNewDomain(e.target.value); setAddError(''); setAddedInstructions(null); }}
+              onKeyDown={e => e.key === 'Enter' && handleAdd()}
+              placeholder="ejemplo.com  o  www.ejemplo.com"
+              style={{
+                width: '100%', background: 'rgba(255,255,255,0.04)',
+                border: `1px solid ${addError ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)'}`,
+                borderRadius: 8, padding: '9px 12px', color: '#fff', fontSize: 13,
+                outline: 'none', fontFamily: 'monospace', boxSizing: 'border-box',
+              }}
+            />
           </div>
-          <div style={{ fontFamily: 'monospace', fontSize: 11, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'flex', gap: 10, background: 'rgba(0,0,0,0.3)', borderRadius: 6, padding: '7px 10px' }}>
-              <span style={{ color: '#00ff88', minWidth: 44 }}>{instructions.type}</span>
-              <span style={{ color: '#888', minWidth: 28 }}>{instructions.name}</span>
-              <span style={{ color: '#ccc', flex: 1 }}>{instructions.value}</span>
-              <CopyBtn text={instructions.value} />
+          <button
+            onClick={handleAdd}
+            disabled={adding || !newDomain.trim()}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px',
+              background: adding || !newDomain.trim() ? 'rgba(255,255,255,0.03)' : 'rgba(0,255,136,0.1)',
+              border: '1px solid rgba(0,255,136,0.2)', borderRadius: 8,
+              cursor: adding || !newDomain.trim() ? 'not-allowed' : 'pointer',
+              color: '#00ff88', fontSize: 12, fontWeight: 700,
+              opacity: adding || !newDomain.trim() ? 0.4 : 1, whiteSpace: 'nowrap',
+            }}
+          >
+            {adding ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+            Agregar dominio
+          </button>
+        </div>
+
+        {/* Real-time type preview */}
+        {previewType && !addError && (
+          <div style={{ fontSize: 11, color: previewType === 'apex' ? '#f97316' : '#60a5fa', marginBottom: 6 }}>
+            {previewType === 'apex'
+              ? '→ Dominio raíz: vas a necesitar un registro A con tu IP'
+              : `→ Subdominio: vas a necesitar un registro CNAME apuntando a ${subdomainFull}`}
+          </div>
+        )}
+
+        {addError && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#ef4444' }}>
+            <AlertTriangle size={12} /> {addError}
+          </div>
+        )}
+
+        {/* Instructions shown right after adding */}
+        {addedInstructions && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, color: '#aaa', marginBottom: 8, fontWeight: 600 }}>
+              Ahora entrá al panel de tu proveedor de dominio y creá este registro:
+            </div>
+            <DnsTable instructions={addedInstructions} subdomainFull={subdomainFull} />
+            <div style={{ fontSize: 12, color: '#666', lineHeight: 1.7 }}>
+              Cuando hayas guardado el registro, hacé clic en <strong style={{ color: '#60a5fa' }}>"Ya configuré mi DNS, verificar ahora"</strong> en la tarjeta de arriba.
+              Los cambios DNS pueden tardar desde algunos minutos hasta algunas horas en propagarse.
             </div>
           </div>
-          <div style={{ fontSize: 11, color: '#666', marginTop: 10, lineHeight: 1.6 }}>{instructions.note}</div>
-        </div>
-      )}
+        )}
 
-      {/* Custom domains list */}
-      {domains.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-          {domains.map(d => {
-            const dnsBadge = DNS_STATUS_BADGE[d.dns_status] || DNS_STATUS_BADGE.pending;
-            const sslBadge = d.ssl_status ? SSL_STATUS_BADGE[d.ssl_status] : null;
-            return (
-              <div key={d.domain_id} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Globe size={13} color={dnsBadge.color} style={{ flexShrink: 0 }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13, color: '#fff', fontFamily: 'monospace' }}>{d.domain}</span>
-                    {d.is_primary === 1 && (
-                      <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 20, background: 'rgba(0,255,136,0.1)', color: '#00ff88', fontWeight: 700 }}>Primario</span>
-                    )}
-                    <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 20, background: dnsBadge.bg, color: dnsBadge.color }}>{dnsBadge.label}</span>
-                    {sslBadge && (
-                      <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 20, background: 'rgba(255,255,255,0.05)', color: sslBadge.color }}>{sslBadge.label}</span>
-                    )}
-                  </div>
-                  {d.error_message && (
-                    <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <AlertTriangle size={11} /> {d.error_message}
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                  {d.dns_status !== 'active' && (
-                    <button
-                      onClick={() => handleVerify(d.domain_id)}
-                      disabled={verifying[d.domain_id]}
-                      style={{ background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.2)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', color: '#60a5fa', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, opacity: verifying[d.domain_id] ? 0.5 : 1 }}
-                    >
-                      {verifying[d.domain_id] ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-                      Verificar
-                    </button>
-                  )}
-                  {d.dns_status === 'active' && d.is_primary !== 1 && (
-                    <button
-                      onClick={() => handleSetPrimary(d.domain_id)}
-                      style={{ background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.15)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', color: '#00ff88', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
-                    >
-                      <Star size={11} /> Primario
-                    </button>
-                  )}
-                  <button
-                    onClick={() => handleDelete(d.domain_id)}
-                    disabled={deleting[d.domain_id]}
-                    style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: '#ef4444', fontSize: 11, opacity: deleting[d.domain_id] ? 0.5 : 1 }}
-                  >
-                    {deleting[d.domain_id] ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Add domain input */}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <input
-          value={newDomain}
-          onChange={e => { setNewDomain(e.target.value); setAddError(''); }}
-          onKeyDown={e => e.key === 'Enter' && handleAdd()}
-          placeholder="tudominio.com"
-          style={{ flex: 1, background: 'rgba(255,255,255,0.04)', border: `1px solid ${addError ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)'}`, borderRadius: 8, padding: '8px 12px', color: '#fff', fontSize: 13, outline: 'none', fontFamily: 'monospace' }}
-        />
-        <button
-          onClick={handleAdd}
-          disabled={adding || !newDomain.trim()}
-          style={{ background: adding || !newDomain.trim() ? 'rgba(255,255,255,0.04)' : 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: 8, padding: '8px 14px', cursor: adding || !newDomain.trim() ? 'not-allowed' : 'pointer', color: '#00ff88', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, opacity: adding || !newDomain.trim() ? 0.4 : 1, whiteSpace: 'nowrap' }}
-        >
-          {adding ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-          Agregar
-        </button>
-      </div>
-      {addError && (
-        <div style={{ marginTop: 8, fontSize: 12, color: '#ef4444', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <AlertTriangle size={12} /> {addError}
-        </div>
-      )}
-      <div style={{ marginTop: 10, fontSize: 11, color: '#555', lineHeight: 1.6 }}>
-        Después de agregar el dominio, configurá el DNS en tu proveedor apuntando a <span style={{ color: '#888', fontFamily: 'monospace' }}>{subdomainFull}</span> y luego hacé clic en Verificar.
+        {!addedInstructions && (
+          <div style={{ fontSize: 11, color: '#555', lineHeight: 1.7, marginTop: 4 }}>
+            Podés usar tu dominio raíz (<span style={{ fontFamily: 'monospace', color: '#666' }}>ejemplo.com</span>) o
+            cualquier subdominio (<span style={{ fontFamily: 'monospace', color: '#666' }}>www.ejemplo.com</span>, <span style={{ fontFamily: 'monospace', color: '#666' }}>app.ejemplo.com</span>).
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+// ── DomainsSection ────────────────────────────────────────────────────────────
 
 const STATUS_COLOR = { active: '#00ff88', stopped: '#f59e0b', error: '#ef4444', exited: '#f59e0b' };
 
@@ -242,61 +548,92 @@ const DomainsSection = ({ hostings = [] }) => {
   const [openId, setOpenId] = useState(null);
 
   return (
-    <div style={{ maxWidth: 800, margin: '0 auto' }}>
-      <div style={{ marginBottom: 32 }}>
+    <div style={{ maxWidth: 820, margin: '0 auto' }}>
+      <div style={{ marginBottom: 28 }}>
         <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 6 }}>Dominios</div>
-        <div style={{ fontSize: 13, color: '#666' }}>Administrá los dominios de tus sitios web.</div>
+        <div style={{ fontSize: 13, color: '#555' }}>
+          Conectá tu propio dominio a cualquiera de tus sitios.
+          No necesitás mover ni transferir nada — solo configurar el DNS.
+        </div>
       </div>
 
       {hostings.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '4rem 2rem', background: '#111', borderRadius: 16, border: '1px dashed rgba(255,255,255,0.08)' }}>
+        <div style={{
+          textAlign: 'center', padding: '4rem 2rem',
+          background: '#111', borderRadius: 16, border: '1px dashed rgba(255,255,255,0.08)',
+        }}>
           <Globe size={32} style={{ color: '#333', marginBottom: 12 }} />
-          <div style={{ color: '#666', fontSize: 14 }}>No tenés sitios activos aún.</div>
+          <div style={{ color: '#555', fontSize: 14 }}>No tenés sitios activos aún.</div>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {hostings.map(h => {
-            const subdomain   = h.subdomain || '';
-            const url         = subdomain.includes('.') ? `https://${subdomain}` : `https://${subdomain}.hostingguard.lat`;
-            const displayUrl  = subdomain.includes('.') ? subdomain : `${subdomain}.hostingguard.lat`;
-            const statusColor = STATUS_COLOR[h.status] || '#888';
-            const isOpen      = openId === h.hosting_id;
+            const subdomain  = h.subdomain || '';
+            const displayUrl = subdomain.includes('.') ? subdomain : `${subdomain}.hostingguard.lat`;
+            const url        = `https://${displayUrl}`;
+            const statusColor = STATUS_COLOR[h.status] || '#666';
+            const isOpen = openId === h.hosting_id;
 
             return (
-              <div key={h.hosting_id} style={{ background: '#111', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, overflow: 'hidden' }}>
-                {/* Main domain row */}
-                <div style={{ padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(0,255,136,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Globe size={18} color="#00ff88" />
+              <div key={h.hosting_id} style={{
+                background: '#111', border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 16, overflow: 'hidden',
+              }}>
+                {/* Hosting header */}
+                <div style={{ padding: '18px 22px', display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <div style={{
+                    width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+                    background: 'rgba(0,255,136,0.07)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Globe size={17} color="#00ff88" />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                       <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{h.name}</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: `${statusColor}18`, color: statusColor }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20,
+                        background: `${statusColor}15`, color: statusColor,
+                      }}>
                         {h.status}
                       </span>
                     </div>
-                    <div style={{ fontSize: 12, color: '#888', fontFamily: 'monospace' }}>{displayUrl}</div>
+                    <div style={{ fontSize: 12, color: '#555', fontFamily: 'monospace' }}>
+                      Dominio temporal: {displayUrl}
+                    </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <CopyBtn text={url} />
-                    <a href={url} target="_blank" rel="noreferrer" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '4px 10px', color: '#888', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, textDecoration: 'none' }}>
+                    <CopyBtn text={url} label="Copiar URL" />
+                    <a href={url} target="_blank" rel="noreferrer" style={{
+                      display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px',
+                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: 6, color: '#888', fontSize: 11, textDecoration: 'none',
+                    }}>
                       <ExternalLink size={11} /> Abrir
                     </a>
                   </div>
                 </div>
 
-                {/* Custom domain toggle */}
+                {/* Toggle */}
                 <div
                   onClick={() => setOpenId(isOpen ? null : h.hosting_id)}
-                  style={{ padding: '12px 24px', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', background: isOpen ? 'rgba(255,255,255,0.02)' : 'transparent', transition: 'background 0.15s' }}
+                  style={{
+                    padding: '11px 22px', borderTop: '1px solid rgba(255,255,255,0.05)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    cursor: 'pointer', transition: 'background 0.15s',
+                    background: isOpen ? 'rgba(255,255,255,0.02)' : 'transparent',
+                  }}
                 >
-                  <span style={{ fontSize: 12, color: '#888', fontWeight: 600 }}>Conectar dominio propio</span>
-                  {isOpen ? <ChevronUp size={14} color="#666" /> : <ChevronDown size={14} color="#666" />}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Globe size={13} color="#555" />
+                    <span style={{ fontSize: 12, color: '#777', fontWeight: 600 }}>
+                      Conectar dominio propio
+                    </span>
+                  </div>
+                  {isOpen ? <ChevronUp size={13} color="#555" /> : <ChevronDown size={13} color="#555" />}
                 </div>
 
                 {isOpen && (
-                  <div style={{ padding: '0 24px 24px', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                  <div style={{ padding: '0 22px 22px', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
                     <DomainManager hosting={h} />
                   </div>
                 )}
