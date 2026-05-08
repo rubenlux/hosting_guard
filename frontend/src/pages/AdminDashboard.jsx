@@ -36,6 +36,7 @@ import ImportSiteModal from '../components/dashboard/ImportSiteModal';
 import OnlineUsersCard from '../components/admin/OnlineUsersCard';
 import ActivityTimeline from '../components/admin/ActivityTimeline';
 import SecurityCenter from '../components/admin/SecurityCenter';
+import SecurityStatusBeacon from '../components/admin/SecurityStatusBeacon';
 import ResourceUsage from '../components/admin/ResourceUsage';
 import UnitEconomics from '../components/admin/UnitEconomics';
 import CostSettings from '../components/admin/CostSettings';
@@ -527,6 +528,7 @@ export default function AdminDashboard() {
             <span className="text-[10px] text-gray-500 font-mono">Real-time performance metrics</span>
           </div>
           <div className="flex items-center gap-3">
+            <SecurityStatusBeacon onNavigateToSecurity={() => setSection('security')} />
             <button onClick={fetchAll} className="w-8 h-8 rounded-lg border border-white/10 flex items-center justify-center hover:bg-white/5 transition-all" title="Refresh">
               <RefreshCw className={`w-3.5 h-3.5 text-gray-400 ${loading ? 'animate-spin' : ''}`} />
             </button>

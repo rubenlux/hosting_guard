@@ -2,12 +2,19 @@
 WordPress attack log collector.
 
 Runs every 60 s. Reads the last 90 seconds of access logs from every active
-WordPress container, detects wp-login.php POST and xmlrpc.php requests, and
-inserts activity_events for aggregate_wp_attacks to aggregate.
+WordPress container, detects attack patterns, and inserts activity_events for
+aggregate_wp_attacks to aggregate.
 
 actor_type = 'external' on all inserted events so the Activity Timeline never
 shows the hosting owner's email as if they performed the attack.
+
+IP classification:
+  source_ip      — IP seen in the access log (may be a CDN/proxy)
+  client_ip      — same as source_ip (real IP unknown from log alone)
+  ip_confidence  — 'direct' | 'proxy_observed' (when source_ip is a Cloudflare range)
+  ip_source      — 'remote_addr'
 """
+import ipaddress
 import json
 import logging
 import re
@@ -17,9 +24,20 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# ── Patterns ──────────────────────────────────────────────────────────────────
+
 _WP_LOGIN_RE = re.compile(r'"POST /wp-login\.php', re.IGNORECASE)
-# Match ALL requests to xmlrpc.php (including 403s already blocked by hardening)
 _XMLRPC_RE   = re.compile(r'"/xmlrpc\.php', re.IGNORECASE)
+
+# 302 redirect after POST /wp-login.php → likely successful authentication
+_WP_LOGIN_SUCCESS_RE = re.compile(
+    r'"POST\s+/wp-login\.php[^"]*"\s+302\b', re.IGNORECASE
+)
+
+# Capture the path portion of any /wp-admin/ request
+_WP_ADMIN_RE = re.compile(
+    r'"(?:GET|POST)\s+(/wp-admin/[^"\s]*)', re.IGNORECASE
+)
 
 # Combined log format: IP - user [timestamp] "METHOD path HTTP/x" STATUS size "ref" "ua"
 _LOG_COMBINED_RE = re.compile(
@@ -30,6 +48,56 @@ _LOG_COMBINED_RE = re.compile(
     r'(?:\s+"[^"]*"\s+"(?P<ua>[^"]*)")?',
 )
 
+# Severity for sensitive wp-admin paths
+_WP_ADMIN_SEVERITY: dict[str, str] = {
+    'plugin-editor.php': 'high',
+    'theme-editor.php':  'high',
+    'users.php':         'warning',
+    'plugins.php':       'warning',
+    'admin.php':         'info',
+    'index.php':         'info',
+}
+
+# ── Cloudflare IP range detection ─────────────────────────────────────────────
+# Source: https://www.cloudflare.com/ips-v4 (updated 2026)
+_CF_RANGES: list = [
+    ipaddress.ip_network(n) for n in (
+        "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+        "104.16.0.0/12",   "104.24.0.0/14",   "108.162.192.0/18",
+        "131.0.72.0/22",   "141.101.64.0/18",  "162.158.0.0/15",
+        "172.64.0.0/13",   "173.245.48.0/20",  "188.114.96.0/20",
+        "190.93.240.0/20", "197.234.240.0/22", "198.41.128.0/17",
+    )
+]
+
+
+def _is_cloudflare_ip(ip: Optional[str]) -> bool:
+    if not ip:
+        return False
+    try:
+        addr = ipaddress.ip_address(ip)
+        return any(addr in net for net in _CF_RANGES)
+    except ValueError:
+        return False
+
+
+def _classify_ip(ip: Optional[str]) -> dict:
+    """Return IP classification fields for event metadata."""
+    if not ip:
+        return {
+            "source_ip": None, "client_ip": None,
+            "ip_source": "unknown", "ip_confidence": "unknown",
+        }
+    confidence = "proxy_observed" if _is_cloudflare_ip(ip) else "direct"
+    return {
+        "source_ip":      ip,
+        "client_ip":      ip,
+        "ip_source":      "remote_addr",
+        "ip_confidence":  confidence,
+    }
+
+
+# ── Log parsing ───────────────────────────────────────────────────────────────
 
 def _parse_log_line(line: str) -> dict:
     """Parse a combined log line. Returns a dict with available fields."""
@@ -46,6 +114,14 @@ def _parse_log_line(line: str) -> dict:
         "ts":     m.group("ts"),
     }
 
+
+def _wp_admin_severity(path: str) -> str:
+    """Return severity for a /wp-admin/ path based on its filename."""
+    filename = path.rstrip("/").rsplit("/", 1)[-1].lower()
+    return _WP_ADMIN_SEVERITY.get(filename, "info")
+
+
+# ── DB helpers ────────────────────────────────────────────────────────────────
 
 def _get_wp_containers() -> list[dict]:
     """Return active WordPress hosting containers (user_*_wp_*) from DB."""
@@ -71,7 +147,7 @@ def _read_container_logs(
 
     Returns (log_text, source_label) where source_label is one of:
       'access_log'  — read from filesystem via docker exec
-      'docker_logs' — fallback via docker logs --since
+      'docker_logs' — fallback via docker logs --since (Apache stdout)
       'none'        — no logs found
     """
     for log_path in ("/var/log/nginx/access.log", "/var/log/apache2/access.log"):
@@ -133,6 +209,8 @@ def _log_events(rows: list[dict]) -> None:
         release_connection(conn)
 
 
+# ── Main entry point ──────────────────────────────────────────────────────────
+
 def collect_wp_log_attacks() -> None:
     """Entry point called by the scheduler every 60 s."""
     try:
@@ -157,22 +235,52 @@ def collect_wp_log_attacks() -> None:
 
         wp_login_count = 0
         xmlrpc_count   = 0
-        last_ip: Optional[str]  = None
-        last_ua: Optional[str]  = None
+        login_success  = 0
+        last_ip: Optional[str] = None
+        last_ua: Optional[str] = None
+        ip_info: dict          = {}
+
+        # wp-admin: deduplicate by (normalized_path, ip) within this run
+        admin_seen: dict[tuple, dict] = {}
 
         for line in logs.splitlines():
             parsed = _parse_log_line(line)
             ip = parsed.get("ip")
             ua = parsed.get("ua")
 
-            if _WP_LOGIN_RE.search(line):
+            # wp-admin detection (independent of login/xmlrpc checks)
+            m_admin = _WP_ADMIN_RE.search(line)
+            if m_admin:
+                path_raw = m_admin.group(1)
+                path = path_raw.split("?")[0].rstrip("/").lower() or "/wp-admin/"
+                key = (path, ip or "")
+                if key not in admin_seen:
+                    admin_seen[key] = {
+                        "count":    0,
+                        "ua":       ua,
+                        "severity": _wp_admin_severity(path),
+                        "ip":       ip,
+                    }
+                admin_seen[key]["count"] += 1
+
+            if _WP_LOGIN_SUCCESS_RE.search(line):
+                login_success += 1
+                last_ip = ip or last_ip
+                last_ua = ua or last_ua
+                ip_info = _classify_ip(ip or last_ip)
+            elif _WP_LOGIN_RE.search(line):
                 wp_login_count += 1
                 last_ip = ip or last_ip
                 last_ua = ua or last_ua
+                ip_info = _classify_ip(ip or last_ip)
             elif _XMLRPC_RE.search(line):
                 xmlrpc_count += 1
                 last_ip = ip or last_ip
                 last_ua = ua or last_ua
+                ip_info = _classify_ip(ip or last_ip)
+
+        if not ip_info:
+            ip_info = _classify_ip(last_ip)
 
         observed_at = datetime.now(timezone.utc).isoformat()
 
@@ -186,9 +294,8 @@ def collect_wp_log_attacks() -> None:
                 "method":         "POST",
                 "attack_count":   wp_login_count,
                 "observed_at":    observed_at,
+                **ip_info,
             }
-            if last_ip:
-                meta["source_ip"] = last_ip
             if last_ua:
                 meta["user_agent"] = last_ua
 
@@ -199,14 +306,50 @@ def collect_wp_log_attacks() -> None:
                 "category":   "auth",
                 "severity":   "warning",
                 "title":      f"Intento de login WordPress: {cname}",
-                "message":    f"{wp_login_count} POST a wp-login.php detectados en los últimos 90s",
-                "ip":         last_ip,
+                "message":    (
+                    f"{wp_login_count} POST a wp-login.php detectados "
+                    f"en los últimos 90s"
+                ),
+                "ip":         ip_info.get("client_ip") or last_ip,
                 "user_agent": last_ua,
                 "metadata":   meta,
             })
 
+        if login_success > 0:
+            ls_ip = _classify_ip(last_ip)
+            meta_ls: dict = {
+                "container_name": cname,
+                "hosting_id":     h_id,
+                "source":         log_source,
+                "detected_by":    "collect_wp_log_attacks",
+                "path":           "/wp-login.php",
+                "status_code":    "302",
+                "classification": "possible_success",
+                "login_count":    login_success,
+                "observed_at":    observed_at,
+                **ls_ip,
+            }
+            if last_ua:
+                meta_ls["user_agent"] = last_ua
+
+            events_to_insert.append({
+                "user_id":    u_id,
+                "hosting_id": h_id,
+                "event_type": "wp_login_success",
+                "category":   "auth",
+                "severity":   "info",
+                "title":      f"Posible login exitoso WordPress: {cname}",
+                "message":    (
+                    f"{login_success} POST a wp-login.php con redirect 302 "
+                    f"en {cname}"
+                ),
+                "ip":         ls_ip.get("client_ip") or last_ip,
+                "user_agent": last_ua,
+                "metadata":   meta_ls,
+            })
+
         if xmlrpc_count > 0:
-            meta = {
+            meta_x: dict = {
                 "container_name": cname,
                 "hosting_id":     h_id,
                 "source":         log_source,
@@ -214,11 +357,10 @@ def collect_wp_log_attacks() -> None:
                 "path":           "/xmlrpc.php",
                 "attack_count":   xmlrpc_count,
                 "observed_at":    observed_at,
+                **ip_info,
             }
-            if last_ip:
-                meta["source_ip"] = last_ip
             if last_ua:
-                meta["user_agent"] = last_ua
+                meta_x["user_agent"] = last_ua
 
             events_to_insert.append({
                 "user_id":    u_id,
@@ -227,10 +369,45 @@ def collect_wp_log_attacks() -> None:
                 "category":   "wordpress_auth",
                 "severity":   "warning",
                 "title":      f"Actividad xmlrpc.php: {cname}",
-                "message":    f"{xmlrpc_count} peticiones a xmlrpc.php detectadas en los últimos 90s",
-                "ip":         last_ip,
+                "message":    (
+                    f"{xmlrpc_count} peticiones a xmlrpc.php detectadas "
+                    f"en los últimos 90s"
+                ),
+                "ip":         ip_info.get("client_ip") or last_ip,
                 "user_agent": last_ua,
-                "metadata":   meta,
+                "metadata":   meta_x,
+            })
+
+        # One event per unique (path, ip) combo in /wp-admin/
+        for (path, ip), info in admin_seen.items():
+            adm_ip = _classify_ip(ip or None)
+            meta_adm: dict = {
+                "container_name": cname,
+                "hosting_id":     h_id,
+                "source":         log_source,
+                "detected_by":    "collect_wp_log_attacks",
+                "path":           path,
+                "access_count":   info["count"],
+                "observed_at":    observed_at,
+                **adm_ip,
+            }
+            if info.get("ua"):
+                meta_adm["user_agent"] = info["ua"]
+
+            filename = path.rstrip("/").rsplit("/", 1)[-1] or "index"
+            events_to_insert.append({
+                "user_id":    u_id,
+                "hosting_id": h_id,
+                "event_type": "wp_admin_access",
+                "category":   "auth",
+                "severity":   info["severity"],
+                "title":      f"Acceso wp-admin ({filename}): {cname}",
+                "message":    (
+                    f"{info['count']} acceso(s) a {path} en {cname}"
+                ),
+                "ip":         adm_ip.get("client_ip") or ip or None,
+                "user_agent": info.get("ua"),
+                "metadata":   meta_adm,
             })
 
     if events_to_insert:

@@ -422,3 +422,65 @@ Frontend `frontend/src/components/dashboard/sections/ConfigSection.jsx`:
 - `frontend/src/pages/Dashboard.jsx`
 - `frontend/src/components/dashboard/sections/ConfigSection.jsx`
 - `frontend/src/services/api.js`
+
+---
+
+## 2026-05-08 — WP Security Pipeline, Activity Timeline fix, path traversal en terminate
+
+### BLOQUE 6 — WordPress Security aggregation pipeline
+
+**Nuevos archivos:**
+- `app/services/aggregate_wp_attacks.py` — convierte `activity_events` en `security_events`
+  - `_WP_LOGIN_THRESHOLD = 5`, `_XMLRPC_THRESHOLD = 3`, `_WINDOW_MINUTES = 10`
+  - ON CONFLICT upsert sobre índice parcial único `uq_open_wp_security_event`
+  - Detección created vs updated via `(xmax::bigint = 0) AS is_new`
+  - Aislamiento por regla: fallo en xmlrpc no detiene wp_login
+  - Returns `(created, updated, skipped)` 3-tuple por regla
+- `tests/test_aggregate_wp_attacks.py` — 20 tests (SQL param balance, rule isolation, thresholds, ON CONFLICT, actor_type, metadata)
+- `tests/test_activity_service.py` — 9 tests (actor_email isolation, owner_email present, SQL shape)
+
+**Bug crítico corregido — psycopg2 IndexError en xmlrpc:**
+- Causa: `WHERE ae.event_type ILIKE '%xmlrpc%'` como literal SQL mezclado con `%s`. psycopg2 interpreta `%x` como especificadores de formato.
+- Fix: `WHERE ae.event_type ILIKE %s` con `("%xmlrpc%",)` en params.
+
+**Bug corregido — COALESCE leaking owner email (`activity_service.py`):**
+- `COALESCE(ae.actor_email, u.email)` devolvía el email del owner como `actor_email` para eventos externos con `actor_email=NULL`.
+- Fix: `CASE WHEN ae.actor_type = 'external' THEN NULL ELSE COALESCE(...) END AS actor_email`
+- Agregado `u.email AS owner_email` como campo separado.
+
+**`app/services/collect_wp_log_attacks.py` — enriquecimiento:**
+- INSERT hardcodea `actor_type='external'` (antes usaba default `'user'`)
+- Metadata enriquecida: `container_name`, `hosting_id`, `source`, `detected_by`, `path`, `method`, `attack_count`, `observed_at`, `source_ip`, `user_agent`
+- Fallback `docker logs --since=90s` para contenedores Apache (stdout logging)
+- `_LOG_COMBINED_RE` + `_parse_log_line()` para parsear combined log format
+
+**`app/infra/migrations.py`:**
+- DELETE deduplicación de `security_events` abiertos
+- `CREATE UNIQUE INDEX uq_open_wp_security_event ON security_events (event_type, hosting_id) WHERE status = 'open'`
+
+**`app/services/scheduler_runner.py`:**
+- `schedule_job(aggregate_wp_attacks, interval=65, initial_delay=25)` — espera 25s tras arranque para que `collect_wp_log_attacks` complete su primer ciclo
+
+**`app/services/scheduler.py`:**
+- `schedule_job()` acepta `initial_delay: int = 0` (asyncio.sleep antes del primer run)
+
+**`app/services/detect_security_anomalies.py`:**
+- Removidos `_rule_wp_login_brute_force()` y `_rule_wp_xmlrpc_attack()` (movidos a `aggregate_wp_attacks.py`)
+
+### BLOQUE 7 — Activity Timeline — external events UI fix
+
+**`frontend/src/components/admin/ActivityTimeline.jsx`:**
+- Añadida función `actorLabel(e)`: external → `IP: {ip}` o `IP: {metadata.source_ip}` o `'Visitante externo'`; system → `'Sistema'`; demás → `actor_email`
+- Badge naranja `externo` para eventos con `actor_type='external'`
+- Sección expandida diferenciada: external muestra IP origen, Cliente (`owner_email`), User-Agent; internal muestra Actor, IP
+- "Cliente" usa `owner_email` (no `actor_email`) para mostrar el dueño del hosting afectado
+
+### BLOQUE 8 — Path traversal en terminate hosting
+
+**`app/api/routes/admin.py`** y **`app/api/routes/hosting.py`:**
+- Validación `os.path.realpath()` + `startswith(safe_base + os.sep)` antes de `shutil.rmtree`
+- Si `realpath` escapa `/opt/clients/`, se omite la limpieza del directorio y se registra warning
+
+### Estado de tests al cierre
+- **258 passed, 1 skipped**
+- Pendiente producción: rebuild del container scheduler para desplegar `collect_wp_log_attacks.py` con `actor_type='external'` y metadata enriquecida. Eventos previos en DB quedan con `actor_type=user` y `metadata={}` (no se modifican retroactivamente).

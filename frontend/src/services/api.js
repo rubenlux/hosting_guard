@@ -843,6 +843,11 @@ export const createBillingCheckout = async (plan) => {
 // Security Center
 // ---------------------------------------------------------------------------
 
+export const getSecurityStatus = async () => {
+  const response = await api.get('/admin/security/status');
+  return response.data;
+};
+
 export const getSecuritySummary = async () => {
   const response = await api.get('/admin/security/summary');
   return response.data;

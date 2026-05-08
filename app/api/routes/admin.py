@@ -2138,6 +2138,82 @@ def admin_audit_log(
 # Security Center
 # ═══════════════════════════════════════════════════════════════════════════════
 
+@router.get("/security/status")
+def get_security_status(admin: dict = Depends(require_role("admin"))):
+    """Traffic-light aggregate for open security_events.
+
+    Returns status (green/yellow/red), label, counts per severity, and
+    the top 5 open events — used by SecurityStatusBeacon in the admin header.
+    """
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT event_type, severity, hosting_id, title, count, last_seen
+            FROM   security_events
+            WHERE  status = 'open'
+            ORDER BY
+                CASE severity
+                    WHEN 'critical' THEN 1
+                    WHEN 'high'     THEN 2
+                    WHEN 'medium'   THEN 3
+                    WHEN 'warning'  THEN 4
+                    ELSE 5
+                END,
+                last_seen DESC
+            LIMIT 20
+            """
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+    finally:
+        release_connection(conn)
+
+    counts: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "warning": 0}
+    for r in rows:
+        sev = r.get("severity", "")
+        if sev in counts:
+            counts[sev] += 1
+
+    if counts["critical"] > 0 or counts["high"] > 0:
+        status = "red"
+        label  = "Alerta de seguridad activa"
+    elif counts["medium"] > 0 or counts["warning"] > 0:
+        status = "yellow"
+        label  = "Actividad sospechosa detectada"
+    else:
+        status = "green"
+        label  = "Sin alertas activas"
+
+    top_events = [
+        {
+            "event_type": r["event_type"],
+            "severity":   r["severity"],
+            "hosting_id": r["hosting_id"],
+            "title":      r["title"],
+            "count":      r.get("count"),
+            "last_seen":  (
+                r["last_seen"].isoformat()
+                if hasattr(r.get("last_seen"), "isoformat")
+                else str(r.get("last_seen") or "")
+            ),
+        }
+        for r in rows[:5]
+    ]
+
+    return {
+        "status":            status,
+        "label":             label,
+        "open_events_total": len(rows),
+        "critical_count":    counts["critical"],
+        "high_count":        counts["high"],
+        "medium_count":      counts["medium"],
+        "warning_count":     counts["warning"],
+        "top_events":        top_events,
+    }
+
+
 @router.get("/security/summary")
 def get_security_summary(admin: dict = Depends(require_role("admin"))):
     """Dashboard cards data for the Security Center."""

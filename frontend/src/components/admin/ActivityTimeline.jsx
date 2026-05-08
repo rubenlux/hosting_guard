@@ -35,8 +35,8 @@ const SEVERITIES = ['', 'info', 'warning', 'critical'];
 
 function actorLabel(e) {
   if (e.actor_type === 'external') {
-    if (e.ip) return `IP: ${e.ip}`;
-    if (e.metadata?.source_ip) return `IP: ${e.metadata.source_ip}`;
+    const ip = e.metadata?.client_ip || e.metadata?.source_ip || e.ip;
+    if (ip) return `IP: ${ip}`;
     return 'Visitante externo';
   }
   if (e.actor_type === 'system') return 'Sistema';
@@ -97,8 +97,14 @@ function EventRow({ e }) {
             {e.event_type && <Detail label="Tipo" val={e.event_type} />}
             {isExternal ? (
               <>
-                {(e.ip || e.metadata?.source_ip) && (
-                  <Detail label="IP origen" val={e.ip || e.metadata.source_ip} />
+                {(e.metadata?.client_ip || e.ip || e.metadata?.source_ip) && (
+                  <Detail label="IP origen" val={e.metadata?.client_ip || e.ip || e.metadata?.source_ip} />
+                )}
+                {e.metadata?.source_ip && e.metadata?.client_ip && e.metadata.source_ip !== e.metadata.client_ip && (
+                  <Detail label="IP proxy" val={e.metadata.source_ip} />
+                )}
+                {e.metadata?.ip_confidence && e.metadata.ip_confidence !== 'direct' && (
+                  <Detail label="IP tipo" val={e.metadata.ip_confidence} />
                 )}
                 {(e.owner_email || e.user_id) && (
                   <Detail label="Cliente" val={e.owner_email || `user:${e.user_id}`} />

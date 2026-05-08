@@ -15,6 +15,7 @@ Rules:
 """
 import json
 import logging
+import os
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 _WINDOW_MINUTES     = 10
 _WP_LOGIN_THRESHOLD = 5
 _XMLRPC_THRESHOLD   = 3
+
+_RATE_LIMIT_THRESHOLD = int(os.getenv("WP_LOGIN_RATE_LIMIT_MAX_POSTS", "5"))
+_RATE_LIMIT_WINDOW    = int(os.getenv("WP_LOGIN_RATE_LIMIT_WINDOW_MINUTES", "10"))
 
 
 # ─── Severity helpers ─────────────────────────────────────────────────────────
@@ -36,6 +40,10 @@ def _sev_wp_login(count: int) -> str:
 
 def _sev_xmlrpc(count: int) -> str:
     return "critical" if count >= 10 else "high"
+
+
+def _sev_rate_limit(count: int) -> str:
+    return "high" if count >= 20 else "medium"
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -312,12 +320,94 @@ def _rule_xmlrpc() -> tuple[int, int, int]:
     return created, updated, len(skipped)
 
 
+def _rule_wp_login_rate_limit() -> tuple[int, int, int]:
+    """Per-IP per-hosting rate limit detection.
+
+    If a single IP accumulates >= _RATE_LIMIT_THRESHOLD wp_login_failed events
+    in _RATE_LIMIT_WINDOW minutes, upsert a WP_LOGIN_RATE_LIMITED security event.
+    Returns (created, updated, skipped).
+    """
+    rows = _query(
+        """
+        SELECT ae.hosting_id,
+               h.user_id,
+               h.container_name,
+               ae.ip,
+               COUNT(*)           AS cnt,
+               MAX(ae.created_at) AS last_event
+        FROM   activity_events ae
+        JOIN   hostings h ON h.hosting_id = ae.hosting_id
+        WHERE  ae.event_type = 'wp_login_failed'
+          AND  ae.created_at >= NOW() - (%s || ' minutes')::INTERVAL
+          AND  ae.hosting_id IS NOT NULL
+          AND  ae.ip IS NOT NULL
+          AND  h.status NOT IN ('deleted', 'expired')
+        GROUP  BY ae.hosting_id, h.user_id, h.container_name, ae.ip
+        """,
+        (str(_RATE_LIMIT_WINDOW),),
+    )
+
+    if not rows:
+        return 0, 0, 0
+
+    above   = [r for r in rows if r["cnt"] >= _RATE_LIMIT_THRESHOLD]
+    skipped = [r for r in rows if r["cnt"] < _RATE_LIMIT_THRESHOLD]
+
+    logger.info(
+        "aggregate_wp_attacks: rate_limit — %d ip×hosting combos "
+        "(%d above threshold=%d, %d below)",
+        len(rows), len(above), _RATE_LIMIT_THRESHOLD, len(skipped),
+    )
+
+    created = updated = 0
+    for r in above:
+        cname = r.get("container_name") or "unknown"
+        offending_ip = r.get("ip") or "desconocida"
+        logger.info(
+            "aggregate_wp_attacks: rate_limit hosting_id=%s (%s) ip=%s: %d rows → WP_LOGIN_RATE_LIMITED",
+            r["hosting_id"], cname, offending_ip, r["cnt"],
+        )
+        try:
+            action = _upsert(
+                event_type      = "WP_LOGIN_RATE_LIMITED",
+                category        = "wordpress",
+                severity_fn     = _sev_rate_limit,
+                title           = f"IP con exceso de intentos de login: {cname}",
+                message         = (
+                    f"IP {offending_ip}: {r['cnt']} intentos fallidos de login "
+                    f"en los últimos {_RATE_LIMIT_WINDOW} minutos en {cname}."
+                ),
+                hosting_id      = r["hosting_id"],
+                user_id         = r.get("user_id"),
+                last_ip         = r.get("ip"),
+                failed_attempts = r["cnt"],
+                container_name  = cname,
+                last_event_ts   = r["last_event"],
+            )
+            logger.info(
+                "aggregate_wp_attacks: WP_LOGIN_RATE_LIMITED %s for hosting_id=%s ip=%s",
+                action.upper(), r["hosting_id"], offending_ip,
+            )
+            if action == "created":
+                created += 1
+            else:
+                updated += 1
+        except Exception as exc:
+            logger.warning(
+                "aggregate_wp_attacks: rate_limit upsert failed for hosting_id=%s (%s): %s",
+                r.get("hosting_id"), cname, exc,
+            )
+
+    return created, updated, len(skipped)
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 def aggregate_wp_attacks() -> None:
     """Called by the scheduler every 65 s with initial_delay=25 s."""
     lc = lu = ls = 0
     xc = xu = xs = 0
+    rc = ru = rs = 0
 
     try:
         lc, lu, ls = _rule_wp_login()
@@ -329,9 +419,15 @@ def aggregate_wp_attacks() -> None:
     except Exception as exc:
         logger.exception("aggregate_wp_attacks: _rule_xmlrpc failed: %s", exc)
 
+    try:
+        rc, ru, rs = _rule_wp_login_rate_limit()
+    except Exception as exc:
+        logger.exception("aggregate_wp_attacks: _rule_wp_login_rate_limit failed: %s", exc)
+
     logger.info(
         "aggregate_wp_attacks summary: "
         "wp_login_created=%d wp_login_updated=%d wp_login_skipped=%d "
-        "xmlrpc_created=%d xmlrpc_updated=%d xmlrpc_skipped=%d",
-        lc, lu, ls, xc, xu, xs,
+        "xmlrpc_created=%d xmlrpc_updated=%d xmlrpc_skipped=%d "
+        "rate_limit_created=%d rate_limit_updated=%d rate_limit_skipped=%d",
+        lc, lu, ls, xc, xu, xs, rc, ru, rs,
     )
