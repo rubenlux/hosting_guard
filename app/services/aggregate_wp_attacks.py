@@ -250,14 +250,14 @@ def _rule_xmlrpc() -> tuple[int, int]:
                MAX(ae.ip)      AS last_ip
         FROM   activity_events ae
         JOIN   hostings         h ON h.hosting_id = ae.hosting_id
-        WHERE  ae.event_type   ILIKE '%xmlrpc%'
+        WHERE  ae.event_type   ILIKE %s
           AND  ae.created_at  >= NOW() - (%s || ' minutes')::INTERVAL
           AND  ae.hosting_id  IS NOT NULL
           AND  h.status NOT IN ('deleted', 'expired')
         GROUP  BY ae.hosting_id, h.user_id, h.container_name
         HAVING COUNT(*) >= %s
         """,
-        (str(_WINDOW_MINUTES), _XMLRPC_THRESHOLD),
+        ("%xmlrpc%", str(_WINDOW_MINUTES), _XMLRPC_THRESHOLD),
     )
 
     if not rows:
@@ -301,20 +301,27 @@ def _rule_xmlrpc() -> tuple[int, int]:
 
 def aggregate_wp_attacks() -> None:
     """Called by the scheduler every 65 s (5 s after collect_wp_log_attacks)."""
+    login_created = login_updated = 0
+    xmlrpc_created = xmlrpc_updated = 0
+
     try:
-        login_created,  login_updated  = _rule_wp_login()
-        xmlrpc_created, xmlrpc_updated = _rule_xmlrpc()
-
-        total_created = login_created  + xmlrpc_created
-        total_updated = login_updated  + xmlrpc_updated
-
-        if total_created or total_updated:
-            logger.info(
-                "aggregate_wp_attacks: security_events created=%d updated=%d "
-                "(wp_login: +%d/~%d  xmlrpc: +%d/~%d)",
-                total_created, total_updated,
-                login_created,  login_updated,
-                xmlrpc_created, xmlrpc_updated,
-            )
+        login_created, login_updated = _rule_wp_login()
     except Exception as exc:
-        logger.exception("aggregate_wp_attacks: uncaught exception: %s", exc)
+        logger.exception("aggregate_wp_attacks: _rule_wp_login failed: %s", exc)
+
+    try:
+        xmlrpc_created, xmlrpc_updated = _rule_xmlrpc()
+    except Exception as exc:
+        logger.exception("aggregate_wp_attacks: _rule_xmlrpc failed: %s", exc)
+
+    total_created = login_created  + xmlrpc_created
+    total_updated = login_updated  + xmlrpc_updated
+
+    if total_created or total_updated:
+        logger.info(
+            "aggregate_wp_attacks: security_events created=%d updated=%d "
+            "(wp_login: +%d/~%d  xmlrpc: +%d/~%d)",
+            total_created, total_updated,
+            login_created,  login_updated,
+            xmlrpc_created, xmlrpc_updated,
+        )
