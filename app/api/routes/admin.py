@@ -307,6 +307,20 @@ def get_resources_overview(admin: dict = Depends(require_role("admin"))):
     conn = get_connection()
     try:
         cur = conn.cursor()
+        # Use the most recent sample window: start at the latest sampled_at minus 3×interval
+        # so we never show empty if the scheduler is running (interval=60s → 3 min grace).
+        # Hard floor at 10 minutes covers cold-start after a rebuild.
+        cur.execute(
+            """SELECT
+                 COALESCE(
+                   GREATEST(MAX(sampled_at) - INTERVAL '3 minutes', NOW() - INTERVAL '10 minutes'),
+                   NOW() - INTERVAL '10 minutes'
+                 ) AS since
+               FROM hosting_resource_samples"""
+        )
+        _since_row = cur.fetchone()
+        since = _since_row["since"] if _since_row else None
+
         cur.execute(
             """SELECT
                  COUNT(DISTINCT s.hosting_id)                         AS total_hostings,
@@ -314,27 +328,41 @@ def get_resources_overview(admin: dict = Depends(require_role("admin"))):
                  ROUND(MAX(s.cpu_pct)::numeric, 1)                   AS max_cpu_pct,
                  ROUND(AVG(s.mem_mb)::numeric, 0)                    AS avg_mem_mb,
                  ROUND(SUM(s.mem_mb)::numeric, 0)                    AS total_mem_mb,
-                 ROUND(MAX(s.mem_mb)::numeric, 0)                    AS max_mem_mb
+                 ROUND(MAX(s.mem_mb)::numeric, 0)                    AS max_mem_mb,
+                 MAX(s.sampled_at)                                    AS last_sample_at
                FROM hosting_resource_samples s
-               WHERE s.sampled_at >= NOW() - INTERVAL '2 minutes'"""
+               WHERE s.sampled_at >= %s""",
+            (since,),
         )
         row = dict(cur.fetchone() or {})
 
-        # Top 5 by CPU
+        # Top 5 by CPU — same adaptive window
         cur.execute(
             """SELECT DISTINCT ON (s.hosting_id)
                  s.hosting_id, h.name, s.container_name,
                  s.cpu_pct, s.mem_mb, s.mem_limit_mb, s.sampled_at
                FROM hosting_resource_samples s
                JOIN hostings h USING (hosting_id)
-               WHERE s.sampled_at >= NOW() - INTERVAL '2 minutes'
-               ORDER BY s.hosting_id, s.sampled_at DESC"""
+               WHERE s.sampled_at >= %s
+               ORDER BY s.hosting_id, s.sampled_at DESC""",
+            (since,),
         )
         all_snaps = [dict(r) for r in cur.fetchall()]
         top_cpu = sorted(all_snaps, key=lambda x: x.get("cpu_pct") or 0, reverse=True)[:5]
         top_mem = sorted(all_snaps, key=lambda x: x.get("mem_mb") or 0, reverse=True)[:5]
 
-        return {**row, "top_cpu": top_cpu, "top_mem": top_mem, "snapshot_count": len(all_snaps)}
+        # Expose total row count so frontend can distinguish "table empty" from "stale data"
+        cur.execute("SELECT COUNT(*) AS cnt, MAX(sampled_at) AS latest FROM hosting_resource_samples")
+        _meta = dict(cur.fetchone() or {})
+
+        return {
+            **row,
+            "top_cpu": top_cpu,
+            "top_mem": top_mem,
+            "snapshot_count": len(all_snaps),
+            "total_samples_in_db": _meta.get("cnt") or 0,
+            "newest_sample_in_db": _meta.get("latest"),
+        }
     finally:
         release_connection(conn)
 
@@ -393,7 +421,12 @@ def get_resources_tenants(admin: dict = Depends(require_role("admin"))):
                      AND event_type = 'hosting_restarted'
                      AND created_at::TIMESTAMPTZ >= NOW() - INTERVAL '24 hours'
                ) rc ON TRUE
-               WHERE s.sampled_at >= NOW() - INTERVAL '5 minutes'
+               WHERE s.sampled_at >= (
+                   SELECT COALESCE(
+                     GREATEST(MAX(sampled_at) - INTERVAL '3 minutes', NOW() - INTERVAL '10 minutes'),
+                     NOW() - INTERVAL '10 minutes'
+                   ) FROM hosting_resource_samples
+               )
                ORDER BY s.hosting_id, s.sampled_at DESC"""
         )
         rows = [dict(r) for r in cur.fetchall()]
@@ -461,12 +494,17 @@ def get_resources_users(admin: dict = Depends(require_role("admin"))):
                  COALESCE(SUM(bs.backup_mb), 0)                              AS total_backup_mb
                FROM users u
                JOIN hostings h ON h.user_id = u.user_id AND h.status NOT IN ('deleted','expired')
-               -- Latest resource sample per hosting (within 5 min)
+               -- Latest resource sample per hosting (adaptive window: latest-3min or 10min floor)
                LEFT JOIN LATERAL (
                    SELECT cpu_pct, mem_mb, disk_mb, net_rx_mb, net_tx_mb
                    FROM hosting_resource_samples
                    WHERE hosting_id = h.hosting_id
-                     AND sampled_at >= NOW() - INTERVAL '5 minutes'
+                     AND sampled_at >= (
+                         SELECT COALESCE(
+                           GREATEST(MAX(sampled_at) - INTERVAL '3 minutes', NOW() - INTERVAL '10 minutes'),
+                           NOW() - INTERVAL '10 minutes'
+                         ) FROM hosting_resource_samples
+                     )
                    ORDER BY sampled_at DESC LIMIT 1
                ) latest ON TRUE
                LEFT JOIN LATERAL (

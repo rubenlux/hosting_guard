@@ -185,6 +185,12 @@ def collect_resource_usage() -> None:
         return
 
     if not output:
+        logger.warning(
+            "collect_resource_usage: docker stats returned empty output "
+            "(returncode=%d stderr=%r containers=%s) — "
+            "check Docker socket/proxy access in the scheduler container",
+            result.returncode, result.stderr.strip()[:200], container_names,
+        )
         return
 
     # 3. Parse each line (one JSON object per container)

@@ -238,7 +238,12 @@ export default function ResourceUsage() {
     return () => clearInterval(id);
   }, [load]);
 
-  const noData = !overview?.total_hostings && !tenants.length;
+  // noData = nothing at all in the DB (scheduler never ran or table empty)
+  // staleData = DB has rows but none within the adaptive window (scheduler stopped)
+  const totalInDb = overview?.total_samples_in_db ?? 0;
+  const noData    = totalInDb === 0 && !tenants.length;
+  const staleData = !noData && !overview?.total_hostings && !tenants.length;
+  const newestAt  = overview?.newest_sample_in_db;
 
   return (
     <div className="space-y-5">
@@ -262,7 +267,23 @@ export default function ResourceUsage() {
         <div className="bg-[#111] rounded-xl border border-white/5 p-10 text-center">
           <Cpu className="w-8 h-8 text-gray-600 mx-auto mb-3" />
           <div className="text-[12px] text-gray-500">No hay muestras todavía.</div>
-          <div className="text-[10px] text-gray-600 mt-1">El scheduler recopila datos cada 60s.</div>
+          <div className="text-[10px] text-gray-600 mt-1">El scheduler recopila datos cada 60s. Esperá un momento y recargá.</div>
+        </div>
+      )}
+
+      {staleData && !loading && !error && (
+        <div className="bg-[#111] rounded-xl border border-amber-500/10 p-6 text-center">
+          <AlertTriangle className="w-6 h-6 text-amber-500 mx-auto mb-2" />
+          <div className="text-[12px] text-amber-400 font-semibold">El scheduler no está enviando muestras recientes</div>
+          {newestAt && (
+            <div className="text-[10px] text-gray-500 mt-1">
+              Última muestra: {new Date(newestAt).toLocaleString('es-AR')}
+            </div>
+          )}
+          <div className="text-[10px] text-gray-600 mt-1">
+            Revisá los logs del scheduler: <span className="font-mono">docker compose logs scheduler --since=5m</span>
+          </div>
+          <button onClick={load} className="mt-3 text-[10px] text-amber-400 hover:text-amber-300 underline">Reintentar</button>
         </div>
       )}
 
