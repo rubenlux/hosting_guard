@@ -1,7 +1,8 @@
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Paths that skip security headers (health probes hit these at high frequency)
-_SKIP_PATHS = frozenset({"/health", "/health/live", "/health/ready"})
+# Nothing skips security headers — health probes should also include them
+# so that any proxy/scanner checking /health still gets the full header set.
+_SKIP_PATHS: frozenset = frozenset()
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
