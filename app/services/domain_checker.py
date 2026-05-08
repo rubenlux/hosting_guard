@@ -170,10 +170,9 @@ def remove_traefik_config(domain_id: int) -> None:
 def check_pending_domains() -> None:
     """Scheduled job: attempt DNS verification for all pending/failed domains."""
     from app.infra.audit.domain_repository import DomainRepository
-    from app.infra.audit.activity_repository import ActivityRepository
+    from app.services.activity_service import log_event as _log_activity
 
     domain_repo = DomainRepository()
-    activity    = ActivityRepository()
     rows = domain_repo.get_pending_domains()
 
     for row in rows:
@@ -204,7 +203,7 @@ def check_pending_domains() -> None:
                                            error_message=f"Traefik error: {exc}")
 
             try:
-                activity.log(
+                _log_activity(
                     user_id=user_id, hosting_id=hosting_id,
                     event_type="custom_domain_verified",
                     category="domain", severity="info",

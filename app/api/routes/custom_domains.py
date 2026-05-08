@@ -5,15 +5,14 @@ from app.api.security import verify_token
 from app.api.rate_limit import limiter
 from app.infra.audit.domain_repository import DomainRepository
 from app.infra.audit.hosting_repository import HostingRepository
-from app.infra.audit.activity_repository import ActivityRepository
 from app.services.domain_checker import verify_dns, dns_instructions, write_traefik_config, remove_traefik_config
+from app.services.activity_service import log_event as _log_activity
 from fastapi import Request
 
 router = APIRouter()
 
 _domain_repo  = DomainRepository()
 _hosting_repo = HostingRepository()
-_activity     = ActivityRepository()
 
 DOMAIN = "hostingguard.lat"
 
@@ -63,7 +62,7 @@ def add_domain(
     subdomain  = hosting.get("subdomain", "")
 
     try:
-        _activity.log(
+        _log_activity(
             user_id=user_id, hosting_id=hosting_id,
             event_type="custom_domain_added",
             category="domain", severity="info",
@@ -102,7 +101,7 @@ def delete_domain(hosting_id: int, domain_id: int, user: dict = Depends(verify_t
         pass
 
     try:
-        _activity.log(
+        _log_activity(
             user_id=user_id, hosting_id=hosting_id,
             event_type="custom_domain_deleted",
             category="domain", severity="info",
@@ -154,7 +153,7 @@ def verify_domain(
                                         error_message=f"Traefik error: {exc}")
 
         try:
-            _activity.log(
+            _log_activity(
                 user_id=user_id, hosting_id=hosting_id,
                 event_type="custom_domain_verified",
                 category="domain", severity="info",
