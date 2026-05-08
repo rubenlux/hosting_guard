@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from typing import Optional
 from fastapi import Depends, FastAPI, Request, HTTPException, Response, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import generate_latest
 from fastapi.middleware.cors import CORSMiddleware
@@ -1114,26 +1115,57 @@ class _PixelCORSMiddleware:
 app.add_middleware(_PixelCORSMiddleware)
 
 
+_CORS_ALLOWED_ORIGINS = {"https://hostingguard.lat", "https://www.hostingguard.lat"}
+
+
+def _cors_headers(request: Request) -> dict:
+    """Return CORS headers for the request origin if it is in the allowed list.
+    Belt-and-suspenders: CORSMiddleware covers most cases, but exception handlers
+    that escape ExceptionMiddleware (caught by ServerErrorMiddleware) would bypass
+    it. Always injecting here ensures errors always include the header.
+    """
+    origin = request.headers.get("origin", "")
+    if origin in _CORS_ALLOWED_ORIGINS:
+        return {"Access-Control-Allow-Origin": origin, "Vary": "Origin"}
+    return {}
+
+
 @app.exception_handler(RateLimitExceeded)
 def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded"},
+        headers=_cors_headers(request),
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=_cors_headers(request),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+        headers=_cors_headers(request),
     )
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """
-    Catches unhandled exceptions inside FastAPI's ExceptionMiddleware layer,
-    which sits *inside* CORSMiddleware — so CORS headers are always present,
-    even on 500 responses. Without this, ServerErrorMiddleware (outer layer)
-    would return 500 before CORS headers are added.
-    """
+    """Catches unhandled exceptions. Explicit CORS headers ensure the browser
+    can read the error body even when ServerErrorMiddleware bypasses CORSMiddleware."""
     logger.error("Unhandled exception on %s %s", request.method, request.url.path, exc_info=exc)
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
+        headers=_cors_headers(request),
     )
 
 

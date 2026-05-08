@@ -696,10 +696,6 @@ def get_orchestrator_events(limit: int = 200, _: dict = Depends(require_role("ad
 # Admin hosting actions — sin filtro por user_id
 # ---------------------------------------------------------------------------
 
-class TerminateRequest(BaseModel):
-    reason: str          # obligatorio — quedará en el audit log
-
-
 def _get_ip(request: Request) -> str:
     for h in ("X-Real-IP", "X-Forwarded-For"):
         v = request.headers.get(h)
@@ -844,33 +840,51 @@ async def admin_purge_deleted_hostings(
 @limiter.limit("10/minute")
 async def admin_terminate_hosting(
     hosting_id: int,
-    body: TerminateRequest,
     request: Request,
     admin: dict = Depends(require_role("admin")),
 ):
     """
-    Terminación forzada por el admin (uso indebido, spam, TOS violation, etc.).
-    Elimina el contenedor Docker + el registro en DB.
-    Queda registrado en orchestrator_events con la razón.
+    Terminación forzada por el admin. Idempotente: funciona aunque el contenedor
+    Docker ya no exista (hosting huérfano). Nunca devuelve 500 por contenedor faltante.
+    Responde 200 con warnings[] si hubo problemas no fatales.
     """
+    # Parse body manually so DELETE + JSON body always works regardless of
+    # Pydantic/FastAPI body-parsing quirks for non-POST methods.
+    try:
+        body_data = await request.json()
+    except Exception:
+        body_data = {}
+
+    reason = (body_data.get("reason") or request.query_params.get("reason") or "").strip()
+    description = (body_data.get("description") or request.query_params.get("description") or "").strip()
+
+    if not reason:
+        raise HTTPException(status_code=400, detail="Se requiere una razón para la terminación.")
+
     hosting = _hosting_repo.get_hosting_any(hosting_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting no encontrado")
 
-    reason = body.reason.strip()
-    if not reason:
-        raise HTTPException(status_code=400, detail="Se requiere una razón para la terminación.")
-
-    container    = hosting["container_name"]
+    warnings: list[str] = []
+    container    = hosting.get("container_name") or ""
     db_container = container.replace("_wp_", "_db_", 1) if "_wp_" in container else None
-    targets      = [container] + ([db_container] if db_container else [])
+    targets      = [c for c in [container, db_container] if c]
 
-    # 1. Remove containers; log Docker errors but don't abort on "No such container"
-    docker_errors = []
+    # 1. Remove containers — tolerate "No such container" as a warning, not an error
     for cname in targets:
-        r = await _run_docker("docker", "rm", "-f", cname, timeout=15)
-        if r.returncode != 0 and "No such container" not in (r.stderr or ""):
-            docker_errors.append(f"{cname}: {(r.stderr or '').strip()[:120]}")
+        try:
+            r = await _run_docker("docker", "rm", "-f", cname, timeout=15)
+            if r.returncode != 0:
+                stderr = (r.stderr or "").strip()
+                if "No such container" in stderr or "no such container" in stderr.lower():
+                    warnings.append(f"Docker container not found: {cname}")
+                    logger.warning("admin_terminate: container %s not found in Docker (orphaned hosting)", cname)
+                else:
+                    warnings.append(f"docker rm warning for {cname}: {stderr[:120]}")
+                    logger.warning("admin_terminate: docker rm %s: %s", cname, stderr[:200])
+        except Exception as exc:
+            warnings.append(f"docker rm error for {cname}: {exc}")
+            logger.warning("admin_terminate: docker rm exception for %s: %s", cname, exc)
 
     # 2. Clean up custom domains: remove Traefik configs + delete DB records
     try:
@@ -882,24 +896,29 @@ async def admin_terminate_hosting(
         for d in domains:
             try:
                 remove_traefik_config(d["domain_id"])
-            except Exception:
-                pass
+            except Exception as exc:
+                warnings.append(f"traefik cleanup warning for domain {d.get('domain_id')}: {exc}")
             try:
                 _domain_repo.delete_domain(d["domain_id"], hosting_user_id)
             except Exception:
                 pass
-    except Exception as _exc:
-        logger.warning("admin_terminate: domain cleanup error for hosting %s: %s", hosting_id, _exc)
+    except Exception as exc:
+        warnings.append(f"domain cleanup error: {exc}")
+        logger.warning("admin_terminate: domain cleanup error for hosting %s: %s", hosting_id, exc)
 
-    # 3. Audit log BEFORE modifying DB
-    _hosting_repo.log_orchestrator_event(
-        container, hosting["user_id"],
-        "admin_terminate",
-        f"TERMINADO por admin {admin['email']} | Razón: {reason} | IP: {_get_ip(request)}"
-        + (f" | docker_errors: {docker_errors}" if docker_errors else ""),
-    )
+    # 3. Audit log BEFORE modifying DB (non-fatal)
+    try:
+        _hosting_repo.log_orchestrator_event(
+            container or "—", hosting["user_id"],
+            "admin_terminate",
+            f"TERMINADO por admin {admin['email']} | Razón: {reason} | IP: {_get_ip(request)}"
+            + (f" | warnings: {warnings}" if warnings else ""),
+        )
+    except Exception as exc:
+        warnings.append(f"audit log error: {exc}")
+        logger.warning("admin_terminate: orchestrator log failed for hosting %s: %s", hosting_id, exc)
 
-    # 4. Activity event log
+    # 4. Activity event log (non-fatal)
     try:
         from app.services.activity_service import log_event as _log_activity
         _log_activity(
@@ -907,22 +926,31 @@ async def admin_terminate_hosting(
             event_type="hosting_terminated_by_admin",
             category="hosting", severity="critical",
             title=f"Hosting terminado por admin: {hosting.get('name', str(hosting_id))}",
-            message=f"Admin: {admin['email']} | Razón: {reason}",
+            message=f"Admin: {admin['email']} | Razón: {reason}"
+            + (f" | {description}" if description else ""),
             source="admin",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        warnings.append(f"activity log error: {exc}")
+        logger.warning("admin_terminate: activity log failed for hosting %s: %s", hosting_id, exc)
 
-    # 5. Hard-delete: removes all child records + hosting row completely
-    _hosting_repo.admin_delete_hosting(hosting_id, db_container=db_container)
+    # 5. Hard-delete DB — this is the only fatal step
+    try:
+        _hosting_repo.admin_delete_hosting(hosting_id, db_container=db_container)
+    except Exception as exc:
+        logger.error("admin_terminate: DB delete failed for hosting %s: %s", hosting_id, exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"DB cleanup failed: {exc}",
+        )
 
     return {
-        "ok": True,
-        "terminated": hosting_id,
-        "container": container,
+        "status": "terminated",
+        "hosting_id": hosting_id,
+        "container": container or None,
         "reason": reason,
         "admin": admin["email"],
-        "docker_errors": docker_errors,
+        "warnings": warnings,
         "at": datetime.now(timezone.utc).isoformat(),
     }
 

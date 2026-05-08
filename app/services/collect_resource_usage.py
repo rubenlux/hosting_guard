@@ -170,13 +170,38 @@ def collect_resource_usage() -> None:
     if not rows:
         return
 
-    # 2. Run docker stats (single shot) for all containers at once
     container_names = [r["container_name"] for r in rows]
     name_to_info = {r["container_name"]: r for r in rows}
 
+    # 2. Filter to containers that are actually running — docker stats exits 1
+    #    and returns empty output if ANY container in the list doesn't exist,
+    #    causing the entire batch to fail silently.
+    try:
+        ps_result = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=15,
+        )
+        running = {n.strip().lstrip("/") for n in ps_result.stdout.splitlines() if n.strip()}
+    except Exception as exc:
+        logger.warning("collect_resource_usage: docker ps failed: %s", exc)
+        return
+
+    missing = [c for c in container_names if c not in running]
+    existing = [c for c in container_names if c in running]
+
+    if missing:
+        logger.warning(
+            "collect_resource_usage: skipping missing containers: %s", missing
+        )
+
+    if not existing:
+        logger.warning("collect_resource_usage: no running containers found, skipping")
+        return
+
+    # 3. Run docker stats (single shot) only for existing containers
     try:
         result = subprocess.run(
-            ["docker", "stats", "--no-stream", "--format", _STATS_FORMAT] + container_names,
+            ["docker", "stats", "--no-stream", "--format", _STATS_FORMAT] + existing,
             capture_output=True, text=True, timeout=30,
         )
         output = result.stdout.strip()
@@ -189,11 +214,11 @@ def collect_resource_usage() -> None:
             "collect_resource_usage: docker stats returned empty output "
             "(returncode=%d stderr=%r containers=%s) — "
             "check Docker socket/proxy access in the scheduler container",
-            result.returncode, result.stderr.strip()[:200], container_names,
+            result.returncode, result.stderr.strip()[:200], existing,
         )
         return
 
-    # 3. Parse each line (one JSON object per container)
+    # 4. Parse each line (one JSON object per container)
     samples = []
     for line in output.splitlines():
         line = line.strip()
@@ -221,14 +246,14 @@ def collect_resource_usage() -> None:
     if not samples:
         return
 
-    # 3b. Disk usage — use du -sm (real site bytes), NOT df (reports filesystem usage).
+    # 4b. Disk usage — use du -sm (real site bytes), NOT df (reports filesystem usage).
     # df measures the whole filesystem, not the site — all containers on the same
     # volume show the same number. du measures only the site directory.
     disk_by_container: dict = {}
     for _, _, cname, _, _, _, _, _ in samples:
         disk_by_container[cname] = _collect_disk_mb(cname)
 
-    # 4. Insert samples one by one (_AdaptedCursor does not support executemany)
+    # 5. Insert samples one by one (_AdaptedCursor does not support executemany)
     _INSERT = (
         "INSERT INTO hosting_resource_samples"
         " (hosting_id, user_id, container_name, cpu_pct, mem_mb, mem_limit_mb, net_rx_mb, net_tx_mb, disk_mb)"
@@ -251,7 +276,7 @@ def collect_resource_usage() -> None:
     finally:
         release_connection(conn)
 
-    # 5. Prune old samples (keep 24h to prevent unbounded growth)
+    # 6. Prune old samples (keep 24h to prevent unbounded growth)
     conn2 = get_connection()
     try:
         cur2 = conn2.cursor()
