@@ -120,7 +120,12 @@ def query_events(
         cur = conn.cursor()
         cur.execute(
             f"""SELECT ae.event_id, ae.user_id, ae.hosting_id, ae.actor_type,
-                       COALESCE(ae.actor_email, u.email) AS actor_email,
+                       -- For external events keep actor_email NULL so the UI
+                       -- never displays the hosting owner as the attacker.
+                       CASE WHEN ae.actor_type = 'external' THEN NULL
+                            ELSE COALESCE(ae.actor_email, u.email)
+                       END AS actor_email,
+                       u.email AS owner_email,
                        ae.event_type, ae.category, ae.severity, ae.title, ae.message,
                        ae.metadata, ae.ip, ae.source, ae.created_at
                 FROM activity_events ae

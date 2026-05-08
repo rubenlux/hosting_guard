@@ -100,8 +100,8 @@ function EventRow({ e }) {
                 {(e.ip || e.metadata?.source_ip) && (
                   <Detail label="IP origen" val={e.ip || e.metadata.source_ip} />
                 )}
-                {e.user_id && (
-                  <Detail label="Cliente" val={e.actor_email || `user:${e.user_id}`} />
+                {(e.owner_email || e.user_id) && (
+                  <Detail label="Cliente" val={e.owner_email || `user:${e.user_id}`} />
                 )}
                 {e.metadata?.user_agent && (
                   <Detail label="User-Agent" val={e.metadata.user_agent} />
