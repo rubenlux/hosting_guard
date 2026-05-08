@@ -77,6 +77,155 @@ _WP_CONSTANTS = [
 ]
 
 
+_HG_MARKER = "HostingGuard: WordPress hardening"
+
+# ── Nginx hardening config ────────────────────────────────────────────────────
+_NGINX_HARDENING = """\
+# HostingGuard: WordPress hardening — do not remove
+# Block XML-RPC (brute-force amplification vector)
+location = /xmlrpc.php {
+    deny all;
+    return 403;
+}
+# Rate-limit wp-login.php: 10 requests/minute per IP
+limit_req_zone $binary_remote_addr zone=wplogin:10m rate=10r/m;
+location = /wp-login.php {
+    limit_req zone=wplogin burst=5 nodelay;
+    limit_req_status 429;
+    try_files $uri =404;
+    fastcgi_pass 127.0.0.1:9000;
+    include fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+}
+"""
+_NGINX_CONF_PATH = "/etc/nginx/conf.d/wp-hardening.conf"
+
+# ── Apache hardening config ───────────────────────────────────────────────────
+# Rate limiting for wp-login is handled by Traefik; here we only block xmlrpc.
+_APACHE_HARDENING = """\
+# HostingGuard: WordPress hardening — do not remove
+# Block XML-RPC (brute-force amplification vector)
+<LocationMatch "^/xmlrpc\\.php$">
+    Require all denied
+</LocationMatch>
+"""
+_APACHE_CONF_AVAILABLE = "/etc/apache2/conf-available/hostingguard-wp-hardening.conf"
+_APACHE_CONF_NAME      = "hostingguard-wp-hardening"
+
+
+def _harden_webserver(container: str, log=None) -> None:
+    """Detect runtime webserver and apply idempotent WordPress hardening.
+
+    - Apache2: writes conf-available + a2enconf + apache2ctl graceful
+    - Nginx:   writes conf.d file + nginx -t + nginx -s reload
+    - Unknown: logs a warning, does nothing (never crashes the caller)
+    """
+    def _log(msg: str) -> None:
+        if log:
+            log(msg)
+        else:
+            logger.info("[wp_harden:%s] %s", container, msg)
+
+    try:
+        # ── Detect webserver ─────────────────────────────────────────────────
+        r_apache = _docker_exec(container, "pgrep", "-x", "apache2", timeout=5)
+        r_nginx  = _docker_exec(container, "pgrep", "-x", "nginx",   timeout=5)
+        is_apache = r_apache.returncode == 0
+        is_nginx  = r_nginx.returncode == 0
+
+        if not is_apache and not is_nginx:
+            _log("  WARN harden_webserver: no apache2 or nginx process found — skipping")
+            return
+
+        if is_apache:
+            _harden_apache(container, _log)
+        else:
+            _harden_nginx(container, _log)
+
+    except Exception as exc:
+        _log(f"  WARN harden_webserver exception: {exc}")
+
+
+def _harden_apache(container: str, _log) -> None:
+    """Apply hardening to an Apache2 container. Idempotent."""
+    try:
+        # Check if already hardened
+        r = _docker_exec(container, "sh", "-c",
+                         f"grep -q '{_HG_MARKER}' {_APACHE_CONF_AVAILABLE} 2>/dev/null && echo EXISTS",
+                         timeout=5)
+        if r.returncode == 0 and "EXISTS" in r.stdout:
+            _log("  apache hardening already applied — skipping")
+            return
+
+        # Write the config file
+        escaped = _APACHE_HARDENING.replace("'", "'\\''")
+        r = _docker_exec(container, "sh", "-c",
+                         f"printf '%s' '{escaped}' > {_APACHE_CONF_AVAILABLE}",
+                         timeout=10)
+        if r.returncode != 0:
+            _log(f"  WARN apache hardening write failed: {r.stderr.strip()[:80]}")
+            return
+
+        # Enable the config
+        r = _docker_exec(container, "a2enconf", _APACHE_CONF_NAME, timeout=10)
+        if r.returncode != 0:
+            _log(f"  WARN a2enconf failed: {r.stderr.strip()[:80]}")
+            return
+
+        # Test config syntax
+        r = _docker_exec(container, "apache2ctl", "configtest", timeout=10)
+        if r.returncode != 0:
+            _log(f"  WARN apache2ctl configtest failed: {r.stderr.strip()[:80]}")
+            _docker_exec(container, "a2disconf", _APACHE_CONF_NAME, timeout=5)
+            return
+
+        # Graceful reload (no dropped connections)
+        r = _docker_exec(container, "apache2ctl", "graceful", timeout=15)
+        if r.returncode == 0:
+            _log("  ✓ Apache hardening applied (xmlrpc blocked via LocationMatch)")
+        else:
+            _log(f"  WARN apache2ctl graceful failed: {r.stderr.strip()[:80]}")
+    except Exception as exc:
+        _log(f"  WARN harden_apache exception: {exc}")
+
+
+def _harden_nginx(container: str, _log) -> None:
+    """Apply hardening to a Nginx container. Idempotent."""
+    try:
+        # Check if already hardened
+        r = _docker_exec(container, "sh", "-c",
+                         f"grep -q '{_HG_MARKER}' {_NGINX_CONF_PATH} 2>/dev/null && echo EXISTS",
+                         timeout=5)
+        if r.returncode == 0 and "EXISTS" in r.stdout:
+            _log("  nginx hardening already applied — skipping")
+            return
+
+        # Write the config file
+        escaped = _NGINX_HARDENING.replace("'", "'\\''")
+        r = _docker_exec(container, "sh", "-c",
+                         f"printf '%s' '{escaped}' > {_NGINX_CONF_PATH}",
+                         timeout=10)
+        if r.returncode != 0:
+            _log(f"  WARN nginx hardening write failed: {r.stderr.strip()[:80]}")
+            return
+
+        # Test config before reload
+        r = _docker_exec(container, "nginx", "-t", timeout=10)
+        if r.returncode != 0:
+            _log(f"  WARN nginx -t failed, removing hardening config: {r.stderr.strip()[:80]}")
+            _docker_exec(container, "rm", "-f", _NGINX_CONF_PATH, timeout=5)
+            return
+
+        # Reload Nginx
+        r = _docker_exec(container, "nginx", "-s", "reload", timeout=10)
+        if r.returncode == 0:
+            _log("  ✓ Nginx hardening applied (xmlrpc blocked, wp-login rate-limited)")
+        else:
+            _log(f"  WARN nginx reload failed: {r.stderr.strip()[:80]}")
+    except Exception as exc:
+        _log(f"  WARN harden_nginx exception: {exc}")
+
+
 def optimize_wordpress(
     container: str,
     log: Optional[Callable[[str], None]] = None,
@@ -268,6 +417,9 @@ def optimize_wordpress(
         _log("  ✓ DB optimizada")
     else:
         _log(f"  WARN db optimize: {r.stderr.strip()[:80]}")
+
+    # ── 9. Webserver hardening: block xmlrpc.php (Apache or Nginx) ──────────
+    _harden_webserver(container, _log)
 
     _log("Optimización completada")
     if user_id:

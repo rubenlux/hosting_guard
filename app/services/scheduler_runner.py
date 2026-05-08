@@ -83,6 +83,7 @@ async def _main() -> None:
     from app.infra.audit.session_repository import cleanup_sessions
     from app.services.detect_security_anomalies import detect_security_anomalies
     from app.services.collect_resource_usage import collect_resource_usage
+    from app.services.collect_wp_log_attacks import collect_wp_log_attacks
     from app.services.domain_checker import check_pending_domains
     from app.api.config import ENABLE_CAPACITY_FORECAST
 
@@ -109,6 +110,7 @@ async def _main() -> None:
     schedule_job(_orchestrator_pass,             interval=10)      # throttle / autoscale / restart
     # ── Sub-minute ───────────────────────────────────────────────────────────
     schedule_job(detect_security_anomalies,      interval=60)      # 60 s — attack detection
+    schedule_job(collect_wp_log_attacks,         interval=60)      # 60 s — WP attack log parser
     schedule_job(poll_prometheus_alerts,         interval=60)      # 1 min
     schedule_job(collect_resource_usage,         interval=60)      # 60 s — CPU/RAM per container
     # ── Every 5 minutes ──────────────────────────────────────────────────────
@@ -126,7 +128,7 @@ async def _main() -> None:
     schedule_job(cleanup_sessions,               interval=86400)   # 24 h
     schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
-    base_count = 15
+    base_count = 16
     if ENABLE_CAPACITY_FORECAST:
         def _run_capacity_forecast():
             try:

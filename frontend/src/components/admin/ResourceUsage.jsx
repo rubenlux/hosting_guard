@@ -88,6 +88,26 @@ function StatCard({ icon: Icon, label, value, sub, color }) {
   );
 }
 
+function CpuCell({ t }) {
+  const cur  = t.cpu_pct;
+  const avg5 = t.cpu_avg_5min;
+  const max5 = t.cpu_max_5min;
+  const displayCpu = avg5 ?? cur;
+  return (
+    <div>
+      <span className={`text-[11px] font-mono font-bold ${cpuColor(displayCpu)}`}>{fmtPct(cur)}</span>
+      <Bar value={cur || 0} max={100} colorClass={cpuColor(cur)} />
+      {(avg5 != null || max5 != null) && (
+        <div className="text-[8px] text-gray-600 mt-0.5 font-mono">
+          {avg5 != null && <span title="avg 5min">avg {fmtPct(avg5)}</span>}
+          {avg5 != null && max5 != null && <span className="mx-0.5">·</span>}
+          {max5 != null && <span title="max 5min">max {fmtPct(max5)}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HostingTable({ rows }) {
   return (
     <div className="bg-[#111] rounded-xl border border-white/8 overflow-hidden">
@@ -96,9 +116,9 @@ function HostingTable({ rows }) {
         Por Hosting
         <span className="ml-auto text-[9px] text-gray-600 font-normal">{rows.length} activos</span>
       </div>
-      <div className="grid grid-cols-[1fr_70px_80px_60px_60px_60px_60px_70px] gap-1 px-4 py-2 border-b border-white/5 text-[9px] text-gray-600 uppercase tracking-wide">
+      <div className="grid grid-cols-[1fr_90px_80px_60px_60px_60px_60px_70px] gap-1 px-4 py-2 border-b border-white/5 text-[9px] text-gray-600 uppercase tracking-wide">
         <span>Hosting / Email</span>
-        <span>CPU</span>
+        <span>CPU (actual · avg5 · max5)</span>
         <span>RAM</span>
         <span>Disk</span>
         <span>Req/24h</span>
@@ -109,7 +129,7 @@ function HostingTable({ rows }) {
       <div className="divide-y divide-white/5 max-h-[500px] overflow-y-auto">
         {rows.map((t) => (
           <div key={t.hosting_id}
-               className="grid grid-cols-[1fr_70px_80px_60px_60px_60px_60px_70px] gap-1 items-center px-4 py-2.5 hover:bg-white/3 transition-colors">
+               className="grid grid-cols-[1fr_90px_80px_60px_60px_60px_60px_70px] gap-1 items-center px-4 py-2.5 hover:bg-white/3 transition-colors">
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-white font-medium truncate">{t.name}</span>
@@ -122,10 +142,7 @@ function HostingTable({ rows }) {
                 <div className="text-[8px] text-red-400">{t.restart_count_24h} restart{t.restart_count_24h !== 1 ? 's' : ''}/24h</div>
               )}
             </div>
-            <div>
-              <span className={`text-[11px] font-mono font-bold ${cpuColor(t.cpu_pct)}`}>{fmtPct(t.cpu_pct)}</span>
-              <Bar value={t.cpu_pct || 0} max={100} colorClass={cpuColor(t.cpu_pct)} />
-            </div>
+            <CpuCell t={t} />
             <div>
               <span className={`text-[11px] font-mono font-bold ${memColor(t.mem_mb, t.mem_limit_mb)}`}>{fmtMb(t.mem_mb)}</span>
               {t.mem_limit_mb && <Bar value={t.mem_mb || 0} max={t.mem_limit_mb} colorClass={memColor(t.mem_mb, t.mem_limit_mb)} />}

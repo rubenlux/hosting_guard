@@ -485,6 +485,19 @@ async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
     except Exception:
         pass
 
+    # Remove residual client directory (non-fatal, path traversal guard)
+    _OPT_CLIENTS = "/opt/clients"
+    _safe_base   = os.path.realpath(_OPT_CLIENTS)
+    _candidate   = os.path.realpath(os.path.join(_OPT_CLIENTS, container_name))
+    if not _candidate.startswith(_safe_base + os.sep):
+        logger.warning("hosting_deleted: path traversal blocked for container %r", container_name)
+    elif os.path.isdir(_candidate):
+        try:
+            shutil.rmtree(_candidate)
+            logger.info("hosting_deleted: removed client dir %s", _candidate)
+        except Exception as exc:
+            logger.warning("hosting_deleted: could not remove %s: %s", _candidate, exc)
+
     return {"status": "deleted", "hosting_id": hosting_id}
 
 

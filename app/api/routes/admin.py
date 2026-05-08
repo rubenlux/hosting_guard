@@ -382,6 +382,8 @@ def get_resources_tenants(admin: dict = Depends(require_role("admin"))):
                  s.net_rx_mb, s.net_tx_mb,
                  COALESCE(s.disk_mb, NULL)              AS disk_mb,
                  s.sampled_at,
+                 -- CPU 5-min stats from recent samples
+                 cpu5.cpu_avg_5min, cpu5.cpu_max_5min,
                  -- Traffic last 24 h
                  ts.requests_24h, ts.errors_4xx_24h, ts.errors_5xx_24h,
                  -- Avg response time
@@ -393,6 +395,14 @@ def get_resources_tenants(admin: dict = Depends(require_role("admin"))):
                FROM hosting_resource_samples s
                JOIN hostings h USING (hosting_id)
                JOIN users u ON u.user_id = h.user_id
+               LEFT JOIN LATERAL (
+                   SELECT
+                       ROUND(AVG(cpu_pct)::numeric, 1) AS cpu_avg_5min,
+                       ROUND(MAX(cpu_pct)::numeric, 1) AS cpu_max_5min
+                   FROM hosting_resource_samples
+                   WHERE hosting_id = s.hosting_id
+                     AND sampled_at >= NOW() - INTERVAL '5 minutes'
+               ) cpu5 ON TRUE
                LEFT JOIN LATERAL (
                    SELECT
                        COALESCE(SUM(total_requests), 0) AS requests_24h,
@@ -441,7 +451,9 @@ def get_resources_tenants(admin: dict = Depends(require_role("admin"))):
 
 
 def _compute_recommendation(r: dict) -> str:
-    cpu  = r.get("cpu_pct") or 0
+    # Use 5-min average CPU to avoid false alarms from isolated spikes.
+    # Fall back to current sample only when 5-min avg is not yet available.
+    cpu  = r.get("cpu_avg_5min") or r.get("cpu_pct") or 0
     mem  = r.get("mem_mb") or 0
     lim  = r.get("mem_limit_mb") or 0
     e5xx = r.get("errors_5xx_24h") or 0
@@ -944,6 +956,23 @@ async def admin_terminate_hosting(
             detail=f"DB cleanup failed: {exc}",
         )
 
+    # 6. Remove residual client directory from host filesystem (non-fatal)
+    if container:
+        import shutil as _shutil
+        _OPT_CLIENTS = "/opt/clients"
+        _safe_base = os.path.realpath(_OPT_CLIENTS)
+        _candidate = os.path.realpath(os.path.join(_OPT_CLIENTS, container))
+        if not _candidate.startswith(_safe_base + os.sep):
+            warnings.append("client dir cleanup skipped: path traversal detected")
+            logger.warning("admin_terminate: path traversal blocked for container %r", container)
+        elif os.path.isdir(_candidate):
+            try:
+                _shutil.rmtree(_candidate)
+                logger.info("admin_terminate: removed client dir %s", _candidate)
+            except Exception as exc:
+                warnings.append(f"client dir cleanup warning: {exc}")
+                logger.warning("admin_terminate: could not remove %s: %s", _candidate, exc)
+
     return {
         "status": "terminated",
         "hosting_id": hosting_id,
@@ -952,6 +981,65 @@ async def admin_terminate_hosting(
         "admin": admin["email"],
         "warnings": warnings,
         "at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/resources/container-status")
+def get_container_status(admin: dict = Depends(require_role("admin"))):
+    """Accurate breakdown: DB hostings vs actually-running Docker containers.
+    Exposes orphaned hostings (active in DB but container missing from Docker).
+    """
+    import subprocess as _sp
+    from app.infra.db import get_connection, release_connection
+
+    # 1. DB counts
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT
+                 COUNT(*) FILTER (WHERE status = 'active')         AS active_db,
+                 COUNT(*) FILTER (WHERE status NOT IN ('deleted','expired')) AS total_alive_db
+               FROM hostings WHERE container_name IS NOT NULL"""
+        )
+        db_row = dict(cur.fetchone() or {})
+        cur.execute(
+            "SELECT hosting_id, container_name FROM hostings "
+            "WHERE status = 'active' AND container_name IS NOT NULL"
+        )
+        active_rows = [dict(r) for r in cur.fetchall()]
+    finally:
+        release_connection(conn)
+
+    # 2. Docker ps — get all running container names
+    try:
+        ps = _sp.run(
+            ["docker", "ps", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        running_names = {n.strip().lstrip("/") for n in ps.stdout.splitlines() if n.strip()}
+    except Exception:
+        running_names = set()
+
+    # 3. Classify containers
+    client_running   = {n for n in running_names if n.startswith("user_")}
+    platform_running = {n for n in running_names if not n.startswith("user_")}
+
+    # 4. Orphaned: active in DB but not running in Docker
+    orphaned = [
+        {"hosting_id": r["hosting_id"], "container_name": r["container_name"]}
+        for r in active_rows
+        if r["container_name"] not in running_names
+    ]
+
+    return {
+        "hostings_active_db":       db_row.get("active_db", 0),
+        "hostings_alive_db":        db_row.get("total_alive_db", 0),
+        "containers_client_running": len(client_running),
+        "containers_platform_running": len(platform_running),
+        "containers_total_running":  len(running_names),
+        "hostings_orphaned_count":  len(orphaned),
+        "hostings_orphaned":        orphaned,
     }
 
 

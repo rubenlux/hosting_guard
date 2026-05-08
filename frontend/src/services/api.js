@@ -923,6 +923,11 @@ export const getAdminResourcesUsers = async () => {
   return response.data;
 };
 
+export const getAdminContainerStatus = async () => {
+  const response = await api.get('/admin/resources/container-status');
+  return response.data;
+};
+
 export const getUnitEconomicsOverview = async () => {
   const response = await api.get('/admin/finance/unit-economics/overview');
   return response.data;

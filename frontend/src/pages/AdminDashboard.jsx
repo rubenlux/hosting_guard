@@ -26,6 +26,7 @@ import {
   adminExtendPlan, adminSetFreePlanForever, adminDeactivateFreePlan, adminUpgradePlan,
   adminDeleteUser, getAdminReport,
   adminBroadcastNotification, adminGetNotificationHistory, adminGetNotificationLog,
+  getAdminContainerStatus,
 } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import StaffAnalytics from '../components/StaffAnalytics';
@@ -313,6 +314,7 @@ export default function AdminDashboard() {
   const [jobsSummary, setJobsSummary]         = useState(null);
   const [unitEconomics, setUnitEconomics]     = useState(null);
   const [containerHistory, setContainerHistory] = useState(null);
+  const [containerStatus, setContainerStatus]   = useState(null);
   const [loading, setLoading]           = useState(true);
   const [tab, setTab]                   = useState('users');
   const tabBarRef = useRef(null);
@@ -345,6 +347,7 @@ export default function AdminDashboard() {
       getJobsSummary(),
       getUnitEconomics(),
       getContainerHistory(),
+      getAdminContainerStatus(),
     ]);
     if (results[0].status === 'fulfilled') setUsers(results[0].value);
     if (results[1].status === 'fulfilled') setHostings(results[1].value);
@@ -361,6 +364,7 @@ export default function AdminDashboard() {
     if (results[12].status === 'fulfilled') setJobsSummary(results[12].value);
     if (results[13].status === 'fulfilled') setUnitEconomics(results[13].value);
     if (results[14].status === 'fulfilled') setContainerHistory(results[14].value);
+    if (results[15].status === 'fulfilled') setContainerStatus(results[15].value);
     setLoading(false);
   };
 
@@ -1520,15 +1524,34 @@ export default function AdminDashboard() {
             <div className="bg-[#111] rounded-xl border border-white/5 p-4">
               <div className="text-[11px] font-semibold text-white mb-3">System Stats</div>
               {[
-                { label: 'Containers activos', val: hostings.filter(h => h.status === 'active').length },
-                { label: 'Plan free',          val: hostings.filter(h => h.plan === 'free').length },
-                { label: 'Errores',            val: hostings.filter(h => h.status === 'error').length },
-                { label: 'Total eventos orc.', val: orcEvents.length },
-                { label: 'Usuarios admin',     val: users.filter(u => u.role === 'admin').length },
+                {
+                  label: 'Hostings activos (DB)',
+                  val: containerStatus?.hostings_active_db ?? hostings.filter(h => h.status === 'active').length,
+                  color: 'text-white',
+                },
+                {
+                  label: 'Containers cliente running',
+                  val: containerStatus?.containers_client_running ?? '—',
+                  color: 'text-white',
+                },
+                {
+                  label: 'Containers plataforma',
+                  val: containerStatus?.containers_platform_running ?? '—',
+                  color: 'text-gray-400',
+                },
+                {
+                  label: 'Huérfanos (DB active / no Docker)',
+                  val: containerStatus?.hostings_orphaned_count ?? '—',
+                  color: (containerStatus?.hostings_orphaned_count ?? 0) > 0 ? 'text-amber-400' : 'text-white',
+                },
+                { label: 'Plan free',          val: hostings.filter(h => h.plan === 'free').length, color: 'text-white' },
+                { label: 'Errores',            val: hostings.filter(h => h.status === 'error').length, color: 'text-white' },
+                { label: 'Total eventos orc.', val: orcEvents.length, color: 'text-white' },
+                { label: 'Usuarios admin',     val: users.filter(u => u.role === 'admin').length, color: 'text-white' },
               ].map((s, i) => (
-                <div key={i} className="flex justify-between items-center py-2 border-b border-white/5 last:border-0">
+                <div key={i} className="flex justify-between items-center py-1.5 border-b border-white/5 last:border-0">
                   <span className="text-[10px] text-gray-500">{s.label}</span>
-                  <span className="text-[11px] font-mono font-semibold text-white">{loading ? '—' : s.val}</span>
+                  <span className={`text-[11px] font-mono font-semibold ${s.color}`}>{loading ? '—' : s.val}</span>
                 </div>
               ))}
             </div>
