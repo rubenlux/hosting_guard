@@ -436,16 +436,15 @@ function DomainManager({ hosting }) {
   return (
     <div style={{ paddingTop: 16 }}>
 
-      {/* Educational intro */}
+      {/* Temporary subdomain pill */}
       <div style={{
-        background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
-        borderRadius: 10, padding: '12px 14px', marginBottom: 16, fontSize: 12, color: '#777', lineHeight: 1.8,
+        display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16,
+        padding: '8px 12px', borderRadius: 8,
+        background: 'rgba(0,255,136,0.05)', border: '1px solid rgba(0,255,136,0.12)',
       }}>
-        <span style={{ color: '#aaa', fontWeight: 600 }}>Tu dominio temporal:</span>{' '}
-        <span style={{ fontFamily: 'monospace', color: '#00ff88' }}>{subdomainFull}</span>
-        <br />
-        Para usar tu propio dominio, no necesitás transferirlo ni cambiar de proveedor.
-        Solo tenés que agregar unos registros DNS en el panel donde lo compraste (GoDaddy, Namecheap, Cloudflare, etc.).
+        <Globe size={12} color="#00ff88" style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: 11, color: '#555' }}>Dominio temporal:</span>
+        <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#00ff88' }}>{subdomainFull}</span>
       </div>
 
       {/* Existing domains */}
@@ -459,82 +458,184 @@ function DomainManager({ hosting }) {
         />
       ))}
 
-      {/* Add domain form */}
+      {/* Add domain panel */}
       <div style={{
         background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)',
-        borderRadius: 10, padding: '14px', marginTop: domains.length ? 8 : 0,
+        borderRadius: 12, overflow: 'hidden', marginTop: domains.length ? 8 : 0,
       }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#888', marginBottom: 10 }}>
-          {domains.length === 0 ? 'Agregar dominio propio' : 'Agregar otro dominio'}
-        </div>
 
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <div style={{ flex: 1, position: 'relative' }}>
-            <input
-              value={newDomain}
-              onChange={e => { setNewDomain(e.target.value); setAddError(''); setAddedInstructions(null); }}
-              onKeyDown={e => e.key === 'Enter' && handleAdd()}
-              placeholder="ejemplo.com  o  www.ejemplo.com"
-              style={{
-                width: '100%', background: 'rgba(255,255,255,0.04)',
-                border: `1px solid ${addError ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)'}`,
-                borderRadius: 8, padding: '9px 12px', color: '#fff', fontSize: 13,
-                outline: 'none', fontFamily: 'monospace', boxSizing: 'border-box',
-              }}
-            />
+        {/* ── 3-step mini guide ── */}
+        <div style={{
+          padding: '18px 18px 16px',
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#ccc', marginBottom: 14 }}>
+            Conectar tu dominio en 3 pasos
           </div>
-          <button
-            onClick={handleAdd}
-            disabled={adding || !newDomain.trim()}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px',
-              background: adding || !newDomain.trim() ? 'rgba(255,255,255,0.03)' : 'rgba(0,255,136,0.1)',
-              border: '1px solid rgba(0,255,136,0.2)', borderRadius: 8,
-              cursor: adding || !newDomain.trim() ? 'not-allowed' : 'pointer',
-              color: '#00ff88', fontSize: 12, fontWeight: 700,
-              opacity: adding || !newDomain.trim() ? 0.4 : 1, whiteSpace: 'nowrap',
-            }}
-          >
-            {adding ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-            Agregar dominio
-          </button>
-        </div>
 
-        {/* Real-time type preview */}
-        {previewType && !addError && (
-          <div style={{ fontSize: 11, color: previewType === 'apex' ? '#f97316' : '#60a5fa', marginBottom: 6 }}>
-            {previewType === 'apex'
-              ? '→ Dominio raíz: vas a necesitar un registro A con tu IP'
-              : `→ Subdominio: vas a necesitar un registro CNAME apuntando a ${subdomainFull}`}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {[
+              {
+                n: '1',
+                title: 'Agregá tu dominio',
+                body: 'Puede ser tu dominio principal, como ejemplo.com, o un subdominio, como www.ejemplo.com.',
+                color: '#60a5fa',
+              },
+              {
+                n: '2',
+                title: 'Copiá el registro DNS',
+                body: 'Después de agregarlo, te mostramos exactamente qué registro crear en el panel de tu proveedor.',
+                color: '#a78bfa',
+              },
+              {
+                n: '3',
+                title: 'Verificá y activá SSL',
+                body: 'Cuando el DNS apunte correctamente a HostingGuard, activamos HTTPS automáticamente.',
+                color: '#00ff88',
+              },
+            ].map(({ n, title, body, color }) => (
+              <div key={n} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <div style={{
+                  width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                  background: `${color}15`, border: `1px solid ${color}30`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 10, fontWeight: 800, color,
+                }}>
+                  {n}
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#bbb', marginBottom: 2 }}>{title}</div>
+                  <div style={{ fontSize: 11, color: '#555', lineHeight: 1.65 }}>{body}</div>
+                </div>
+              </div>
+            ))}
           </div>
-        )}
 
-        {addError && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#ef4444' }}>
-            <AlertTriangle size={12} /> {addError}
+          {/* Note */}
+          <div style={{
+            marginTop: 14, padding: '10px 12px',
+            background: 'rgba(255,255,255,0.03)', borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <div style={{ fontSize: 11, color: '#555', lineHeight: 1.7 }}>
+              <span style={{ color: '#777', fontWeight: 600 }}>No necesitás transferir tu dominio</span> ni cambiar de proveedor.
+              Solo tenés que agregar el registro DNS indicado.
+            </div>
           </div>
-        )}
 
-        {/* Instructions shown right after adding */}
-        {addedInstructions && (
+          {/* Where to configure */}
           <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12, color: '#aaa', marginBottom: 8, fontWeight: 600 }}>
-              Ahora entrá al panel de tu proveedor de dominio y creá este registro:
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#666', marginBottom: 5 }}>
+              ¿Dónde configuro esto?
             </div>
-            <DnsTable instructions={addedInstructions} subdomainFull={subdomainFull} />
-            <div style={{ fontSize: 12, color: '#666', lineHeight: 1.7 }}>
-              Cuando hayas guardado el registro, hacé clic en <strong style={{ color: '#60a5fa' }}>"Ya configuré mi DNS, verificar ahora"</strong> en la tarjeta de arriba.
-              Los cambios DNS pueden tardar desde algunos minutos hasta algunas horas en propagarse.
+            <div style={{ fontSize: 11, color: '#4a4a4a', lineHeight: 1.7 }}>
+              En el panel donde compraste o administrás tu dominio:{' '}
+              {['Cloudflare', 'GoDaddy', 'Namecheap', 'DonWeb', 'Nic Argentina', 'Hostinger'].map((p, i, arr) => (
+                <span key={p}>
+                  <span style={{ color: '#666' }}>{p}</span>
+                  {i < arr.length - 1 ? ', ' : ' u otro proveedor.'}
+                </span>
+              ))}
             </div>
           </div>
-        )}
+        </div>
 
-        {!addedInstructions && (
-          <div style={{ fontSize: 11, color: '#555', lineHeight: 1.7, marginTop: 4 }}>
-            Podés usar tu dominio raíz (<span style={{ fontFamily: 'monospace', color: '#666' }}>ejemplo.com</span>) o
-            cualquier subdominio (<span style={{ fontFamily: 'monospace', color: '#666' }}>www.ejemplo.com</span>, <span style={{ fontFamily: 'monospace', color: '#666' }}>app.ejemplo.com</span>).
+        {/* ── Input section ── */}
+        <div style={{ padding: '14px 18px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#666', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {domains.length === 0 ? 'Tu dominio' : 'Agregar otro dominio'}
           </div>
-        )}
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <div style={{ flex: 1 }}>
+              <input
+                value={newDomain}
+                onChange={e => { setNewDomain(e.target.value); setAddError(''); setAddedInstructions(null); }}
+                onKeyDown={e => e.key === 'Enter' && handleAdd()}
+                placeholder="ejemplo.com"
+                style={{
+                  width: '100%', background: 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${addError ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)'}`,
+                  borderRadius: 8, padding: '9px 12px', color: '#fff', fontSize: 13,
+                  outline: 'none', fontFamily: 'monospace', boxSizing: 'border-box',
+                }}
+              />
+            </div>
+            <button
+              onClick={handleAdd}
+              disabled={adding || !newDomain.trim()}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px',
+                background: adding || !newDomain.trim() ? 'rgba(255,255,255,0.03)' : 'rgba(0,255,136,0.1)',
+                border: '1px solid rgba(0,255,136,0.2)', borderRadius: 8,
+                cursor: adding || !newDomain.trim() ? 'not-allowed' : 'pointer',
+                color: '#00ff88', fontSize: 12, fontWeight: 700,
+                opacity: adding || !newDomain.trim() ? 0.4 : 1, whiteSpace: 'nowrap',
+              }}
+            >
+              {adding ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+              Agregar
+            </button>
+          </div>
+
+          {/* Examples */}
+          {!newDomain.trim() && !addError && !addedInstructions && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+              <span style={{ fontSize: 10, color: '#3a3a3a', fontWeight: 600 }}>Ejemplos válidos:</span>
+              {['ejemplo.com', 'www.ejemplo.com', 'app.ejemplo.com'].map(ex => (
+                <button
+                  key={ex}
+                  onClick={() => { setNewDomain(ex); setAddError(''); setAddedInstructions(null); }}
+                  style={{
+                    fontFamily: 'monospace', fontSize: 10, color: '#4a4a4a',
+                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+                    borderRadius: 4, padding: '2px 7px', cursor: 'pointer',
+                  }}
+                >
+                  {ex}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Real-time type preview */}
+          {previewType && !addError && (
+            <div style={{ fontSize: 11, color: previewType === 'apex' ? '#f97316' : '#60a5fa', marginBottom: 4 }}>
+              {previewType === 'apex'
+                ? '→ Dominio raíz: vas a necesitar un registro A'
+                : `→ Subdominio: vas a necesitar un registro CNAME apuntando a ${subdomainFull}`}
+            </div>
+          )}
+
+          {addError && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#ef4444' }}>
+              <AlertTriangle size={12} /> {addError}
+            </div>
+          )}
+
+          {/* Instructions shown right after adding */}
+          {addedInstructions && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, color: '#aaa', marginBottom: 8, fontWeight: 600 }}>
+                Paso 2 — Entrá al panel de tu proveedor de dominio y creá este registro:
+              </div>
+              <DnsTable instructions={addedInstructions} subdomainFull={subdomainFull} />
+              <div style={{
+                padding: '10px 12px', borderRadius: 8,
+                background: 'rgba(96,165,250,0.05)', border: '1px solid rgba(96,165,250,0.12)',
+                fontSize: 12, color: '#666', lineHeight: 1.7,
+              }}>
+                Cuando hayas guardado el registro, hacé clic en{' '}
+                <strong style={{ color: '#60a5fa' }}>"Ya configuré mi DNS, verificar ahora"</strong>{' '}
+                en la tarjeta de arriba.
+                <br />
+                <span style={{ fontSize: 11, color: '#444' }}>
+                  Los cambios DNS pueden tardar desde algunos minutos hasta algunas horas en propagarse — es normal.
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
