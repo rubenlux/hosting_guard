@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
 from app.api.security import verify_token, require_support_write
-from app.api.rate_limit import limiter
+from app.api.rate_limit import limiter, get_deploy_rate_limit
 from app.api.saturation_guard import docker_capacity, docker_op
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.user_repository import UserRepository
@@ -963,7 +963,7 @@ def _traefik_labels(container_name: str, subdomain: str, port: int) -> list:
 
 
 @router.post("/deploy-from-github")
-@limiter.limit("3/hour")
+@limiter.limit(get_deploy_rate_limit)
 async def deploy_from_github(data: GitDeployRequest, request: Request, user: dict = Depends(verify_token)):
     try:
         _validate_project_name(data.name)
@@ -1371,7 +1371,7 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
 
 
 @router.post("/hostings/{hosting_id}/redeploy")
-@limiter.limit("3/hour")
+@limiter.limit(get_deploy_rate_limit)
 async def redeploy_from_github(hosting_id: int, request: Request, user: dict = Depends(verify_token)):
     user_id    = user.get("user_id")
     hosting    = hosting_repo.get_hosting(hosting_id, user_id)

@@ -1130,12 +1130,37 @@ def _cors_headers(request: Request) -> dict:
     return {}
 
 
+def _retry_after_seconds(exc: RateLimitExceeded) -> int:
+    limit_str = str(getattr(exc, "limit", "")) or ""
+    if "hour" in limit_str:
+        return 3600
+    if "day" in limit_str:
+        return 86400
+    return 60
+
+
 @app.exception_handler(RateLimitExceeded)
 def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    path = request.url.path
+    retry_after = _retry_after_seconds(exc)
+    if "deploy" in path:
+        detail = (
+            "Alcanzaste el límite de deploys por hora. "
+            "Esperá unos minutos antes de volver a intentar."
+        )
+        code = "deploy_rate_limit_exceeded"
+    else:
+        detail = "Demasiadas solicitudes. Inténtalo de nuevo más tarde."
+        code = "rate_limit_exceeded"
+
+    logger.warning(
+        "rate_limit_exceeded path=%s code=%s retry_after=%ds",
+        path, code, retry_after,
+    )
     return JSONResponse(
         status_code=429,
-        content={"detail": "Rate limit exceeded"},
-        headers=_cors_headers(request),
+        content={"detail": detail, "code": code, "retry_after_seconds": retry_after},
+        headers={**_cors_headers(request), "Retry-After": str(retry_after)},
     )
 
 

@@ -7,6 +7,24 @@ from fastapi import Request
 
 logger = logging.getLogger(__name__)
 
+_DEPLOY_RATE_LIMIT       = os.getenv("DEPLOY_RATE_LIMIT",       "3/hour")
+_DEPLOY_RATE_LIMIT_ADMIN = os.getenv("DEPLOY_RATE_LIMIT_ADMIN", "20/hour")
+
+
+def get_deploy_rate_limit(request: Request) -> str:
+    """Return deploy limit string: admin key elevated, otherwise env-configured default."""
+    try:
+        from jose import jwt as _jwt
+        from app.api.security import SECRET, ALGO
+        token = request.cookies.get("access_token")
+        if token:
+            payload = _jwt.decode(token, SECRET, algorithms=[ALGO], options={"verify_exp": False})
+            if payload.get("role") == "admin":
+                return _DEPLOY_RATE_LIMIT_ADMIN
+    except Exception:
+        pass
+    return _DEPLOY_RATE_LIMIT
+
 _REDIS_URL = os.getenv("REDIS_URL", "")
 
 

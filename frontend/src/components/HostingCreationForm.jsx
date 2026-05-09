@@ -94,10 +94,13 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
         setTimeout(() => onSuccess(), 2000);
       }
     } catch (err) {
-      // Mapear errores conocidos del backend; no exponer detail interno al usuario
+      const status = err.response?.status;
       const detail = err.response?.data?.detail || '';
+      const code   = err.response?.data?.code   || '';
       let errorMsg = 'Error al crear el proyecto. Inténtalo de nuevo.';
-      if (detail.includes('ya existe') || detail.includes('already exists')) {
+      if (status === 429 || code === 'deploy_rate_limit_exceeded') {
+        errorMsg = detail || 'Alcanzaste el límite de deploys por hora. Esperá unos minutos antes de volver a intentar.';
+      } else if (detail.includes('ya existe') || detail.includes('already exists')) {
         errorMsg = 'Ya existe un proyecto con ese nombre.';
       } else if (detail.includes('plan') || detail.includes('suscripción')) {
         errorMsg = 'Tu plan actual no permite esta acción. Actualiza tu suscripción.';
@@ -105,6 +108,8 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
         errorMsg = 'Solo se permite un alojamiento gratuito por dirección IP.';
       } else if (detail.includes('nombre') || detail.includes('inválido')) {
         errorMsg = 'Nombre de proyecto inválido. Usa solo letras, números y guiones.';
+      } else if (detail && (status === 422 || status === 400)) {
+        errorMsg = detail;
       }
       setResult({ success: false, error: errorMsg });
     } finally {
