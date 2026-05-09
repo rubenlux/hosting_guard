@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   User, Save, Check, Key, ExternalLink, Shield, Bell,
   Globe, Trash2, Download, ChevronDown, ChevronUp, LogOut,
@@ -157,6 +157,10 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction, onHost
   const [dangerLoading,    setDangerLoading]    = useState(false);
   const [dangerErr,        setDangerErr]        = useState('');
   const [dangerDone,       setDangerDone]       = useState('');
+
+  useEffect(() => {
+    if (initialDangerHostingId) setDangerHosting(String(initialDangerHostingId));
+  }, [initialDangerHostingId]);
 
   const selectedHostingObj = hostings.find(h => String(h.hosting_id) === String(dangerHosting)) || null;
 

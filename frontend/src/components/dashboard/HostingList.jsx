@@ -216,7 +216,7 @@ export default function HostingList({
                       <button
                         onClick={() => onDelete(h.hosting_id, h.name)}
                         title="Eliminar"
-                        className="w-8 h-8 rounded-lg bg-danger/10 text-danger flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:bg-danger hover:text-white"
+                        className="w-8 h-8 rounded-lg bg-danger/10 text-danger flex items-center justify-center transition-all hover:bg-danger hover:text-white"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>

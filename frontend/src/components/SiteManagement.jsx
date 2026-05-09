@@ -147,6 +147,14 @@ const SiteManagement = ({
                   <Bot size={14} /> Diagnosticar
                 </button>
 
+                <button
+                  onClick={() => onDelete?.(h.hosting_id, h.name)}
+                  className="px-3 h-9 flex items-center gap-2 rounded-lg bg-danger/10 text-danger hover:bg-danger hover:text-white font-bold text-[11px] transition-all"
+                  title="Eliminar sitio"
+                >
+                  <Trash2 size={14} /> Eliminar
+                </button>
+
               </div>
             </div>
           ))
