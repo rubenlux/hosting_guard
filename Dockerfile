@@ -5,7 +5,7 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-        git nodejs npm ca-certificates curl && \
+        git nodejs npm ca-certificates curl python3 make g++ && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

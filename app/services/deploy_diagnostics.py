@@ -40,9 +40,14 @@ SITE_RETURNS_403           = "site_returns_403"
 SITE_RETURNS_404           = "site_returns_404"
 SITE_RETURNS_502           = "site_returns_502"
 SITE_RETURNS_503           = "site_returns_503"
-DEPLOY_RUNTIME_MISSING_TOOL = "deploy_runtime_missing_tool"
-DEPLOY_RATE_LIMIT_EXCEEDED  = "deploy_rate_limit_exceeded"
-UNKNOWN_DEPLOY_ERROR        = "unknown_deploy_error"
+DEPLOY_RUNTIME_MISSING_TOOL     = "deploy_runtime_missing_tool"
+DEPLOY_RATE_LIMIT_EXCEEDED      = "deploy_rate_limit_exceeded"
+UNKNOWN_DEPLOY_ERROR            = "unknown_deploy_error"
+NATIVE_DEPENDENCY_BUILD_FAILED  = "native_dependency_build_failed"
+NODE_SASS_INCOMPATIBLE          = "node_sass_incompatible"
+NATIVE_BUILD_TOOL_MISSING       = "native_build_tool_missing"
+NODE_VERSION_MISMATCH           = "node_version_mismatch"
+MODULE_NOT_FOUND_BUILD          = "module_not_found_build"
 
 # ── Severity (for system_incidents) ──────────────────────────────────────────
 
@@ -70,8 +75,13 @@ _SEVERITY: dict = {
     TRAEFIK_ROUTE_FAILED:       "high",
     SITE_RETURNS_502:           "high",
     SITE_RETURNS_503:           "high",
-    SITE_RETURNS_404:           "warning",
-    UNKNOWN_DEPLOY_ERROR:       "medium",
+    SITE_RETURNS_404:               "warning",
+    UNKNOWN_DEPLOY_ERROR:           "medium",
+    NATIVE_DEPENDENCY_BUILD_FAILED: "warning",
+    NODE_SASS_INCOMPATIBLE:         "warning",
+    NATIVE_BUILD_TOOL_MISSING:      "high",
+    NODE_VERSION_MISMATCH:          "warning",
+    MODULE_NOT_FOUND_BUILD:         "warning",
 }
 
 

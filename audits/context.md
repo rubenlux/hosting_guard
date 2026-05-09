@@ -506,3 +506,31 @@ Bug 3 — decision_events schema mismatch
 Added 8 ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS statements: user_id, actor_type, action_type, target_type, target_id, decision, reason, metadata. All nullable/defaulted — existing pipeline rows unaffected.
 Deploy: sudo git pull origin main && sudo docker compose build scheduler && sudo docker compose up -d scheduler. The init_db() call at scheduler startup will run the ALTER TABLEs idempotently.
 
+--------------------------------
+
+Resumen de cambios:
+
+Bug raíz (hosting.py:1197) — elif not data.root_directory: cambió a if not has_package_json and not data.root_directory:. El elif saltaba la autodetección cuando había un package.json no-web en la raíz (como el backend de PI-countries). Ahora la autodetección corre siempre que el root no sea web-buildable.
+
+Seguridad — Antes de montar cualquier directorio en nginx, se verifica que no contenga .git. Si lo contiene: DeployError(UNSAFE_PUBLISH_ROOT). Para el path estático puro, también se verifica que exista index.html.
+
+_found_dirs — Removido "public" de la lista de directorios candidatos (era el template fuente de CRA, no el build output).
+
+Health check — Después de iniciar el contenedor, espera 2 segundos y hace GET https://{subdomain} con httpx. Si responde 403/404/502/503 → DeployError con diagnóstico específico. Errores TLS/conexión (cert no provisionado aún) se ignoran silenciosamente.
+
+Dashboard refresh (HostingCreationForm.jsx) — onSuccess() ahora se llama inmediatamente en lugar de con setTimeout(..., 2000). El timeout se cancelaba cuando el usuario cerraba el modal antes de los 2 segundos, impidiendo el refresh.
+
+-----------------------------
+
+424 passed, 1 skipped, zero failures. Here's a summary of everything that was done:
+
+app/services/deploy_diagnostics.py — added 5 new error codes (NATIVE_DEPENDENCY_BUILD_FAILED, NODE_SASS_INCOMPATIBLE, NATIVE_BUILD_TOOL_MISSING, NODE_VERSION_MISMATCH, MODULE_NOT_FOUND_BUILD) with severity entries (native_build_tool_missing → "high", rest → "warning").
+
+Dockerfile — added python3 make g++ to the app container's apt-get install.
+
+app/api/routes/hosting.py:
+
+Imports: added the 5 new codes + all 4 functions from build_diagnostics
+New helpers: _parse_versions (extracts node/npm version strings from node --version && npm --version output) and _read_version_file (reads .nvmrc or engines.node from package.json)
+Phase 1 rewrite: split into two separate docker runs (install, then build), each prefixed with apk add python3 make g++ + version capture; npm logs mounted via -v {tmp_dir}:/root/.npm/_logs; ERESOLVE retry now applies only to the install step; ERR_OSSL retry to the build step; every failure path calls classify_npm_failure, extract_suspected_package, extract_npm_log_path, and read_npm_log to produce rich evidence with node_version, npm_version, suspected_package, stdout_tail, stderr_tail, and the npm debug log tail
+tests/test_github_deploy.py — 14 new tests covering all 6 classify_npm_failure rules, both unknown-stage fallbacks, extract_npm_log_path (found and missing), extract_suspected_package, read_npm_log (reads tail, handles not-found), and presence of all 5 new constants.

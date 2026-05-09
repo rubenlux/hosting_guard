@@ -32,6 +32,14 @@ from app.services.deploy_diagnostics import (
     UNSAFE_PUBLISH_ROOT,
     SITE_RETURNS_403, SITE_RETURNS_404, SITE_RETURNS_502, SITE_RETURNS_503,
     UNKNOWN_DEPLOY_ERROR,
+    NATIVE_DEPENDENCY_BUILD_FAILED, NODE_SASS_INCOMPATIBLE,
+    NATIVE_BUILD_TOOL_MISSING, NODE_VERSION_MISMATCH, MODULE_NOT_FOUND_BUILD,
+)
+from app.services.build_diagnostics import (
+    classify_npm_failure,
+    extract_npm_log_path,
+    extract_suspected_package,
+    read_npm_log,
 )
 from app.api.saturation_guard import docker_capacity, docker_op
 from app.infra.audit.hosting_repository import HostingRepository
@@ -213,6 +221,28 @@ def _check_required_tool(name: str) -> None:
             evidence={"missing_tool": name},
             status_code=503,
         )
+
+
+def _parse_versions(stdout: str) -> tuple[str, str]:
+    """Extract node/npm versions from `node --version && npm --version` output."""
+    lines = [l.strip() for l in stdout.splitlines() if l.strip()]
+    node = next((l for l in lines if l.startswith("v")), "unknown")
+    npm  = next((l for l in lines if l and l[0].isdigit()), "unknown")
+    return node, npm
+
+
+def _read_version_file(work_dir: str) -> Optional[str]:
+    """Return the requested Node version from .nvmrc or package.json engines.node."""
+    import json as _json
+    nvmrc = os.path.join(work_dir, ".nvmrc")
+    if os.path.exists(nvmrc):
+        with open(nvmrc) as _f:
+            return _f.read().strip()
+    pkg = os.path.join(work_dir, "package.json")
+    if os.path.exists(pkg):
+        with open(pkg) as _f:
+            return _json.load(_f).get("engines", {}).get("node")
+    return None
 
 
 def _validate_project_name(name: str) -> None:
@@ -1263,85 +1293,119 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     data.repo_url, _detected.get("root_directory"), _fw, out_dir,
                 )
 
-                # Phase 1 — install + build with smart retries
-                _combined_cmd = f"{install_cmd} && {build_cmd}"
-                _build_run = await loop.run_in_executor(
-                    None,
-                    lambda: subprocess.run(
+                # Phase 1 — separate install and build with rich diagnostics
+                import tempfile as _tempfile
+                _npm_log_dir = _tempfile.mkdtemp(prefix="hg_npm_")
+                # Prefix: install native build tools, then emit node/npm versions
+                _native_prefix = (
+                    "apk add --no-cache python3 make g++ >/dev/null 2>&1 && "
+                    "node --version && npm --version && "
+                )
+                _env_flags = _docker_env_flags(data.env_vars)
+
+                def _node_run(cmd: str, timeout: int = 300) -> subprocess.CompletedProcess:
+                    return subprocess.run(
                         ["docker", "run", "--rm",
                          "-v", f"{work_dir}:/app",
+                         "-v", f"{_npm_log_dir}:/root/.npm/_logs",
                          "-w", "/app",
-                         *_docker_env_flags(data.env_vars),
+                         *_env_flags,
                          "node:20-alpine",
-                         "sh", "-c", _combined_cmd],
-                        capture_output=True, text=True, timeout=300,
+                         "sh", "-c", cmd],
+                        capture_output=True, text=True, timeout=timeout,
                     )
-                )
-                if _build_run.returncode != 0:
-                    _err = _build_run.stderr + _build_run.stdout
-                    _retry_reason: Optional[str] = None
-                    if "ERESOLVE" in _err:
-                        _retry_reason = "ERESOLVE"
-                        _retry_cmd = f"npm install --legacy-peer-deps && {build_cmd}"
-                        _build_run = await loop.run_in_executor(
-                            None,
-                            lambda: subprocess.run(
-                                ["docker", "run", "--rm",
-                                 "-v", f"{work_dir}:/app",
-                                 "-w", "/app",
-                                 *_docker_env_flags(data.env_vars),
-                                 "node:20-alpine",
-                                 "sh", "-c", _retry_cmd],
-                                capture_output=True, text=True, timeout=300,
-                            )
-                        )
-                        deploy_log["stages"]["build_retry"] = {"reason": "ERESOLVE", "cmd": "legacy-peer-deps"}
-                    elif "ERR_OSSL" in _err:
-                        _retry_reason = "ERR_OSSL"
-                        _retry_cmd = f"{install_cmd} && NODE_OPTIONS=--openssl-legacy-provider {build_cmd}"
-                        _build_run = await loop.run_in_executor(
-                            None,
-                            lambda: subprocess.run(
-                                ["docker", "run", "--rm",
-                                 "-v", f"{work_dir}:/app",
-                                 "-w", "/app",
-                                 *_docker_env_flags(data.env_vars),
-                                 "node:20-alpine",
-                                 "sh", "-c", _retry_cmd],
-                                capture_output=True, text=True, timeout=300,
-                            )
-                        )
-                        deploy_log["stages"]["build_retry"] = {"reason": "ERR_OSSL", "cmd": "openssl-legacy"}
 
+                _node_ver: Optional[str] = None
+                _npm_ver: Optional[str] = None
+
+                # Step 1a — npm install
+                _install_run = await loop.run_in_executor(
+                    None, lambda: _node_run(f"{_native_prefix}{install_cmd}")
+                )
+                _node_ver, _npm_ver = _parse_versions(_install_run.stdout)
+                deploy_log["stages"]["npm_install"] = {
+                    "ok":     _install_run.returncode == 0,
+                    "stdout": _install_run.stdout[-3000:],
+                    "stderr": _install_run.stderr[-3000:],
+                }
+
+                if _install_run.returncode != 0:
+                    _iout = _install_run.stderr + _install_run.stdout
+                    if "ERESOLVE" in _iout:
+                        _retry_install = await loop.run_in_executor(
+                            None,
+                            lambda: _node_run(
+                                f"{_native_prefix}npm install --legacy-peer-deps"
+                            ),
+                        )
+                        deploy_log["stages"]["npm_install_retry"] = {
+                            "reason": "ERESOLVE", "cmd": "legacy-peer-deps",
+                            "ok": _retry_install.returncode == 0,
+                        }
+                        _install_run = _retry_install
+
+                if _install_run.returncode != 0:
+                    _iout = _install_run.stderr + _install_run.stdout
+                    _icode, _idetail, _ifix = classify_npm_failure(_iout, stage="dependency_install")
+                    _ilog = read_npm_log(extract_npm_log_path(_iout), _npm_log_dir)
+                    raise DeployError(
+                        code=_icode, stage="dependency_install",
+                        detail=_idetail, suggested_fix=_ifix,
+                        technical_detail=_iout[-400:],
+                        evidence={
+                            "install_cmd":      install_cmd,
+                            "node_version":     _node_ver,
+                            "npm_version":      _npm_ver,
+                            "suspected_package": extract_suspected_package(_iout),
+                            "stdout_tail":      _install_run.stdout[-2000:],
+                            "stderr_tail":      _install_run.stderr[-2000:],
+                            **_ilog,
+                        },
+                    )
+
+                # Step 1b — npm run build
+                _build_run = await loop.run_in_executor(
+                    None, lambda: _node_run(f"{_native_prefix}{build_cmd}")
+                )
                 deploy_log["stages"]["build"] = {
                     "ok":     _build_run.returncode == 0,
                     "stdout": _build_run.stdout[-3000:],
                     "stderr": _build_run.stderr[-3000:],
                 }
+
                 if _build_run.returncode != 0:
-                    _build_out = (_build_run.stderr or _build_run.stdout)[-400:]
-                    if _retry_reason == "ERESOLVE":
-                        raise DeployError(
-                            code=NPM_PEER_DEP_FAILED, stage="dependency_install",
-                            detail="Las dependencias tienen conflictos de peer dependencies.",
-                            suggested_fix="Revisá package.json y package-lock.json. Intentá actualizar las dependencias conflictivas.",
-                            technical_detail=_build_out,
-                            evidence={"retry_used": "legacy-peer-deps"},
+                    _bout = _build_run.stderr + _build_run.stdout
+                    if "ERR_OSSL" in _bout:
+                        _openssl_cmd = (
+                            f"{_native_prefix}"
+                            f"NODE_OPTIONS=--openssl-legacy-provider {build_cmd}"
                         )
-                    if _retry_reason == "ERR_OSSL":
-                        raise DeployError(
-                            code=OPENSSL_BUILD_FAILED, stage="build",
-                            detail="El build falló por compatibilidad OpenSSL/Node.",
-                            suggested_fix="Intentamos con NODE_OPTIONS=--openssl-legacy-provider. Si persiste, actualizá las dependencias a versiones compatibles con Node 20.",
-                            technical_detail=_build_out,
-                            evidence={"retry_used": "openssl-legacy-provider"},
+                        _retry_build = await loop.run_in_executor(
+                            None, lambda: _node_run(_openssl_cmd)
                         )
+                        deploy_log["stages"]["build_retry"] = {
+                            "reason": "ERR_OSSL", "cmd": "openssl-legacy",
+                            "ok": _retry_build.returncode == 0,
+                        }
+                        _build_run = _retry_build
+
+                if _build_run.returncode != 0:
+                    _bout = _build_run.stderr + _build_run.stdout
+                    _bcode, _bdetail, _bfix = classify_npm_failure(_bout, stage="build")
+                    _blog = read_npm_log(extract_npm_log_path(_bout), _npm_log_dir)
                     raise DeployError(
-                        code=BUILD_FAILED, stage="build",
-                        detail="El comando de build falló.",
-                        suggested_fix="Ejecutá npm run build localmente y corregí los errores antes de volver a deployar.",
-                        technical_detail=_build_out,
-                        evidence={"install_cmd": install_cmd, "build_cmd": build_cmd},
+                        code=_bcode, stage="build",
+                        detail=_bdetail, suggested_fix=_bfix,
+                        technical_detail=_bout[-400:],
+                        evidence={
+                            "build_cmd":        build_cmd,
+                            "node_version":     _node_ver,
+                            "npm_version":      _npm_ver,
+                            "suspected_package": extract_suspected_package(_bout),
+                            "stdout_tail":      _build_run.stdout[-2000:],
+                            "stderr_tail":      _build_run.stderr[-2000:],
+                            **_blog,
+                        },
                     )
 
                 # Phase 2 — find index.html in build output
