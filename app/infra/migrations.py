@@ -839,6 +839,74 @@ _INDEXES = [
          AND a.hosting_id IS NOT NULL
          AND a.event_id  < b.event_id""",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_open_wp_security_event ON security_events (event_type, hosting_id) WHERE status = 'open'",
+
+    # ── AI Eyes Layer — Phase 1 ───────────────────────────────────────────────
+
+    # decision_events: referenced by app/infra/audit/repository.py but never created
+    """CREATE TABLE IF NOT EXISTS decision_events (
+        event_id                 TEXT PRIMARY KEY,
+        timestamp                TIMESTAMPTZ NOT NULL,
+        tenant_id                TEXT NOT NULL,
+        decision_id              TEXT UNIQUE,
+        overall_status           TEXT,
+        confidence_level         REAL,
+        requires_human_attention INTEGER DEFAULT 0,
+        payload_min              JSONB DEFAULT '{}',
+        version                  INTEGER DEFAULT 1
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_decision_events_tenant ON decision_events(tenant_id, timestamp DESC)",
+
+    # system_incidents: unified incident feed for AI diagnosis
+    """CREATE TABLE IF NOT EXISTS system_incidents (
+        incident_id     BIGSERIAL PRIMARY KEY,
+        source_table    TEXT NOT NULL,
+        source_id       TEXT NOT NULL,
+        source_type     TEXT NOT NULL,
+        correlation_key TEXT NOT NULL,
+        incident_type   TEXT NOT NULL,
+        severity        TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'open',
+        hosting_id      INTEGER REFERENCES hostings(hosting_id) ON DELETE SET NULL,
+        user_id         INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+        title           TEXT NOT NULL,
+        summary         TEXT,
+        evidence        JSONB DEFAULT '{}',
+        count           INTEGER DEFAULT 1,
+        first_seen      TIMESTAMPTZ DEFAULT NOW(),
+        last_seen       TIMESTAMPTZ DEFAULT NOW(),
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ DEFAULT NOW(),
+        resolved_at     TIMESTAMPTZ
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_system_incidents_open ON system_incidents(correlation_key) WHERE status = 'open'",
+    "CREATE INDEX IF NOT EXISTS idx_system_incidents_status ON system_incidents(status)",
+    "CREATE INDEX IF NOT EXISTS idx_system_incidents_severity ON system_incidents(severity, last_seen DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_system_incidents_hosting ON system_incidents(hosting_id, last_seen DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_system_incidents_type ON system_incidents(incident_type, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_system_incidents_last_seen ON system_incidents(last_seen DESC)",
+
+    # ai_diagnosis: add incident_id FK (nullable — existing rows have no incident)
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS incident_id BIGINT REFERENCES system_incidents(incident_id) ON DELETE SET NULL",
+    "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_incident ON ai_diagnosis(incident_id) WHERE incident_id IS NOT NULL",
+
+    # action_recommendations: human-approval queue for AI-proposed actions
+    """CREATE TABLE IF NOT EXISTS action_recommendations (
+        action_id          BIGSERIAL PRIMARY KEY,
+        incident_id        BIGINT NOT NULL REFERENCES system_incidents(incident_id) ON DELETE CASCADE,
+        action_type        TEXT NOT NULL,
+        title              TEXT NOT NULL,
+        description        TEXT,
+        command_or_payload JSONB DEFAULT '{}',
+        risk_level         TEXT NOT NULL,
+        requires_approval  BOOLEAN DEFAULT TRUE,
+        status             TEXT NOT NULL DEFAULT 'pending',
+        approved_by        INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+        approved_at        TIMESTAMPTZ,
+        executed_at        TIMESTAMPTZ,
+        created_at         TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_action_recs_incident ON action_recommendations(incident_id)",
+    "CREATE INDEX IF NOT EXISTS idx_action_recs_status ON action_recommendations(status, created_at DESC)",
 ]
 
 def ensure_monthly_partitions(cursor):

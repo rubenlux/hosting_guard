@@ -86,6 +86,7 @@ async def _main() -> None:
     from app.services.collect_wp_log_attacks import collect_wp_log_attacks
     from app.services.aggregate_wp_attacks import aggregate_wp_attacks
     from app.services.domain_checker import check_pending_domains
+    from app.services.sync_incidents_feed import sync_incidents_feed
     from app.api.config import ENABLE_CAPACITY_FORECAST
 
     # Single pass of the intelligent orchestrator (throttle / autoscale / restart).
@@ -115,6 +116,7 @@ async def _main() -> None:
     schedule_job(aggregate_wp_attacks,           interval=65,  initial_delay=25)  # runs after collector
     schedule_job(poll_prometheus_alerts,         interval=60)      # 1 min
     schedule_job(collect_resource_usage,         interval=60)      # 60 s — CPU/RAM per container
+    schedule_job(sync_incidents_feed,            interval=120)     # 2 min — AI Eyes bridge
     # ── Every 5 minutes ──────────────────────────────────────────────────────
     schedule_job(collect_traffic,                interval=300)     # 5 min
     schedule_job(check_all_hostings,             interval=300)     # 5 min
@@ -130,7 +132,7 @@ async def _main() -> None:
     schedule_job(cleanup_sessions,               interval=86400)   # 24 h
     schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
-    base_count = 17
+    base_count = 18
     if ENABLE_CAPACITY_FORECAST:
         def _run_capacity_forecast():
             try:
