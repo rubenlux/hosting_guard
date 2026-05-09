@@ -484,3 +484,25 @@ Frontend `frontend/src/components/dashboard/sections/ConfigSection.jsx`:
 ### Estado de tests al cierre
 - **258 passed, 1 skipped**
 - Pendiente producción: rebuild del container scheduler para desplegar `collect_wp_log_attacks.py` con `actor_type='external'` y metadata enriquecida. Eventos previos en DB quedan con `actor_type=user` y `metadata={}` (no se modifican retroactivamente).
+
+-----------
+
+40/40. All green.
+
+Here's a summary of the three fixes:
+
+Bug 1 — deleted hosting false positives (_sync_site_alerts)
+
+Changed LEFT JOIN → INNER JOIN hostings + WHERE h.status IN ('active', 'starting', 'stopped', 'error') — deleted hostings are filtered in SQL, never reach the upsert loop
+Added a cleanup query that finds open system_incidents for deleted hostings and resolves them with {"resolved_reason": "hosting_deleted", "resolved_by": "sync_incidents_feed"}
+Bug 2 — resolved sync not closing incidents (_sync_security_events)
+
+Added LEFT JOIN hostings to the open events query to exclude events for deleted hostings at source
+Added the same deleted-hosting cleanup query as site_alerts
+By-absence resolution now passes {"resolved_by": "sync_incidents_feed", "source_status": "not_in_open_set"} so you can see in evidence why it was resolved
+_resolve_incident extended with optional extra_evidence that does evidence || extra::jsonb
+Bug 3 — decision_events schema mismatch
+
+Added 8 ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS statements: user_id, actor_type, action_type, target_type, target_id, decision, reason, metadata. All nullable/defaulted — existing pipeline rows unaffected.
+Deploy: sudo git pull origin main && sudo docker compose build scheduler && sudo docker compose up -d scheduler. The init_db() call at scheduler startup will run the ALTER TABLEs idempotently.
+

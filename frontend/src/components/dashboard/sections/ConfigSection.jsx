@@ -159,7 +159,15 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction, onHost
   const [dangerDone,       setDangerDone]       = useState('');
 
   useEffect(() => {
-    if (initialDangerHostingId) setDangerHosting(String(initialDangerHostingId));
+    if (initialDangerHostingId) {
+      setDangerHosting(String(initialDangerHostingId));
+      setDangerPhase(0);
+      setDangerConfirmTxt('');
+      setDangerReason('');
+      setDangerDesc('');
+      setDangerErr('');
+      setDangerDone('');
+    }
   }, [initialDangerHostingId]);
 
   const selectedHostingObj = hostings.find(h => String(h.hosting_id) === String(dangerHosting)) || null;

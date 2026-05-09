@@ -7,6 +7,7 @@ import secrets
 import shutil
 import stat
 import zipfile
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -111,11 +112,73 @@ def _safe_extract_zip(zf: zipfile.ZipFile, extracted_dir: Path) -> None:
 def _find_serve_dir(site_dir: str) -> str:
     # "public" is intentionally excluded — it's a CRA source template, not a build output
     for subdir in ["dist", "build", "www", "_site", "frontend/dist", "out"]:
-        candidate = f"{site_dir}/{subdir}"
-        if os.path.exists(f"{candidate}/index.html"):
+        candidate = os.path.join(site_dir, subdir)
+        if os.path.exists(os.path.join(candidate, "index.html")):
             return candidate
     return site_dir
 
+
+# ── GitHub-deploy autodetection helpers ──────────────────────────────────────
+
+_PKG_SEARCH_DIRS = [
+    ".", "client", "frontend", "app", "web", "site",
+    "apps/web", "apps/frontend", "packages/web", "packages/frontend",
+]
+
+# Dependencies that positively identify a web frontend project
+_WEB_BUILDABLE_DEPS = frozenset([
+    "react", "vue", "svelte", "solid-js", "preact",
+    "react-scripts",
+    "vite", "next", "nuxt", "@sveltejs/kit", "astro",
+    "@angular/core",
+])
+
+
+def _read_pkg(directory: str) -> dict:
+    try:
+        with open(os.path.join(directory, "package.json")) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _is_web_buildable(pkg: dict) -> bool:
+    if not pkg or "build" not in pkg.get("scripts", {}):
+        return False
+    all_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+    return bool(_WEB_BUILDABLE_DEPS & set(all_deps))
+
+
+def _detect_out_dir(pkg: dict) -> Optional[str]:
+    all_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+    build_script = pkg.get("scripts", {}).get("build", "")
+    if "react-scripts" in all_deps or "react-scripts" in build_script:
+        return "build"
+    if "vite" in all_deps or "vite" in build_script or "astro" in all_deps:
+        return "dist"
+    if "next" in all_deps:
+        return "out"
+    if "nuxt" in all_deps:
+        return "dist"
+    return None
+
+
+def _find_buildable_roots(site_dir: str) -> list:
+    """Return [(rel_path, pkg_dict)] for each subdir containing a web-buildable package.json."""
+    results = []
+    seen: set = set()
+    for rel in _PKG_SEARCH_DIRS:
+        candidate = os.path.join(site_dir, rel) if rel != "." else site_dir
+        if not os.path.isdir(candidate):
+            continue
+        real_c = os.path.realpath(candidate)
+        if real_c in seen:
+            continue
+        seen.add(real_c)
+        pkg = _read_pkg(candidate)
+        if _is_web_buildable(pkg):
+            results.append((rel, pkg))
+    return results
 
 
 def _validate_project_name(name: str) -> None:
@@ -1037,51 +1100,62 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
 
         else:
             # Strategy C: static or Node build → nginx serve
-            import json as _json
             pkg = {}
             has_package_json = False
-            pkg_path = os.path.join(work_dir, "package.json")
-            if os.path.exists(pkg_path):
-                try:
-                    with open(pkg_path) as f:
-                        pkg = _json.load(f)
-                    scripts  = pkg.get("scripts", {})
-                    all_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-                    has_package_json = (
-                        data.build_command is not None or
-                        ("build" in scripts and any(
-                            k in all_deps for k in ["react", "vue", "vite", "next", "nuxt", "svelte"]
-                        ))
+            if os.path.exists(os.path.join(work_dir, "package.json")):
+                pkg = _read_pkg(work_dir)
+                scripts  = pkg.get("scripts", {})
+                all_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                has_package_json = (
+                    data.build_command is not None or
+                    ("build" in scripts and bool(_WEB_BUILDABLE_DEPS & set(all_deps)))
+                )
+            elif not data.root_directory:
+                # No package.json at repo root — scan known subdirs for a web frontend
+                _candidates = _find_buildable_roots(work_dir)
+                if len(_candidates) == 1:
+                    _auto_root, pkg = _candidates[0]
+                    work_dir   = os.path.join(site_dir, _auto_root) if _auto_root != "." else site_dir
+                    _real_work = os.path.realpath(work_dir)
+                    has_package_json = True
+                    deploy_log["stages"]["autodetect"] = {"root_directory": _auto_root}
+                    logger.info("deploy_from_github: autodetected root_directory=%s", _auto_root)
+                elif len(_candidates) > 1:
+                    _opts = ", ".join(r for r, _ in _candidates)
+                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Encontramos varios proyectos posibles: {_opts}. "
+                            "Elige Root Directory en la configuración avanzada."
+                        ),
                     )
-                except Exception:
-                    pkg = {}
-                    has_package_json = False
+                else:
+                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "No encontramos una app web desplegable en este repo. "
+                            "Asegúrate de que contenga un package.json con script build "
+                            "y dependencias como react, vite, vue, next, astro, etc."
+                        ),
+                    )
 
             if has_package_json:
                 install_cmd = data.install_command or "npm install"
                 build_cmd   = data.build_command   or "npm run build"
-
-                # Auto-detect output dir from package.json when not specified
-                all_deps    = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-                build_script = pkg.get("scripts", {}).get("build", "")
-                if data.output_directory:
-                    out_dir = data.output_directory
-                elif "react-scripts" in all_deps or "react-scripts" in build_script:
-                    out_dir = "build"
-                elif "vite" in all_deps or "vite" in build_script:
-                    out_dir = "dist"
-                else:
-                    out_dir = None  # resolved after build
+                out_dir     = data.output_directory or _detect_out_dir(pkg)
 
                 deploy_log["stages"]["build_info"] = {
-                    "root_directory":   data.root_directory or ".",
+                    "root_directory":   os.path.relpath(work_dir, site_dir),
                     "package_json":     True,
                     "install_command":  install_cmd,
                     "build_command":    build_cmd,
                     "output_directory": out_dir or "(auto-detect after build)",
                 }
 
-                # Phase 1 — build synchronously in a disposable container
+                # Phase 1 — install + build with smart retries
+                _combined_cmd = f"{install_cmd} && {build_cmd}"
                 _build_run = await loop.run_in_executor(
                     None,
                     lambda: subprocess.run(
@@ -1090,10 +1164,43 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                          "-w", "/app",
                          *_docker_env_flags(data.env_vars),
                          "node:20-alpine",
-                         "sh", "-c", f"{install_cmd} && {build_cmd}"],
-                        capture_output=True, text=True, timeout=300
+                         "sh", "-c", _combined_cmd],
+                        capture_output=True, text=True, timeout=300,
                     )
                 )
+                if _build_run.returncode != 0:
+                    _err = _build_run.stderr + _build_run.stdout
+                    if "ERESOLVE" in _err:
+                        _retry_cmd = f"npm install --legacy-peer-deps && {build_cmd}"
+                        _build_run = await loop.run_in_executor(
+                            None,
+                            lambda: subprocess.run(
+                                ["docker", "run", "--rm",
+                                 "-v", f"{work_dir}:/app",
+                                 "-w", "/app",
+                                 *_docker_env_flags(data.env_vars),
+                                 "node:20-alpine",
+                                 "sh", "-c", _retry_cmd],
+                                capture_output=True, text=True, timeout=300,
+                            )
+                        )
+                        deploy_log["stages"]["build_retry"] = {"reason": "ERESOLVE", "cmd": "legacy-peer-deps"}
+                    elif "ERR_OSSL" in _err:
+                        _retry_cmd = f"{install_cmd} && NODE_OPTIONS=--openssl-legacy-provider {build_cmd}"
+                        _build_run = await loop.run_in_executor(
+                            None,
+                            lambda: subprocess.run(
+                                ["docker", "run", "--rm",
+                                 "-v", f"{work_dir}:/app",
+                                 "-w", "/app",
+                                 *_docker_env_flags(data.env_vars),
+                                 "node:20-alpine",
+                                 "sh", "-c", _retry_cmd],
+                                capture_output=True, text=True, timeout=300,
+                            )
+                        )
+                        deploy_log["stages"]["build_retry"] = {"reason": "ERR_OSSL", "cmd": "openssl-legacy"}
+
                 deploy_log["stages"]["build"] = {
                     "ok":     _build_run.returncode == 0,
                     "stdout": _build_run.stdout[-3000:],
@@ -1101,32 +1208,56 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 }
                 if _build_run.returncode != 0:
                     await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
-                    raise HTTPException(status_code=500,
-                        detail=f"Build error: {_build_run.stderr[-500:]}")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Build falló. Revisa los logs del build.\n"
+                            f"{(_build_run.stderr or _build_run.stdout)[-400:]}"
+                        ),
+                    )
 
-                # Phase 2 — validate output: index.html must exist
+                # Phase 2 — find index.html in build output
                 if out_dir:
-                    _has_index = os.path.exists(os.path.join(work_dir, out_dir, "index.html"))
+                    _found_dirs = (
+                        [out_dir]
+                        if os.path.exists(os.path.join(work_dir, out_dir, "index.html"))
+                        else []
+                    )
                 else:
-                    _has_index = False
-                    for _cand in ["build", "dist", "out", "_site"]:
-                        if os.path.exists(os.path.join(work_dir, _cand, "index.html")):
-                            out_dir    = _cand
-                            _has_index = True
-                            break
+                    _found_dirs = [
+                        d for d in ["build", "dist", "out", "public"]
+                        if os.path.exists(os.path.join(work_dir, d, "index.html"))
+                    ]
+                    if _found_dirs:
+                        out_dir = _found_dirs[0]
 
                 deploy_log["stages"]["output_check"] = {
-                    "output_directory": out_dir,
-                    "index_html_found": _has_index,
+                    "output_directory":  out_dir,
+                    "candidates_found":  _found_dirs,
+                    "index_html_found":  len(_found_dirs) > 0,
                 }
 
-                if not _has_index:
+                if len(_found_dirs) > 1:
                     await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
-                    raise HTTPException(status_code=500, detail=(
-                        f"No encontramos index.html en el output configurado "
-                        f"({out_dir or 'ninguno'}). "
-                        "En Create React App normalmente es build; en Vite normalmente es dist."
-                    ))
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Build completado pero se encontraron varios directorios de salida: "
+                            f"{', '.join(_found_dirs)}. "
+                            "Especifica output_directory en la configuración avanzada."
+                        ),
+                    )
+                if not _found_dirs:
+                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Build completado pero no se encontró index.html "
+                            f"({out_dir or 'ningún directorio de salida detectado'}). "
+                            "Create React App genera build/; Vite genera dist/. "
+                            "Especifica output_directory en la configuración avanzada."
+                        ),
+                    )
 
                 # Phase 3 — serve built assets with nginx
                 serve_root  = os.path.join(work_dir, out_dir)
@@ -1135,7 +1266,7 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
                     raise HTTPException(status_code=400, detail="output_directory no puede salir de root_directory")
 
-                _resolved_out_dir = out_dir  # saved for git_config below
+                _resolved_out_dir = out_dir
                 command = [
                     "run", "-d",
                     "--name",    container_name,
