@@ -1,9 +1,85 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github, ChevronDown, ChevronUp, X, Clock, AlertTriangle, Wrench, Info } from 'lucide-react';
 import { createHosting, createWordPress, deployFromGithub } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
+
+// ── Deploy diagnostic cards ───────────────────────────────────────────────────
+
+function RateLimitCard({ detail, countdown }) {
+  const mins = Math.ceil(countdown / 60);
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-3 text-yellow-400 font-bold text-sm">
+        <Clock className="w-5 h-5 shrink-0" />
+        Límite temporal alcanzado
+      </div>
+      <p className="text-gray-300 text-sm">{detail}</p>
+      {countdown > 0 && (
+        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl px-4 py-2 text-yellow-300 font-mono text-sm text-center">
+          Podés volver a intentar en {countdown >= 60 ? `${mins} min` : `${countdown}s`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiagnosticCard({ result }) {
+  const [expanded, setExpanded] = useState(false);
+  const { code, stage, detail, suggestedFix, techDetail, evidence, requestId } = result;
+  const hasExtra = techDetail || evidence || requestId;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-start gap-3 text-red-400 font-bold text-sm">
+        <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+        Deploy no completado
+      </div>
+
+      <p className="text-gray-200 text-sm leading-relaxed">{detail}</p>
+
+      {suggestedFix && (
+        <div className="flex items-start gap-2 bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3">
+          <Wrench className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+          <p className="text-blue-300 text-xs leading-relaxed">{suggestedFix}</p>
+        </div>
+      )}
+
+      {hasExtra && (
+        <button
+          type="button"
+          onClick={() => setExpanded(e => !e)}
+          className="flex items-center gap-1 text-gray-500 hover:text-gray-300 text-xs transition-colors w-fit"
+        >
+          <Info className="w-3.5 h-3.5" />
+          {expanded ? 'Ocultar detalles técnicos' : 'Ver detalles técnicos'}
+          {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        </button>
+      )}
+
+      {expanded && hasExtra && (
+        <div className="bg-black/40 border border-white/8 rounded-xl p-3 font-mono text-xs text-gray-400 space-y-1 max-h-40 overflow-y-auto">
+          {code    && <div><span className="text-gray-600">code:</span>   <span className="text-red-400">{code}</span></div>}
+          {stage   && <div><span className="text-gray-600">stage:</span>  <span className="text-yellow-400">{stage}</span></div>}
+          {requestId && <div><span className="text-gray-600">request_id:</span> {requestId}</div>}
+          {techDetail && (
+            <div className="whitespace-pre-wrap break-all text-gray-500 border-t border-white/5 pt-1 mt-1">
+              {techDetail}
+            </div>
+          )}
+          {evidence && Object.keys(evidence).length > 0 && (
+            <div className="whitespace-pre-wrap break-all text-gray-500 border-t border-white/5 pt-1 mt-1">
+              {JSON.stringify(evidence, null, 2)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 const PLAN_LABELS = {
   free:     'Gratis',
@@ -59,6 +135,13 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
   const [envVars, setEnvVars] = useState([{ key: '', value: '' }]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
+  const [retryCountdown, setRetryCountdown] = useState(0);
+
+  useEffect(() => {
+    if (retryCountdown <= 0) return;
+    const t = setTimeout(() => setRetryCountdown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [retryCountdown]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -94,24 +177,44 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
         setTimeout(() => onSuccess(), 2000);
       }
     } catch (err) {
-      const status = err.response?.status;
-      const detail = err.response?.data?.detail || '';
-      const code   = err.response?.data?.code   || '';
-      let errorMsg = 'Error al crear el proyecto. Inténtalo de nuevo.';
+      const status       = err.response?.status;
+      const data         = err.response?.data || {};
+      const detail       = data.detail || '';
+      const code         = data.code   || '';
+      const stage        = data.stage  || '';
+      const suggestedFix = data.suggested_fix || '';
+      const techDetail   = data.technical_detail || '';
+      const evidence     = data.evidence || null;
+      const retryAfter   = data.retry_after_seconds || 0;
+      const requestId    = data.request_id || '';
+
       if (status === 429 || code === 'deploy_rate_limit_exceeded') {
-        errorMsg = detail || 'Alcanzaste el límite de deploys por hora. Esperá unos minutos antes de volver a intentar.';
-      } else if (detail.includes('ya existe') || detail.includes('already exists')) {
-        errorMsg = 'Ya existe un proyecto con ese nombre.';
-      } else if (detail.includes('plan') || detail.includes('suscripción')) {
-        errorMsg = 'Tu plan actual no permite esta acción. Actualiza tu suscripción.';
-      } else if (detail.includes('IP') || detail.includes('free')) {
-        errorMsg = 'Solo se permite un alojamiento gratuito por dirección IP.';
-      } else if (detail.includes('nombre') || detail.includes('inválido')) {
-        errorMsg = 'Nombre de proyecto inválido. Usa solo letras, números y guiones.';
-      } else if (detail && (status === 422 || status === 400)) {
-        errorMsg = detail;
+        if (retryAfter > 0) setRetryCountdown(retryAfter);
+        setResult({
+          success: false,
+          isRateLimit: true,
+          detail: detail || 'Alcanzaste el límite de deploys por hora. Esperá unos minutos antes de volver a intentar.',
+          retryAfter,
+        });
+      } else if (code && stage) {
+        // Structured deploy diagnostic error
+        setResult({ success: false, isDiagnostic: true, code, stage, detail, suggestedFix, techDetail, evidence, requestId });
+      } else {
+        // Fallback: legacy / validation errors
+        let errorMsg = 'Error al crear el proyecto. Inténtalo de nuevo.';
+        if (detail.includes('ya existe') || detail.includes('already exists')) {
+          errorMsg = 'Ya existe un proyecto con ese nombre.';
+        } else if (detail.includes('plan') || detail.includes('suscripción')) {
+          errorMsg = 'Tu plan actual no permite esta acción. Actualiza tu suscripción.';
+        } else if (detail.includes('IP') || detail.includes('free')) {
+          errorMsg = 'Solo se permite un alojamiento gratuito por dirección IP.';
+        } else if (detail.includes('nombre') || detail.includes('inválido')) {
+          errorMsg = 'Nombre de proyecto inválido. Usa solo letras, números y guiones.';
+        } else if (detail && (status === 422 || status === 400)) {
+          errorMsg = detail;
+        }
+        setResult({ success: false, error: errorMsg });
       }
-      setResult({ success: false, error: errorMsg });
     } finally {
       setLoading(false);
     }
@@ -351,9 +454,13 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
                     )}
                   </div>
                 </div>
+              ) : result.isRateLimit ? (
+                <RateLimitCard detail={result.detail} countdown={retryCountdown} />
+              ) : result.isDiagnostic ? (
+                <DiagnosticCard result={result} />
               ) : (
                 <div className="text-red-400 flex items-center gap-3 font-medium text-sm">
-                  <Zap className="w-6 h-6" /> Error: {result.error}
+                  <Zap className="w-6 h-6" /> {result.error}
                 </div>
               )}
             </motion.div>

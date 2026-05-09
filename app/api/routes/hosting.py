@@ -14,9 +14,22 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app.api.security import verify_token, require_support_write
 from app.api.rate_limit import limiter, get_deploy_rate_limit
+from app.services.deploy_diagnostics import (
+    DeployError,
+    record_deploy_event,
+    deploy_severity,
+    GITHUB_REPO_NOT_FOUND, GITHUB_BRANCH_NOT_FOUND, GITHUB_CLONE_FAILED,
+    PACKAGE_JSON_NOT_FOUND, MULTIPLE_PROJECT_ROOTS,
+    NPM_INSTALL_FAILED, NPM_PEER_DEP_FAILED,
+    BUILD_FAILED, OPENSSL_BUILD_FAILED,
+    INDEX_HTML_NOT_FOUND,
+    CONTAINER_START_FAILED,
+    UNKNOWN_DEPLOY_ERROR,
+)
 from app.api.saturation_guard import docker_capacity, docker_op
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.user_repository import UserRepository
@@ -965,6 +978,36 @@ def _traefik_labels(container_name: str, subdomain: str, port: int) -> list:
 @router.post("/deploy-from-github")
 @limiter.limit(get_deploy_rate_limit)
 async def deploy_from_github(data: GitDeployRequest, request: Request, user: dict = Depends(verify_token)):
+    loop = asyncio.get_running_loop()
+
+    # Resource state — read by _do_cleanup in exception handlers
+    container_name: str          = ""
+    site_dir: str                = ""
+    _site_created: bool          = False
+    _container_created: bool     = False
+    _hosting_id: Optional[int]   = None
+    _detected: dict              = {}
+
+    async def _do_cleanup() -> dict:
+        cs: dict = {"hosting_row": "not_created", "container": "not_created", "client_dir": "not_removed"}
+        if _container_created and container_name:
+            r = await loop.run_in_executor(None, lambda: subprocess.run(
+                ["docker", "rm", "-f", container_name], capture_output=True
+            ))
+            cs["container"] = "removed" if r.returncode == 0 else "failed"
+        if _site_created and site_dir:
+            r = await loop.run_in_executor(None, lambda: subprocess.run(
+                ["rm", "-rf", site_dir], capture_output=True
+            ))
+            cs["client_dir"] = "removed" if r.returncode == 0 else "failed"
+        if _hosting_id:
+            try:
+                hosting_repo.delete_hosting(_hosting_id)
+                cs["hosting_row"] = "deleted"
+            except Exception:
+                cs["hosting_row"] = "failed"
+        return cs
+
     try:
         _validate_project_name(data.name)
         _validate_repo_url(data.repo_url)
@@ -1004,8 +1047,6 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
             _enforce_free_plan_policy(int(user_id), data.plan)
             _enforce_plan_container_limit(int(user_id), data.plan)
 
-        loop = asyncio.get_running_loop()
-
         # ── Stage 1: Clone ───────────────────────────────────────────────────
         clone_result = await loop.run_in_executor(
             None,
@@ -1014,13 +1055,34 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 capture_output=True, text=True, timeout=60
             )
         )
+        _site_created = True  # git clone may create the dir even on failure
         deploy_log["stages"]["clone"] = {
             "ok": clone_result.returncode == 0,
             "stdout": clone_result.stdout[-2000:],
             "stderr": clone_result.stderr[-2000:],
         }
         if clone_result.returncode != 0:
-            raise HTTPException(status_code=400, detail=f"Error clonando repo: {clone_result.stderr}")
+            _err = clone_result.stderr.lower()
+            if "repository not found" in _err or ("not found" in _err and "repository" in _err):
+                raise DeployError(
+                    code=GITHUB_REPO_NOT_FOUND, stage="clone",
+                    detail="No encontramos el repositorio. Verificá que la URL sea correcta y que el repo sea público.",
+                    suggested_fix="Comprobá la URL del repositorio y que sea accesible públicamente.",
+                    technical_detail=clone_result.stderr[-400:],
+                )
+            if "remote branch" in _err or "pathspec" in _err or "couldn't find remote ref" in _err:
+                raise DeployError(
+                    code=GITHUB_BRANCH_NOT_FOUND, stage="clone",
+                    detail=f"No encontramos la rama '{data.branch}' en el repositorio.",
+                    suggested_fix="Verificá el nombre de la rama. Las ramas más comunes son 'main' y 'master'.",
+                    technical_detail=clone_result.stderr[-400:],
+                )
+            raise DeployError(
+                code=GITHUB_CLONE_FAILED, stage="clone",
+                detail="No pudimos clonar el repositorio.",
+                suggested_fix="Verificá que la URL sea correcta, que el repo exista y que sea público.",
+                technical_detail=clone_result.stderr[-400:],
+            )
 
         # work_dir is the directory we install/build/run from
         work_dir = os.path.join(site_dir, data.root_directory) if data.root_directory else site_dir
@@ -1118,26 +1180,28 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     work_dir   = os.path.join(site_dir, _auto_root) if _auto_root != "." else site_dir
                     _real_work = os.path.realpath(work_dir)
                     has_package_json = True
+                    _detected["root_directory"] = _auto_root
                     deploy_log["stages"]["autodetect"] = {"root_directory": _auto_root}
-                    logger.info("deploy_from_github: autodetected root_directory=%s", _auto_root)
+                    logger.info(
+                        "github_deploy_stage stage=project_detection autodetected_root=%s repo=%s",
+                        _auto_root, data.repo_url,
+                    )
                 elif len(_candidates) > 1:
-                    _opts = ", ".join(r for r, _ in _candidates)
-                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(
-                            f"Encontramos varios proyectos posibles: {_opts}. "
-                            "Elige Root Directory en la configuración avanzada."
-                        ),
+                    _opts = [r for r, _ in _candidates]
+                    raise DeployError(
+                        code=MULTIPLE_PROJECT_ROOTS, stage="project_detection",
+                        detail=f"Encontramos varios proyectos posibles: {', '.join(_opts)}.",
+                        suggested_fix="Elige Root Directory en la configuración avanzada.",
+                        evidence={"candidates": _opts},
                     )
                 else:
-                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(
-                            "No encontramos una app web desplegable en este repo. "
-                            "Asegúrate de que contenga un package.json con script build "
-                            "y dependencias como react, vite, vue, next, astro, etc."
+                    raise DeployError(
+                        code=PACKAGE_JSON_NOT_FOUND, stage="project_detection",
+                        detail="No encontramos una app web desplegable en este repo.",
+                        suggested_fix=(
+                            "Verificá que el repositorio contenga un package.json con script build "
+                            "y dependencias como react, vite, vue, next o astro. "
+                            "Si la app está en una subcarpeta, configurá Root Directory."
                         ),
                     )
 
@@ -1145,14 +1209,35 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 install_cmd = data.install_command or "npm install"
                 build_cmd   = data.build_command   or "npm run build"
                 out_dir     = data.output_directory or _detect_out_dir(pkg)
+                _detected.setdefault("root_directory", data.root_directory or ".")
+                _detected["framework"]         = _detect_out_dir.__name__  # placeholder; real value below
+                _detected["output_directory"]  = out_dir or "(auto-detect after build)"
+
+                _fw = next(
+                    (fw for dep, fw in [
+                        ("react-scripts", "create-react-app"),
+                        ("vite",          "vite"),
+                        ("next",          "next.js"),
+                        ("nuxt",          "nuxt"),
+                        ("astro",         "astro"),
+                        ("svelte",        "@sveltejs/kit"),
+                    ] if dep in {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}),
+                    "unknown",
+                )
+                _detected["framework"] = _fw
 
                 deploy_log["stages"]["build_info"] = {
                     "root_directory":   os.path.relpath(work_dir, site_dir),
                     "package_json":     True,
+                    "framework":        _fw,
                     "install_command":  install_cmd,
                     "build_command":    build_cmd,
                     "output_directory": out_dir or "(auto-detect after build)",
                 }
+                logger.info(
+                    "github_deploy_stage stage=build_info repo=%s root=%s framework=%s output=%s",
+                    data.repo_url, _detected.get("root_directory"), _fw, out_dir,
+                )
 
                 # Phase 1 — install + build with smart retries
                 _combined_cmd = f"{install_cmd} && {build_cmd}"
@@ -1170,7 +1255,9 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 )
                 if _build_run.returncode != 0:
                     _err = _build_run.stderr + _build_run.stdout
+                    _retry_reason: Optional[str] = None
                     if "ERESOLVE" in _err:
+                        _retry_reason = "ERESOLVE"
                         _retry_cmd = f"npm install --legacy-peer-deps && {build_cmd}"
                         _build_run = await loop.run_in_executor(
                             None,
@@ -1186,6 +1273,7 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                         )
                         deploy_log["stages"]["build_retry"] = {"reason": "ERESOLVE", "cmd": "legacy-peer-deps"}
                     elif "ERR_OSSL" in _err:
+                        _retry_reason = "ERR_OSSL"
                         _retry_cmd = f"{install_cmd} && NODE_OPTIONS=--openssl-legacy-provider {build_cmd}"
                         _build_run = await loop.run_in_executor(
                             None,
@@ -1207,13 +1295,29 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     "stderr": _build_run.stderr[-3000:],
                 }
                 if _build_run.returncode != 0:
-                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(
-                            f"Build falló. Revisa los logs del build.\n"
-                            f"{(_build_run.stderr or _build_run.stdout)[-400:]}"
-                        ),
+                    _build_out = (_build_run.stderr or _build_run.stdout)[-400:]
+                    if _retry_reason == "ERESOLVE":
+                        raise DeployError(
+                            code=NPM_PEER_DEP_FAILED, stage="dependency_install",
+                            detail="Las dependencias tienen conflictos de peer dependencies.",
+                            suggested_fix="Revisá package.json y package-lock.json. Intentá actualizar las dependencias conflictivas.",
+                            technical_detail=_build_out,
+                            evidence={"retry_used": "legacy-peer-deps"},
+                        )
+                    if _retry_reason == "ERR_OSSL":
+                        raise DeployError(
+                            code=OPENSSL_BUILD_FAILED, stage="build",
+                            detail="El build falló por compatibilidad OpenSSL/Node.",
+                            suggested_fix="Intentamos con NODE_OPTIONS=--openssl-legacy-provider. Si persiste, actualizá las dependencias a versiones compatibles con Node 20.",
+                            technical_detail=_build_out,
+                            evidence={"retry_used": "openssl-legacy-provider"},
+                        )
+                    raise DeployError(
+                        code=BUILD_FAILED, stage="build",
+                        detail="El comando de build falló.",
+                        suggested_fix="Ejecutá npm run build localmente y corregí los errores antes de volver a deployar.",
+                        technical_detail=_build_out,
+                        evidence={"install_cmd": install_cmd, "build_cmd": build_cmd},
                     )
 
                 # Phase 2 — find index.html in build output
@@ -1238,25 +1342,29 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 }
 
                 if len(_found_dirs) > 1:
-                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(
-                            f"Build completado pero se encontraron varios directorios de salida: "
-                            f"{', '.join(_found_dirs)}. "
-                            "Especifica output_directory en la configuración avanzada."
-                        ),
+                    raise DeployError(
+                        code=INDEX_HTML_NOT_FOUND, stage="artifact_detection",
+                        detail=f"Build completado pero se encontraron varios directorios de salida: {', '.join(_found_dirs)}.",
+                        suggested_fix="Especifica output_directory en la configuración avanzada.",
+                        evidence={"checked_paths": _found_dirs},
                     )
                 if not _found_dirs:
-                    await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
-                    raise HTTPException(
-                        status_code=422,
+                    _checked = [
+                        os.path.join(os.path.relpath(work_dir, site_dir), d, "index.html")
+                        for d in ["build", "dist", "out", "public"]
+                    ]
+                    _detected["output_directory"] = out_dir or "not_detected"
+                    raise DeployError(
+                        code=INDEX_HTML_NOT_FOUND, stage="artifact_detection",
                         detail=(
                             f"Build completado pero no se encontró index.html "
-                            f"({out_dir or 'ningún directorio de salida detectado'}). "
+                            f"({out_dir or 'ningún directorio de salida detectado'})."
+                        ),
+                        suggested_fix=(
                             "Create React App genera build/; Vite genera dist/. "
                             "Especifica output_directory en la configuración avanzada."
                         ),
+                        evidence={"checked_paths": _checked},
                     )
 
                 # Phase 3 — serve built assets with nginx
@@ -1310,11 +1418,19 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     "nginx:alpine",
                 ]
 
+        _detected.setdefault("output_directory", _resolved_out_dir or ".")
+
         code, _, stderr = await run_docker_command_async(command, timeout=60)
         deploy_log["stages"]["container"] = {"ok": code == 0, "stderr": stderr[-2000:]}
         if code != 0:
-            await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
-            raise HTTPException(status_code=500, detail=f"Docker error: {stderr}")
+            raise DeployError(
+                code=CONTAINER_START_FAILED, stage="container_create",
+                detail="El contenedor no pudo iniciarse.",
+                suggested_fix="Revisa los logs del contenedor. Puede ser un problema de imagen o de puerto.",
+                technical_detail=stderr[-400:],
+                status_code=500,
+            )
+        _container_created = True
 
         hosting_id = hosting_repo.create_hosting(
             user_id=user_id,
@@ -1324,6 +1440,7 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
             plan=data.plan,
             ip_address=ip_address
         )
+        _hosting_id = hosting_id
 
         # Persist build config + generate webhook token
         import secrets as _secrets
@@ -1352,6 +1469,18 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
         deploy_log["finished_at"] = datetime.now().isoformat()
         hosting_repo.append_deploy_log(hosting_id, deploy_log)
 
+        record_deploy_event(
+            user_id=user_id, hosting_id=hosting_id,
+            repo_url=data.repo_url, branch=data.branch, project_name=project_name,
+            stage="success", status="success",
+            message="Deploy completado exitosamente.",
+            evidence=dict(_detected),
+        )
+        logger.info(
+            "github_deploy_stage stage=success repo=%s hosting_id=%s user=%s",
+            data.repo_url, hosting_id, user_id,
+        )
+
         return {
             "status":        "deployed",
             "type":          "github",
@@ -1364,10 +1493,35 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
             "note":          "Sitio desplegado desde GitHub. Listo en 30 segundos.",
         }
 
+    except DeployError as de:
+        cleanup_status = await _do_cleanup()
+        de.evidence["cleanup_status"] = cleanup_status
+        record_deploy_event(
+            user_id=user.get("user_id"), hosting_id=None,
+            repo_url=data.repo_url, branch=data.branch, project_name=data.name,
+            stage=de.stage, status="failed",
+            code=de.code, message=de.detail,
+            technical_detail=de.technical_detail, suggested_fix=de.suggested_fix,
+            evidence={**de.evidence, **_detected},
+            cleanup_status=cleanup_status,
+        )
+        logger.warning(
+            "github_deploy_failed stage=%s code=%s repo=%s user=%s",
+            de.stage, de.code, data.repo_url, user.get("user_id"),
+        )
+        return JSONResponse(
+            status_code=de.status_code,
+            content=de.to_dict(request_id=request.headers.get("X-Request-ID")),
+        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        cleanup_status = await _do_cleanup()
+        logger.exception(
+            "github_deploy_unexpected code=%s repo=%s user=%s",
+            UNKNOWN_DEPLOY_ERROR, data.repo_url, user.get("user_id"),
+        )
+        raise HTTPException(status_code=500, detail="Error interno inesperado en el deploy.")
 
 
 @router.post("/hostings/{hosting_id}/redeploy")

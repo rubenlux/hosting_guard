@@ -916,6 +916,28 @@ _INDEXES = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_action_recs_incident ON action_recommendations(incident_id)",
     "CREATE INDEX IF NOT EXISTS idx_action_recs_status ON action_recommendations(status, created_at DESC)",
+
+    # ── Deploy Events (diagnostic audit trail for GitHub Deploy) ─────────────
+    """CREATE TABLE IF NOT EXISTS deploy_events (
+        deploy_event_id  BIGSERIAL PRIMARY KEY,
+        user_id          INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+        hosting_id       INTEGER,
+        repo_url         TEXT    NOT NULL DEFAULT '',
+        branch           TEXT    NOT NULL DEFAULT 'main',
+        project_name     TEXT    NOT NULL DEFAULT '',
+        stage            TEXT    NOT NULL,
+        status           TEXT    NOT NULL,
+        code             TEXT,
+        message          TEXT,
+        technical_detail TEXT,
+        suggested_fix    TEXT,
+        evidence         JSONB   NOT NULL DEFAULT '{}',
+        cleanup_status   JSONB   NOT NULL DEFAULT '{}',
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_deploy_events_user    ON deploy_events(user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_deploy_events_status  ON deploy_events(status, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_deploy_events_code    ON deploy_events(code) WHERE code IS NOT NULL",
 ]
 
 def ensure_monthly_partitions(cursor):

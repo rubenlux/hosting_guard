@@ -1,5 +1,5 @@
 """
-AI Eyes Layer — Phase 1: Incident Feed Bridge
+AI Eyes Layer — Phase 1 + Deploy Incidents: Incident Feed Bridge
 
 Syncs open alerts from existing detection tables into system_incidents
 as a unified incident feed for AI diagnosis.
@@ -20,6 +20,7 @@ Resolve strategy:
 
 This job is ADDITIVE — it never modifies any source table.
 """
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -411,6 +412,118 @@ def _sync_system_alerts(conn) -> dict:
     return counts
 
 
+# ── Source D: deploy_events ───────────────────────────────────────────────────
+
+def _repo_hash(repo_url: str) -> str:
+    return hashlib.sha256(repo_url.encode()).hexdigest()[:12]
+
+
+def _sync_deploy_events(conn) -> dict:
+    """
+    Surface repeated deploy failures as system_incidents.
+
+    Correlation key: deploy:{code}:user:{user_id}:repo:{hash(repo_url)}
+    One incident per (user, repo, error-code) — deduped by partial unique index.
+    Resolves automatically when:
+      - A successful deploy_event follows the failure, OR
+      - No failure for this key in the last 7 days.
+    """
+    from app.services.deploy_diagnostics import deploy_severity
+
+    counts: dict = {"created": 0, "updated": 0, "resolved": 0}
+
+    try:
+        # Recent failures with no subsequent success for the same user+repo
+        open_rows = _query(
+            conn,
+            """
+            SELECT de.user_id, de.repo_url, de.branch, de.project_name,
+                   de.code, de.stage, de.message, de.suggested_fix, de.evidence,
+                   MAX(de.created_at) AS last_seen,
+                   COUNT(*)           AS attempt_count
+              FROM deploy_events de
+             WHERE de.status IN ('failed', 'blocked')
+               AND de.created_at > NOW() - INTERVAL '7 days'
+               AND NOT EXISTS (
+                   SELECT 1 FROM deploy_events ok
+                    WHERE ok.user_id  = de.user_id
+                      AND ok.repo_url = de.repo_url
+                      AND ok.status   = 'success'
+                      AND ok.created_at > de.created_at
+               )
+             GROUP BY de.user_id, de.repo_url, de.branch, de.project_name,
+                      de.code, de.stage, de.message, de.suggested_fix, de.evidence
+            """,
+        )
+    except Exception as exc:
+        logger.warning("sync_incidents_feed: deploy_events query failed: %s", exc)
+        return counts
+
+    seen_keys: set = set()
+    for row in open_rows:
+        uid      = row.get("user_id")
+        repo_url = row.get("repo_url") or ""
+        code     = row.get("code") or "unknown_deploy_error"
+        key      = f"deploy:{code}:user:{uid}:repo:{_repo_hash(repo_url)}"
+        seen_keys.add(key)
+
+        last_seen = row["last_seen"]
+        raw_ev = row.get("evidence") or {}
+        evidence: dict = {
+            "source":          "deploy_events",
+            "code":            code,
+            "stage":           row.get("stage"),
+            "message":         row.get("message"),
+            "suggested_fix":   row.get("suggested_fix"),
+            "repo_url":        repo_url,
+            "branch":          row.get("branch"),
+            "project_name":    row.get("project_name"),
+            "attempt_count":   row["attempt_count"],
+            "last_seen":       last_seen.isoformat() if hasattr(last_seen, "isoformat") else str(last_seen),
+        }
+        # Merge detected fields from evidence JSONB
+        if isinstance(raw_ev, dict):
+            for field in ("root_directory", "framework", "output_directory", "cleanup_status"):
+                if raw_ev.get(field):
+                    evidence[field] = raw_ev[field]
+
+        sev   = deploy_severity(code)
+        title = f"Deploy failed [{code}]: {row.get('project_name') or repo_url}"
+
+        result = _upsert_incident(
+            conn,
+            source_table="deploy_events",
+            source_id=f"{uid}:{_repo_hash(repo_url)}:{code}",
+            source_type="deploy",
+            correlation_key=key,
+            incident_type=code,
+            severity=sev,
+            hosting_id=None,
+            user_id=uid,
+            title=title,
+            summary=row.get("message"),
+            evidence=evidence,
+        )
+        counts[result] += 1
+
+    # Resolve by absence: no recent failure → resolve open incident
+    open_incidents = _query(
+        conn,
+        "SELECT correlation_key FROM system_incidents"
+        " WHERE source_type = 'deploy' AND status = 'open'",
+    )
+    for inc in open_incidents:
+        if inc["correlation_key"] not in seen_keys:
+            if _resolve_incident(
+                conn,
+                inc["correlation_key"],
+                {"resolved_by": "sync_incidents_feed", "source_status": "no_recent_failure"},
+            ):
+                counts["resolved"] += 1
+
+    return counts
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def sync_incidents_feed() -> None:
@@ -426,6 +539,7 @@ def sync_incidents_feed() -> None:
             ("security_events", _sync_security_events),
             ("site_alerts",     _sync_site_alerts),
             ("system_alerts",   _sync_system_alerts),
+            ("deploy_events",   _sync_deploy_events),
         ):
             try:
                 counts = fn(conn)
