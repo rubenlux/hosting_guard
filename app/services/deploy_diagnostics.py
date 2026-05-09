@@ -35,6 +35,8 @@ DOCKER_BUILD_FAILED        = "docker_build_failed"
 CONTAINER_START_FAILED     = "container_start_failed"
 CONTAINER_HEALTH_FAILED    = "container_health_failed"
 TRAEFIK_ROUTE_FAILED       = "traefik_route_failed"
+UNSAFE_PUBLISH_ROOT        = "unsafe_publish_root"
+SITE_RETURNS_403           = "site_returns_403"
 SITE_RETURNS_404           = "site_returns_404"
 SITE_RETURNS_502           = "site_returns_502"
 SITE_RETURNS_503           = "site_returns_503"
@@ -46,6 +48,9 @@ UNKNOWN_DEPLOY_ERROR        = "unknown_deploy_error"
 
 _SEVERITY: dict = {
     DEPLOY_RUNTIME_MISSING_TOOL: "high",
+    UNSAFE_PUBLISH_ROOT:         "high",
+    SITE_RETURNS_403:            "high",
+    SITE_RETURNS_404:            "warning",
     DEPLOY_RATE_LIMIT_EXCEEDED:  "info",
     PACKAGE_JSON_NOT_FOUND:     "warning",
     MULTIPLE_PROJECT_ROOTS:     "warning",

@@ -225,9 +225,7 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
         : await createHosting(name, plan);
 
       setResult({ success: true, data });
-      if (onSuccess) {
-        setTimeout(() => onSuccess(), 2000);
-      }
+      if (onSuccess) onSuccess();
     } catch (err) {
       const status       = err.response?.status;
       const data         = err.response?.data || {};

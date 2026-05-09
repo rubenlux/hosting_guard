@@ -29,6 +29,8 @@ from app.services.deploy_diagnostics import (
     INDEX_HTML_NOT_FOUND,
     CONTAINER_START_FAILED,
     DEPLOY_RUNTIME_MISSING_TOOL,
+    UNSAFE_PUBLISH_ROOT,
+    SITE_RETURNS_403, SITE_RETURNS_404, SITE_RETURNS_502, SITE_RETURNS_503,
     UNKNOWN_DEPLOY_ERROR,
 )
 from app.api.saturation_guard import docker_capacity, docker_op
@@ -1194,8 +1196,8 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     data.build_command is not None or
                     ("build" in scripts and bool(_WEB_BUILDABLE_DEPS & set(all_deps)))
                 )
-            elif not data.root_directory:
-                # No package.json at repo root — scan known subdirs for a web frontend
+            if not has_package_json and not data.root_directory:
+                # Root package.json either missing or not web-buildable — scan subdirs
                 _candidates = _find_buildable_roots(work_dir)
                 if len(_candidates) == 1:
                     _auto_root, pkg = _candidates[0]
@@ -1351,7 +1353,7 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     )
                 else:
                     _found_dirs = [
-                        d for d in ["build", "dist", "out", "public"]
+                        d for d in ["build", "dist", "out"]
                         if os.path.exists(os.path.join(work_dir, d, "index.html"))
                     ]
                     if _found_dirs:
@@ -1396,6 +1398,17 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
                     raise HTTPException(status_code=400, detail="output_directory no puede salir de root_directory")
 
+                if os.path.exists(os.path.join(serve_root, ".git")):
+                    raise DeployError(
+                        code=UNSAFE_PUBLISH_ROOT, stage="artifact_detection",
+                        detail="El directorio a publicar contiene el repositorio fuente, no el build final.",
+                        suggested_fix=(
+                            "HostingGuard publica solo la salida del build (ej: build/, dist/). "
+                            "Esto no debería ocurrir — contactá soporte."
+                        ),
+                        evidence={"serve_root": os.path.relpath(serve_root, site_dir), "contains_git": True},
+                    )
+
                 _resolved_out_dir = out_dir
                 command = [
                     "run", "-d",
@@ -1420,6 +1433,27 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                     if not (_real_serve == _real_work or _real_serve.startswith(_real_work + os.sep)):
                         await loop.run_in_executor(None, lambda: subprocess.run(["rm", "-rf", site_dir]))
                         raise HTTPException(status_code=400, detail="output_directory no puede salir de root_directory")
+
+                if not os.path.exists(os.path.join(serve_root, "index.html")):
+                    raise DeployError(
+                        code=INDEX_HTML_NOT_FOUND, stage="artifact_detection",
+                        detail="No se encontró index.html en el directorio a publicar.",
+                        suggested_fix=(
+                            "Verificá que el repositorio contenga index.html en la raíz "
+                            "o especificá Output Directory en la configuración avanzada."
+                        ),
+                        evidence={"serve_root": os.path.relpath(serve_root, site_dir)},
+                    )
+                if os.path.exists(os.path.join(serve_root, ".git")):
+                    raise DeployError(
+                        code=UNSAFE_PUBLISH_ROOT, stage="artifact_detection",
+                        detail="El directorio a publicar contiene el repositorio fuente, no el build final.",
+                        suggested_fix=(
+                            "No es posible publicar el repositorio completo. "
+                            "Especificá el directorio de salida del build en la configuración avanzada."
+                        ),
+                        evidence={"serve_root": os.path.relpath(serve_root, site_dir), "contains_git": True},
+                    )
 
                 deploy_log["stages"]["build_info"] = {
                     "root_directory":   data.root_directory or ".",
@@ -1453,6 +1487,37 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
                 status_code=500,
             )
         _container_created = True
+
+        # ── Health check: verify nginx is serving correctly ───────────────────
+        # Wait for nginx to start, then check via the container's internal HTTP.
+        # Uses the actual HTTPS URL — TLS/DNS errors are silently skipped (cert
+        # may not be ready yet). Only clear HTTP errors (403/404/5xx) count.
+        _hc_status = 0
+        try:
+            await asyncio.sleep(2)
+            import httpx as _httpx
+            async with _httpx.AsyncClient(
+                verify=False, timeout=5.0, follow_redirects=False
+            ) as _hc_client:
+                _hc_resp = await _hc_client.get(f"https://{subdomain}")
+                _hc_status = _hc_resp.status_code
+        except Exception:
+            pass  # SSL not yet provisioned or DNS not propagated — skip
+
+        _HC_ERRORS = {
+            403: (SITE_RETURNS_403, "El directorio publicado no contiene index.html o nginx bloqueó el acceso. Verificá que se publique el build output, no el repositorio fuente."),
+            404: (SITE_RETURNS_404, "El servidor respondió 404. Verificá que el build output contiene index.html."),
+            502: (SITE_RETURNS_502, "El contenedor inició pero la app no está escuchando en el puerto esperado."),
+            503: (SITE_RETURNS_503, "El contenedor inició pero la app no está disponible."),
+        }
+        if _hc_status in _HC_ERRORS:
+            _hc_code, _hc_fix = _HC_ERRORS[_hc_status]
+            raise DeployError(
+                code=_hc_code, stage="health_check",
+                detail=f"El sitio fue creado pero respondió HTTP {_hc_status}.",
+                suggested_fix=_hc_fix,
+                evidence={"http_status": _hc_status, "subdomain": subdomain, "container_name": container_name},
+            )
 
         hosting_id = hosting_repo.create_hosting(
             user_id=user_id,
