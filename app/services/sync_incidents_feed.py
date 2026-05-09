@@ -122,18 +122,33 @@ def _upsert_incident(
     return "created"
 
 
-def _resolve_incident(conn, correlation_key: str) -> bool:
+def _resolve_incident(
+    conn,
+    correlation_key: str,
+    extra_evidence: Optional[dict] = None,
+) -> bool:
     """Mark open incident as resolved. Returns True if a row was changed."""
     now = datetime.now(timezone.utc)
     cur = conn.cursor()
-    cur.execute(
-        """
-        UPDATE system_incidents
-           SET status = 'resolved', resolved_at = %s, updated_at = %s
-         WHERE correlation_key = %s AND status = 'open'
-        """,
-        (now, now, correlation_key),
-    )
+    if extra_evidence:
+        cur.execute(
+            """
+            UPDATE system_incidents
+               SET status = 'resolved', resolved_at = %s, updated_at = %s,
+                   evidence = evidence || %s::jsonb
+             WHERE correlation_key = %s AND status = 'open'
+            """,
+            (now, now, json.dumps(extra_evidence), correlation_key),
+        )
+    else:
+        cur.execute(
+            """
+            UPDATE system_incidents
+               SET status = 'resolved', resolved_at = %s, updated_at = %s
+             WHERE correlation_key = %s AND status = 'open'
+            """,
+            (now, now, correlation_key),
+        )
     return cur.rowcount > 0
 
 
@@ -142,13 +157,17 @@ def _resolve_incident(conn, correlation_key: str) -> bool:
 def _sync_security_events(conn) -> dict:
     counts: dict = {"created": 0, "updated": 0, "resolved": 0}
 
+    # Exclude events for deleted hostings to avoid false-positive incidents.
+    # Global events (hosting_id IS NULL) are always included.
     open_rows = _query(
         conn,
         """
-        SELECT event_id, user_id, hosting_id, severity, event_type, title,
-               message, ip, metadata, count, last_seen
-          FROM security_events
-         WHERE status = 'open'
+        SELECT se.event_id, se.user_id, se.hosting_id, se.severity, se.event_type,
+               se.title, se.message, se.ip, se.metadata, se.count, se.last_seen
+          FROM security_events se
+          LEFT JOIN hostings h ON h.hosting_id = se.hosting_id
+         WHERE se.status = 'open'
+           AND (se.hosting_id IS NULL OR h.status NOT IN ('deleted'))
         """,
     )
 
@@ -186,6 +205,27 @@ def _sync_security_events(conn) -> dict:
         )
         counts[result] += 1
 
+    # Resolve open incidents whose hosting was subsequently deleted.
+    deleted_incidents = _query(
+        conn,
+        """
+        SELECT si.correlation_key
+          FROM system_incidents si
+          JOIN hostings h ON h.hosting_id = si.hosting_id
+         WHERE si.source_type = 'security'
+           AND si.status = 'open'
+           AND h.status = 'deleted'
+        """,
+    )
+    for inc in deleted_incidents:
+        if _resolve_incident(
+            conn,
+            inc["correlation_key"],
+            {"resolved_reason": "hosting_deleted", "resolved_by": "sync_incidents_feed"},
+        ):
+            counts["resolved"] += 1
+
+    # Resolve by absence: open incident whose source event is no longer open.
     open_incidents = _query(
         conn,
         "SELECT correlation_key FROM system_incidents"
@@ -193,7 +233,11 @@ def _sync_security_events(conn) -> dict:
     )
     for inc in open_incidents:
         if inc["correlation_key"] not in seen_keys:
-            if _resolve_incident(conn, inc["correlation_key"]):
+            if _resolve_incident(
+                conn,
+                inc["correlation_key"],
+                {"resolved_by": "sync_incidents_feed", "source_status": "not_in_open_set"},
+            ):
                 counts["resolved"] += 1
 
     return counts
@@ -205,14 +249,16 @@ def _sync_site_alerts(conn) -> dict:
     counts: dict = {"created": 0, "updated": 0, "resolved": 0}
 
     try:
+        # INNER JOIN excludes alerts for non-existent or deleted hostings.
         open_rows = _query(
             conn,
             """
             SELECT sa.id, sa.user_id, sa.site_id, sa.level, sa.message, sa.created_at,
                    h.name AS hosting_name, h.subdomain
               FROM site_alerts sa
-              LEFT JOIN hostings h ON h.hosting_id = sa.site_id
+              JOIN hostings h ON h.hosting_id = sa.site_id
              WHERE sa.resolved = 0
+               AND h.status IN ('active', 'starting', 'stopped', 'error')
             """,
         )
     except Exception as exc:
@@ -253,6 +299,30 @@ def _sync_site_alerts(conn) -> dict:
         )
         counts[result] += 1
 
+    # Resolve open incidents whose hosting was subsequently deleted.
+    try:
+        deleted_incidents = _query(
+            conn,
+            """
+            SELECT si.correlation_key
+              FROM system_incidents si
+              JOIN hostings h ON h.hosting_id = si.hosting_id
+             WHERE si.source_type = 'site'
+               AND si.status = 'open'
+               AND h.status = 'deleted'
+            """,
+        )
+        for inc in deleted_incidents:
+            if _resolve_incident(
+                conn,
+                inc["correlation_key"],
+                {"resolved_reason": "hosting_deleted", "resolved_by": "sync_incidents_feed"},
+            ):
+                counts["resolved"] += 1
+    except Exception as exc:
+        logger.warning("sync_incidents_feed: site_alerts deleted-hosting cleanup failed: %s", exc)
+
+    # Resolve by absence: open incident whose alert no longer exists as unresolved.
     open_incidents = _query(
         conn,
         "SELECT correlation_key FROM system_incidents"
@@ -260,7 +330,11 @@ def _sync_site_alerts(conn) -> dict:
     )
     for inc in open_incidents:
         if inc["correlation_key"] not in seen_keys:
-            if _resolve_incident(conn, inc["correlation_key"]):
+            if _resolve_incident(
+                conn,
+                inc["correlation_key"],
+                {"resolved_by": "sync_incidents_feed", "source_status": "not_in_open_set"},
+            ):
                 counts["resolved"] += 1
 
     return counts

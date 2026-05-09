@@ -855,6 +855,15 @@ _INDEXES = [
         version                  INTEGER DEFAULT 1
     )""",
     "CREATE INDEX IF NOT EXISTS idx_decision_events_tenant ON decision_events(tenant_id, timestamp DESC)",
+    # decision_events: add action-audit columns (compatible with existing pipeline rows)
+    "ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL",
+    "ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS actor_type TEXT",
+    "ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS action_type TEXT",
+    "ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS target_type TEXT",
+    "ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS target_id TEXT",
+    "ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS decision TEXT",
+    "ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS reason TEXT",
+    "ALTER TABLE decision_events ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'",
 
     # system_incidents: unified incident feed for AI diagnosis
     """CREATE TABLE IF NOT EXISTS system_incidents (
