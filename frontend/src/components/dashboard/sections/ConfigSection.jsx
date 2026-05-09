@@ -90,7 +90,7 @@ const WP_PREFS = [
 ];
 
 // ── Main component ────────────────────────────────────────────────────────────
-const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction, onHostingDeleted }) => {
+const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction, onHostingDeleted, initialDangerHostingId = '' }) => {
   // Profile
   const [profile, setProfile] = useState({
     first_name: user.first_name || '',
@@ -149,7 +149,7 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction, onHost
   const [deleteInput,  setDeleteInput]  = useState('');
 
   // Zona peligrosa — terminate hosting
-  const [dangerHosting,    setDangerHosting]    = useState('');
+  const [dangerHosting,    setDangerHosting]    = useState(String(initialDangerHostingId));
   const [dangerPhase,      setDangerPhase]      = useState(0); // 0 idle, 1 modal
   const [dangerReason,     setDangerReason]     = useState('');
   const [dangerDesc,       setDangerDesc]       = useState('');
@@ -468,7 +468,7 @@ const ConfigSection = ({ user = {}, setUser, hostings = [], logoutAction, onHost
       </SectionCard>
 
       {/* ── 6. Zona peligrosa — eliminar sitio ── */}
-      <SectionCard icon={Trash2} iconColor="#ef4444" title="Zona peligrosa" defaultOpen={false}>
+      <SectionCard icon={Trash2} iconColor="#ef4444" title="Zona peligrosa" defaultOpen={true}>
         <div style={{ paddingTop: 20 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 4 }}>Eliminar sitio</div>
           <div style={{ fontSize: 11, color: '#555', marginBottom: 16 }}>

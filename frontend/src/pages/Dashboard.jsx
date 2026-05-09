@@ -113,6 +113,7 @@ const Dashboard = () => {
   const [selectedFilesHosting,  setSelectedFilesHosting]  = useState(null);
   const [isSidebarCollapsed,    setIsSidebarCollapsed]    = useState(false);
   const [sidebarSection,        setSidebarSection]        = useState(null); // 'domains'|'backups'|'ssl'|'email'|'billing'|'config'
+  const [dangerHostingId,       setDangerHostingId]       = useState('');
   const [showSupport,           setShowSupport]           = useState(false);
   const [supportView,           setSupportView]           = useState('chat');
   const [openTicketId,          setOpenTicketId]          = useState(null);
@@ -129,9 +130,10 @@ const Dashboard = () => {
 
   const handleOpenLogs = (hosting) => { openLogs(hosting); setShowLogs(true); };
 
-  const handleDelete = (id, name) => {
-    if (!window.confirm(`¿Seguro que quieres eliminar el hosting "${name}"? Esta acción es irreversible.`)) return;
-    remove.mutate(id);
+  const handleDelete = (id) => {
+    setDangerHostingId(String(id));
+    setSidebarSection('config');
+    navigate('/dashboard');
   };
 
   const handleDiagnose = async (id) => {
@@ -425,7 +427,8 @@ const Dashboard = () => {
                     setUser={setUser}
                     hostings={hostings}
                     logoutAction={logoutAction}
-                    onHostingDeleted={() => { refresh(); setSidebarSection(null); navigate('/sites'); }}
+                    initialDangerHostingId={dangerHostingId}
+                    onHostingDeleted={() => { setDangerHostingId(''); refresh(); setSidebarSection(null); navigate('/sites'); }}
                   />
                 )}
               </div>
