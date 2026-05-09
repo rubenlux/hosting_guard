@@ -28,6 +28,7 @@ from app.services.deploy_diagnostics import (
     BUILD_FAILED, OPENSSL_BUILD_FAILED,
     INDEX_HTML_NOT_FOUND,
     CONTAINER_START_FAILED,
+    DEPLOY_RUNTIME_MISSING_TOOL,
     UNKNOWN_DEPLOY_ERROR,
 )
 from app.api.saturation_guard import docker_capacity, docker_op
@@ -192,6 +193,24 @@ def _find_buildable_roots(site_dir: str) -> list:
         if _is_web_buildable(pkg):
             results.append((rel, pkg))
     return results
+
+
+def _check_required_tool(name: str) -> None:
+    """Raise DeployError(503) if `name` is not available in PATH."""
+    if shutil.which(name) is None:
+        raise DeployError(
+            code=DEPLOY_RUNTIME_MISSING_TOOL, stage="runtime_precheck",
+            detail=(
+                "HostingGuard no pudo iniciar el deploy porque falta una herramienta "
+                "interna necesaria. El problema no está en tu repositorio."
+            ),
+            suggested_fix=(
+                f"El administrador debe instalar '{name}' en la imagen del servidor."
+            ),
+            technical_detail=f"Missing executable: {name}",
+            evidence={"missing_tool": name},
+            status_code=503,
+        )
 
 
 def _validate_project_name(name: str) -> None:
@@ -1046,6 +1065,9 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
         if user.get("role") != "admin" and user_id is not None:
             _enforce_free_plan_policy(int(user_id), data.plan)
             _enforce_plan_container_limit(int(user_id), data.plan)
+
+        # ── Precheck: runtime tools ───────────────────────────────────────────
+        _check_required_tool("git")
 
         # ── Stage 1: Clone ───────────────────────────────────────────────────
         clone_result = await loop.run_in_executor(

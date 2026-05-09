@@ -38,13 +38,15 @@ TRAEFIK_ROUTE_FAILED       = "traefik_route_failed"
 SITE_RETURNS_404           = "site_returns_404"
 SITE_RETURNS_502           = "site_returns_502"
 SITE_RETURNS_503           = "site_returns_503"
-DEPLOY_RATE_LIMIT_EXCEEDED = "deploy_rate_limit_exceeded"
-UNKNOWN_DEPLOY_ERROR       = "unknown_deploy_error"
+DEPLOY_RUNTIME_MISSING_TOOL = "deploy_runtime_missing_tool"
+DEPLOY_RATE_LIMIT_EXCEEDED  = "deploy_rate_limit_exceeded"
+UNKNOWN_DEPLOY_ERROR        = "unknown_deploy_error"
 
 # ── Severity (for system_incidents) ──────────────────────────────────────────
 
 _SEVERITY: dict = {
-    DEPLOY_RATE_LIMIT_EXCEEDED: "info",
+    DEPLOY_RUNTIME_MISSING_TOOL: "high",
+    DEPLOY_RATE_LIMIT_EXCEEDED:  "info",
     PACKAGE_JSON_NOT_FOUND:     "warning",
     MULTIPLE_PROJECT_ROOTS:     "warning",
     BUILD_SCRIPT_MISSING:       "warning",

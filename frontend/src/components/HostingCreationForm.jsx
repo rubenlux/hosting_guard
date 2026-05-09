@@ -25,6 +25,58 @@ function RateLimitCard({ detail, countdown }) {
   );
 }
 
+function RuntimeMissingCard({ result }) {
+  const [expanded, setExpanded] = useState(false);
+  const { code, stage, techDetail, evidence, requestId } = result;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-start gap-3 text-orange-400 font-bold text-sm">
+        <Wrench className="w-5 h-5 shrink-0 mt-0.5" />
+        No pudimos iniciar el deploy
+      </div>
+
+      <p className="text-gray-200 text-sm leading-relaxed">
+        El problema no está en tu repositorio. HostingGuard necesita una herramienta interna
+        para clonar el proyecto y no está disponible en este momento.
+      </p>
+
+      <div className="flex items-start gap-2 bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3">
+        <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+        <p className="text-blue-300 text-xs leading-relaxed">
+          Nuestro equipo debe corregir el entorno de deploy. No necesitás cambiar tu código.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setExpanded(e => !e)}
+        className="flex items-center gap-1 text-gray-500 hover:text-gray-300 text-xs transition-colors w-fit"
+      >
+        <Info className="w-3.5 h-3.5" />
+        {expanded ? 'Ocultar detalles técnicos' : 'Ver detalles técnicos'}
+        {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+      </button>
+
+      {expanded && (
+        <div className="bg-black/40 border border-white/8 rounded-xl p-3 font-mono text-xs text-gray-400 space-y-1 max-h-40 overflow-y-auto">
+          {code       && <div><span className="text-gray-600">code:</span>   <span className="text-orange-400">{code}</span></div>}
+          {stage      && <div><span className="text-gray-600">stage:</span>  <span className="text-yellow-400">{stage}</span></div>}
+          {requestId  && <div><span className="text-gray-600">request_id:</span> {requestId}</div>}
+          {evidence?.missing_tool && (
+            <div><span className="text-gray-600">missing_tool:</span> <span className="text-red-400">{evidence.missing_tool}</span></div>
+          )}
+          {techDetail && (
+            <div className="whitespace-pre-wrap break-all text-gray-500 border-t border-white/5 pt-1 mt-1">
+              {techDetail}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DiagnosticCard({ result }) {
   const [expanded, setExpanded] = useState(false);
   const { code, stage, detail, suggestedFix, techDetail, evidence, requestId } = result;
@@ -196,6 +248,8 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
           detail: detail || 'Alcanzaste el límite de deploys por hora. Esperá unos minutos antes de volver a intentar.',
           retryAfter,
         });
+      } else if (code === 'deploy_runtime_missing_tool') {
+        setResult({ success: false, isRuntimeMissing: true, code, stage, techDetail, evidence, requestId });
       } else if (code && stage) {
         // Structured deploy diagnostic error
         setResult({ success: false, isDiagnostic: true, code, stage, detail, suggestedFix, techDetail, evidence, requestId });
@@ -456,6 +510,8 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
                 </div>
               ) : result.isRateLimit ? (
                 <RateLimitCard detail={result.detail} countdown={retryCountdown} />
+              ) : result.isRuntimeMissing ? (
+                <RuntimeMissingCard result={result} />
               ) : result.isDiagnostic ? (
                 <DiagnosticCard result={result} />
               ) : (
