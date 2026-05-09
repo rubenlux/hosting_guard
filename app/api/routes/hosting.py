@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app.api.security import verify_token, require_support_write
-from app.api.rate_limit import limiter, get_deploy_rate_limit
+from app.api.rate_limit import limiter, DEPLOY_RATE_LIMIT
 from app.services.deploy_diagnostics import (
     DeployError,
     record_deploy_event,
@@ -976,7 +976,7 @@ def _traefik_labels(container_name: str, subdomain: str, port: int) -> list:
 
 
 @router.post("/deploy-from-github")
-@limiter.limit(get_deploy_rate_limit)
+@limiter.limit(DEPLOY_RATE_LIMIT)
 async def deploy_from_github(data: GitDeployRequest, request: Request, user: dict = Depends(verify_token)):
     loop = asyncio.get_running_loop()
 
@@ -1525,7 +1525,7 @@ async def deploy_from_github(data: GitDeployRequest, request: Request, user: dic
 
 
 @router.post("/hostings/{hosting_id}/redeploy")
-@limiter.limit(get_deploy_rate_limit)
+@limiter.limit(DEPLOY_RATE_LIMIT)
 async def redeploy_from_github(hosting_id: int, request: Request, user: dict = Depends(verify_token)):
     user_id    = user.get("user_id")
     hosting    = hosting_repo.get_hosting(hosting_id, user_id)
