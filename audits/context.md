@@ -534,3 +534,100 @@ Imports: added the 5 new codes + all 4 functions from build_diagnostics
 New helpers: _parse_versions (extracts node/npm version strings from node --version && npm --version output) and _read_version_file (reads .nvmrc or engines.node from package.json)
 Phase 1 rewrite: split into two separate docker runs (install, then build), each prefixed with apk add python3 make g++ + version capture; npm logs mounted via -v {tmp_dir}:/root/.npm/_logs; ERESOLVE retry now applies only to the install step; ERR_OSSL retry to the build step; every failure path calls classify_npm_failure, extract_suspected_package, extract_npm_log_path, and read_npm_log to produce rich evidence with node_version, npm_version, suspected_package, stdout_tail, stderr_tail, and the npm debug log tail
 tests/test_github_deploy.py — 14 new tests covering all 6 classify_npm_failure rules, both unknown-stage fallbacks, extract_npm_log_path (found and missing), extract_suspected_package, read_npm_log (reads tail, handles not-found), and presence of all 5 new constants.
+
+---
+
+## 2026-05-10 — Refactor deploy service, incidents package, supersede UI, bug idempotencia crítico
+
+### BLOQUE 1 — Refactor app/services/deploy/ (hosting.py 2334 → 1592 líneas)
+
+`app/api/routes/hosting.py` fue partido en módulos de servicio bajo `app/services/deploy/`:
+
+**`app/services/deploy/project_detector.py`** (nuevo, 91 líneas)
+- `_find_buildable_roots`, `_detect_out_dir`, `_is_web_buildable`, `_read_pkg`, `_detect_framework`, `_find_serve_dir`
+
+**`app/services/deploy/node_version_detector.py`** (nuevo, 21 líneas)
+- `_read_version_file`: lee `.nvmrc` o `engines.node` de `package.json`
+
+**`app/services/deploy/build_runner.py`** (nuevo, 72 líneas)
+- `_parse_versions`, `_docker_env_flags`, `_detect_image_for_start`, `_default_install`, `_traefik_labels`, `_check_required_tool`
+
+**`app/services/deploy/github_deploy_service.py`** (nuevo, 663 líneas)
+- `run_github_deploy(*, data, user_id, ip_address, project_name, subdomain, container_name, plan)` — pipeline completo; en `DeployError` registra evento y re-raise; en excepción inesperada registra y lanza `HTTPException(500)`
+
+**`app/api/routes/hosting.py`** — `deploy_from_github` reducido a ~30 líneas: valida inputs, computa `subdomain`/`container_name`, llama `run_github_deploy()`, convierte `DeployError` → `JSONResponse`. Los helpers de validación (`_validate_*`, `_enforce_*`) y los helpers de redeploy (`_docker_env_flags`, `_traefik_labels`) permanecen en `hosting.py` porque son usados por otras rutas.
+
+Backward-compat: `hosting.py` re-exporta `_find_buildable_roots`, `_detect_out_dir`, `_is_web_buildable`, `_read_pkg`, `_check_required_tool` en su propio namespace para que los tests existentes sigan importando desde `app.api.routes.hosting`.
+
+---
+
+### BLOQUE 2 — Incidents package (app/services/incidents/)
+
+**`app/services/incidents/incident_deduper.py`** (nuevo, 130 líneas)
+- `_normalize_severity`, `_sev_rank`, `_query`, `_upsert_incident`, `_resolve_incident`
+- `_upsert_incident`: UPDATE open → si no encuentra, INSERT con `ON CONFLICT (correlation_key) WHERE status = 'open' DO NOTHING`. La severidad solo escala, nunca baja.
+- `_resolve_incident(conn, key, extra_evidence=None)`: `UPDATE ... SET status='resolved' ... WHERE correlation_key = ? AND status = 'open'`; si `extra_evidence`, hace `evidence || extra::jsonb`
+
+**`app/services/incidents/sync_security_events.py`** (nuevo) — sincroniza `security_events` → `system_incidents` (source_type='security'). Resuelve por ausencia con evidence `{resolved_by, source_status}`. Limpia incidentes de hostings eliminados.
+
+**`app/services/incidents/sync_site_alerts.py`** (nuevo) — sincroniza `site_alerts` → `system_incidents` (source_type='site'). Resuelve por ausencia y por hosting eliminado.
+
+**`app/services/incidents/sync_system_alerts.py`** (nuevo) — sincroniza `system_alert_events` → `system_incidents` (source_type='system').
+
+**`app/services/incidents/sync_deploy_events.py`** (nuevo) — ver BLOQUE 3.
+
+**`app/services/sync_incidents_feed.py`** — reducido a entrypoint delgado (65 líneas). Importa las 4 funciones del paquete incidents/, las llama en secuencia, agrega counts, loguea totales. Mantiene backward-compat aliases (`_sync_security_events`, `_sync_site_alerts`, etc.) y re-exporta `_GENERIC_DEPLOY_CODES`, `_repo_hash` para tests existentes.
+
+**Tests actualizados** — `tests/test_github_deploy.py`: todos los `patch("app.services.sync_incidents_feed._query/upsert/resolve")` reemplazados por `patch("app.services.incidents.sync_deploy_events._query/upsert/resolve")` porque el mock debe apuntar al módulo donde la función está definida, no donde se importa.
+
+---
+
+### BLOQUE 3 — Bug crítico de idempotencia en sync_deploy_events
+
+**Problema en producción:** `system_incidents` acumulaba registros `build_failed resolved` nuevos cada 2 minutos.
+
+**Causa raíz:**
+1. El query principal incluye `build_failed` (17:47) porque no hay un `success` posterior (el único success es del 17:21, anterior al fallo).
+2. `_upsert_incident` usa índice parcial `WHERE status = 'open'`: un incidente `resolved` no bloquea un nuevo INSERT → crea incidente nuevo.
+3. El post-loop supersede lo resuelve inmediatamente (`node_sass_incompatible` es más específico).
+4. Próxima corrida: mismo ciclo. Resultado: N incidentes `build_failed resolved` creciendo infinitamente.
+
+**Fix — `app/services/incidents/sync_deploy_events.py`:**
+
+**1. Pre-filter (antes del upsert):** agrupa `open_rows` por target `(user_id, repo_url, branch, project_name)`. Por cada target, calcula el `last_seen` más reciente de cualquier código específico (no genérico). Los eventos genéricos cuyo `last_seen` sea estrictamente anterior a ese máximo se descartan antes del upsert. Genéricos más nuevos que el específico (nuevo intento) pasan igual.
+
+```
+Para cada target:
+  latest_specific_ts = max(last_seen de códigos no-genéricos)
+  Si genérico.last_seen < latest_specific_ts → skip (no upsert)
+```
+
+**2. Fix de `_success_targets` SQL:** antes devolvía todos los successes recientes, incluyendo el de las 17:21 (anterior a los fallos). Ahora incluye solo successes que no tengan un fallo más nuevo para el mismo `(user_id, repo_url)`. El `resolved_reason` en el evidence pasa a ser `"deploy_success"` solo cuando el success es genuinamente posterior al fallo.
+
+**5 tests nuevos agregados (`tests/test_github_deploy.py`):**
+1. `test_generic_older_than_specific_not_upserted` — timestamps explícitos 17:47 y 20:48; solo `node_sass_incompatible` es upserteado
+2. `test_sync_deploy_idempotent_generic_never_upserted_when_superseded` — 3 corridas consecutivas; `build_failed` nunca upserteado
+3. `test_generic_only_is_upserted_when_no_specific_exists` — `build_failed` sin código específico contraparte → sí se upsertea normalmente
+4. `test_generic_newer_than_specific_is_upserted` — `build_failed` más nuevo que `node_sass` → sí se upsertea (nuevo intento)
+5. `test_success_before_failure_resolves_with_no_recent_failure_reason` — `success_targets` vacío → `resolved_reason = "no_recent_failure"`, no `"deploy_success"`
+
+**Resultado:** 77 → 82 tests, todos verdes. En producción: `build_failed resolved` se congela en el valor actual y no sigue aumentando.
+
+---
+
+### BLOQUE 4 — DeployHistorySection: eventos superseded en el frontend
+
+**`frontend/src/components/dashboard/sections/DeployHistorySection.jsx`**
+
+Añadida función `markSuperseded(events)` que corre en el cliente tras el fetch:
+- Itera eventos newest-first
+- Por cada `repo_url`, acumula los códigos específicos vistos
+- Cuando llega un evento con código genérico (`build_failed`, `npm_install_failed`, `unknown_deploy_error`) y ya existe un código específico para el mismo repo → marca `superseded: true`
+
+**Renderizado de filas superseded:**
+- Borde punteado (`border-dashed`), `opacity-40`, texto en grises
+- Muestra el código original + badge amber `reemplazado`
+- No expandible (sin chevron, sin panel de detalles)
+- El evento específico activo (`node_sass_incompatible`) se muestra con estilo normal y expandible
+
+El usuario ve claramente cuál es el problema vigente sin confundirse con diagnósticos anteriores ya superados.

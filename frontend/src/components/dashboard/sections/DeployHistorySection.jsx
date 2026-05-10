@@ -24,10 +24,67 @@ const STATUS_PILL = {
   blocked: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
 };
 
+const GENERIC_CODES = new Set(['build_failed', 'npm_install_failed', 'unknown_deploy_error']);
+
+/**
+ * Iterates events newest-first. For each repo, once we've seen a specific
+ * (non-generic) failure, any older generic-code failure for that same repo
+ * is superseded.
+ */
+function markSuperseded(events) {
+  const specificByRepo = new Map();
+  return events.map(ev => {
+    const repo = ev.repo_url || '';
+    const code = ev.code;
+    const isFailing = ev.status === 'failed' || ev.status === 'blocked';
+
+    if (!isFailing || !code) return { ...ev, superseded: false };
+
+    if (!GENERIC_CODES.has(code)) {
+      if (!specificByRepo.has(repo)) specificByRepo.set(repo, new Set());
+      specificByRepo.get(repo).add(code);
+      return { ...ev, superseded: false };
+    }
+
+    const hasSpecific = specificByRepo.has(repo) && specificByRepo.get(repo).size > 0;
+    return { ...ev, superseded: hasSpecific };
+  });
+}
+
 function DeployRow({ event }) {
   const [open, setOpen] = useState(false);
+  const { superseded } = event;
   const isFailed = event.status === 'failed' || event.status === 'blocked';
   const pillClass = STATUS_PILL[event.status] || 'text-gray-400 bg-white/5 border-white/10';
+
+  if (superseded) {
+    return (
+      <div className="border border-white/5 border-dashed rounded-xl overflow-hidden opacity-40">
+        <div className="flex items-start gap-3 px-4 py-3">
+          <span className="mt-0.5 flex-shrink-0">
+            {STATUS_ICON[event.status] || <Clock className="w-4 h-4 text-gray-500" />}
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-0.5">
+              <span className="text-sm text-gray-500 font-medium truncate">
+                {event.project_name || event.repo_url?.split('/').slice(-1)[0] || 'deploy'}
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded border text-gray-600 bg-white/3 border-white/8">
+                {event.code}
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded border text-amber-600 bg-amber-500/8 border-amber-500/20">
+                reemplazado
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-gray-600">
+              <span>{event.branch}</span>
+              <span>{fmt(event.created_at)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="border border-white/8 rounded-xl overflow-hidden">
@@ -83,7 +140,6 @@ function DeployRow({ event }) {
                  className="text-blue-400 hover:underline break-all">{event.repo_url}</a>
             </div>
           )}
-          {/* Evidence details */}
           {event.evidence && Object.keys(event.evidence).some(k =>
             ['node_version', 'npm_version', 'suspected_package'].includes(k)
           ) && (
@@ -123,7 +179,7 @@ export default function DeployHistorySection() {
     setLoading(true);
     setError(null);
     getMyDeployEvents(20)
-      .then(d => setEvents(d.items || []))
+      .then(d => setEvents(markSuperseded(d.items || [])))
       .catch(e => setError(e?.response?.data?.detail || 'Error cargando historial'))
       .finally(() => setLoading(false));
   }

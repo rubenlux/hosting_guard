@@ -50,8 +50,45 @@ def sync_deploy_events(conn) -> dict:
         logger.warning("sync_incidents_feed: deploy_events query failed: %s", exc)
         return counts
 
-    seen_keys: set = set()
+    # Pre-filter: a generic event that is strictly older than a specific failure
+    # for the same target must not be upserted — otherwise the upsert creates a new
+    # incident that the post-loop supersede immediately resolves, then the next run
+    # creates another one (create→supersede→create loop every 2 minutes).
+    target_latest_specific: dict = {}
     for row in open_rows:
+        code = row.get("code") or "unknown_deploy_error"
+        if code not in _GENERIC_DEPLOY_CODES:
+            tgt = (
+                row.get("user_id"),
+                row.get("repo_url") or "",
+                row.get("branch") or "",
+                row.get("project_name") or "",
+            )
+            ts = row["last_seen"]
+            if tgt not in target_latest_specific or ts > target_latest_specific[tgt]:
+                target_latest_specific[tgt] = ts
+
+    effective_rows: list = []
+    for row in open_rows:
+        code = row.get("code") or "unknown_deploy_error"
+        if code in _GENERIC_DEPLOY_CODES:
+            tgt = (
+                row.get("user_id"),
+                row.get("repo_url") or "",
+                row.get("branch") or "",
+                row.get("project_name") or "",
+            )
+            latest_specific = target_latest_specific.get(tgt)
+            if latest_specific is not None and row["last_seen"] < latest_specific:
+                logger.debug(
+                    "sync_deploy_events: skipping superseded generic code=%s last_seen=%s superseded_at=%s",
+                    code, row["last_seen"], latest_specific,
+                )
+                continue
+        effective_rows.append(row)
+
+    seen_keys: set = set()
+    for row in effective_rows:
         uid      = row.get("user_id")
         repo_url = row.get("repo_url") or ""
         code     = row.get("code") or "unknown_deploy_error"
@@ -130,15 +167,28 @@ def sync_deploy_events(conn) -> dict:
                 }):
                     counts["resolved"] += 1
 
-    # Step B: resolve by absence
+    # Step B: resolve by absence.
+    # Success only counts as the resolution reason when it is strictly after the
+    # most recent failure for that (user_id, repo_url) — prevents an old success
+    # from claiming credit for resolving a later failure.
     try:
         _success_targets = {
             (r.get("user_id"), r.get("repo_url") or "")
             for r in _query(
                 conn,
                 """
-                SELECT DISTINCT user_id, repo_url FROM deploy_events
-                 WHERE status = 'success' AND created_at > NOW() - INTERVAL '7 days'
+                SELECT DISTINCT d.user_id, d.repo_url
+                  FROM deploy_events d
+                 WHERE d.status = 'success'
+                   AND d.created_at > NOW() - INTERVAL '7 days'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM deploy_events fail
+                        WHERE fail.user_id  = d.user_id
+                          AND fail.repo_url = d.repo_url
+                          AND fail.status   IN ('failed', 'blocked')
+                          AND fail.created_at > d.created_at
+                          AND fail.created_at > NOW() - INTERVAL '7 days'
+                   )
                 """,
             )
         }
