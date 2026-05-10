@@ -952,3 +952,26 @@ export const updateCostSettings = async (patch) => {
   const response = await api.patch('/admin/finance/cost-settings', patch);
   return response.data;
 };
+
+
+// ── AI Sentinel ───────────────────────────────────────────────────────────────
+
+export const getSentinelIncidents = async (params = {}) => {
+  const response = await api.get('/admin/sentinel/incidents', { params });
+  return response.data;
+};
+
+export const resolveIncident = async (incidentId) => {
+  const response = await api.post(`/admin/incidents/${incidentId}/resolve`);
+  return response.data;
+};
+
+export const getAdminDeployEvents = async (params = {}) => {
+  const response = await api.get('/admin/deploy-events', { params });
+  return response.data;
+};
+
+export const getMyDeployEvents = async (limit = 20) => {
+  const response = await api.get('/deploy-events/me', { params: { limit } });
+  return response.data;
+};

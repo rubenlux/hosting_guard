@@ -13,7 +13,7 @@ import {
   Globe, Loader, RefreshCw, ShieldCheck, Activity,
   Database, Zap, CreditCard, Settings,
   Key, Lock, Mail, BarChart3, Headset,
-  ChevronLeft, ChevronRight, Bot, X, AlertTriangle, Bell, Search,
+  ChevronLeft, ChevronRight, Bot, X, AlertTriangle, Bell, Search, GitBranch,
 } from 'lucide-react';
 import NotificationsPage           from './Notifications';
 import '../Dashboard.css';
@@ -40,6 +40,7 @@ import SSLSection           from '../components/dashboard/sections/SSLSection';
 import EmailSection         from '../components/dashboard/sections/EmailSection';
 import BillingSection       from '../components/dashboard/sections/BillingSection';
 import ConfigSection        from '../components/dashboard/sections/ConfigSection';
+import DeployHistorySection from '../components/dashboard/sections/DeployHistorySection';
 import NotificationBell    from '../components/dashboard/NotificationBell';
 import DashboardOverview   from '../components/dashboard/DashboardOverview';
 const BusinessOverview = lazy(() => import('../components/dashboard/BusinessOverview'));
@@ -278,6 +279,11 @@ const Dashboard = () => {
               {!isSidebarCollapsed && <span>Email</span>}
             </div>
 
+            <div className={`nav-item-dash ${sidebarSection === 'deploys' ? 'active' : ''}`} onClick={() => { setSidebarSection('deploys'); setShowCreate(false); navigate('/dashboard'); }}>
+              <div className="nav-icon-dash" style={{ color: '#34d399' }}><GitBranch size={18} /></div>
+              {!isSidebarCollapsed && <span>Historial deploys</span>}
+            </div>
+
             <div className="nav-label-dash">{isSidebarCollapsed ? '•' : 'Cuenta'}</div>
             <div className={`nav-item-dash ${sidebarSection === 'notifications' ? 'active' : ''}`} onClick={() => { setSidebarSection('notifications'); setShowCreate(false); navigate('/dashboard'); }}>
               <div className="nav-icon-dash" style={{ color: '#60a5fa' }}><Bell size={18} /></div>
@@ -431,6 +437,7 @@ const Dashboard = () => {
                     onHostingDeleted={() => { setDangerHostingId(''); refresh(); setSidebarSection(null); navigate('/sites'); }}
                   />
                 )}
+                {sidebarSection === 'deploys' && <DeployHistorySection />}
               </div>
             ) : (
               <DashboardOverview

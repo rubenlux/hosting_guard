@@ -36,6 +36,7 @@ import ImportSiteModal from '../components/dashboard/ImportSiteModal';
 import OnlineUsersCard from '../components/admin/OnlineUsersCard';
 import ActivityTimeline from '../components/admin/ActivityTimeline';
 import SecurityCenter from '../components/admin/SecurityCenter';
+import SentinelPanel from '../components/admin/SentinelPanel';
 import SecurityStatusBeacon from '../components/admin/SecurityStatusBeacon';
 import ResourceUsage from '../components/admin/ResourceUsage';
 import UnitEconomics from '../components/admin/UnitEconomics';
@@ -71,6 +72,7 @@ const NAV = [
   { id: 'pixel-users',   label: 'Pixel Users',      icon: Users,     path: '/admin/pixel-users' },
   { id: 'orchestrator',  label: 'Orchestrator',     icon: Bot },
   { id: 'security',      label: 'Security Center',  icon: ShieldAlert },
+  { id: 'sentinel',      label: 'AI Sentinel',      icon: Bot },
   { id: 'presence',      label: 'Online Now',       icon: Wifi },
   { id: 'activity',      label: 'Activity Log',     icon: Activity },
   { id: 'resources',     label: 'Resources',        icon: Cpu },
@@ -1237,6 +1239,7 @@ export default function AdminDashboard() {
 
             {/* ══ SECURITY CENTER ══ */}
             {section === 'security' && <SecurityCenter />}
+            {section === 'sentinel' && <SentinelPanel />}
 
             {/* ══ ONLINE USERS / PRESENCE ══ */}
             {section === 'presence' && <OnlineUsersCard />}

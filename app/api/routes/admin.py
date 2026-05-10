@@ -2459,3 +2459,138 @@ def get_protection_mode(
             pm = {}
 
     return {"hosting_id": hosting_id, "name": row.get("name"), "protection_mode": pm}
+
+
+# ── AI Sentinel — system_incidents ───────────────────────────────────────────
+
+@router.get("/sentinel/incidents")
+def list_sentinel_incidents(
+    source_type: Optional[str] = None,
+    status:      Optional[str] = None,
+    user_id:     Optional[int] = None,
+    severity:    Optional[str] = None,
+    limit:       int = 100,
+    offset:      int = 0,
+    _: dict = Depends(require_role("admin")),
+):
+    """List system_incidents, optionally filtered by source_type / status / user_id / severity."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        where: list = []
+        params: list = []
+        if source_type:
+            where.append("source_type = %s"); params.append(source_type)
+        if status:
+            where.append("status = %s"); params.append(status)
+        if user_id:
+            where.append("user_id = %s"); params.append(user_id)
+        if severity:
+            where.append("severity = %s"); params.append(severity)
+        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        params += [min(limit, 500), offset]
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT * FROM system_incidents {clause}"
+            f" ORDER BY last_seen DESC LIMIT %s OFFSET %s",
+            params,
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        return {"items": rows, "limit": limit, "offset": offset, "count": len(rows)}
+    finally:
+        release_connection(conn)
+
+
+@router.post("/incidents/{incident_id}/resolve")
+def resolve_sentinel_incident(
+    incident_id: int,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Manually mark a system_incident as resolved."""
+    import json as _json_mod
+    from app.infra.db import get_connection, release_connection
+    from datetime import datetime, timezone
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT incident_id, status FROM system_incidents WHERE incident_id = %s",
+            (incident_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Incidente no encontrado")
+        if dict(row)["status"] != "open":
+            raise HTTPException(status_code=409, detail="El incidente ya está resuelto")
+
+        now = datetime.now(timezone.utc)
+        cur.execute(
+            """
+            UPDATE system_incidents
+               SET status = 'resolved', resolved_at = %s, updated_at = %s,
+                   evidence = evidence || %s::jsonb
+             WHERE incident_id = %s AND status = 'open'
+            """,
+            (
+                now, now,
+                _json_mod.dumps({
+                    "resolved_by":     f"admin:{admin['user_id']}",
+                    "resolved_reason": "manual_resolve",
+                }),
+                incident_id,
+            ),
+        )
+        conn.commit()
+        _admin_audit.log(
+            admin_id=admin["user_id"],
+            admin_email=admin.get("email", ""),
+            action="sentinel_incident_resolved",
+            ip=_get_ip(request),
+            details=f"incident_id={incident_id}",
+        )
+        return {"ok": True, "incident_id": incident_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        release_connection(conn)
+
+
+@router.get("/deploy-events")
+def list_admin_deploy_events(
+    user_id:  Optional[int] = None,
+    status:   Optional[str] = None,
+    code:     Optional[str] = None,
+    limit:    int = 100,
+    offset:   int = 0,
+    _: dict = Depends(require_role("admin")),
+):
+    """List all deploy_events with optional filters."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        where: list = []
+        params: list = []
+        if user_id:
+            where.append("user_id = %s"); params.append(user_id)
+        if status:
+            where.append("status = %s"); params.append(status)
+        if code:
+            where.append("code = %s"); params.append(code)
+        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        params += [min(limit, 500), offset]
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT deploy_event_id, user_id, hosting_id, repo_url, branch,"
+            f"       project_name, stage, status, code, message, suggested_fix,"
+            f"       evidence, cleanup_status, created_at"
+            f"  FROM deploy_events {clause}"
+            f" ORDER BY created_at DESC LIMIT %s OFFSET %s",
+            params,
+        )
+        return {"items": [dict(r) for r in cur.fetchall()], "limit": limit, "offset": offset}
+    finally:
+        release_connection(conn)

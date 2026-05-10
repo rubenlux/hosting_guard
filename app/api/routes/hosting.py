@@ -1925,6 +1925,33 @@ async def github_webhook(hosting_id: int, request: Request):
     return {"status": "ok"}
 
 
+@router.get("/deploy-events/me")
+def get_my_deploy_events(
+    limit: int = 20,
+    user: dict = Depends(verify_token),
+):
+    """Return the authenticated user's recent deploy_events (newest first)."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT deploy_event_id, repo_url, branch, project_name,
+                   stage, status, code, message, suggested_fix,
+                   evidence, cleanup_status, created_at
+              FROM deploy_events
+             WHERE user_id = %s
+             ORDER BY created_at DESC
+             LIMIT %s
+            """,
+            (user["user_id"], min(limit, 100)),
+        )
+        return {"items": [dict(r) for r in cur.fetchall()]}
+    finally:
+        release_connection(conn)
+
+
 @router.get("/hostings/{hosting_id}/deploy-logs")
 def get_deploy_logs(hosting_id: int, user: dict = Depends(verify_token)):
     user_id = user.get("user_id")
