@@ -19,6 +19,10 @@ Resolve strategy:
   system_incident is marked resolved. Re-fires create a new incident.
 
 This job is ADDITIVE — it never modifies any source table.
+
+Implementation split: app/services/incidents/ contains standalone
+  versions of each sync function (for new code). This module keeps
+  the originals in-place for scheduler backward-compatibility.
 """
 import hashlib
 import json
@@ -163,8 +167,6 @@ def _resolve_incident(
 def _sync_security_events(conn) -> dict:
     counts: dict = {"created": 0, "updated": 0, "resolved": 0}
 
-    # Exclude events for deleted hostings to avoid false-positive incidents.
-    # Global events (hosting_id IS NULL) are always included.
     open_rows = _query(
         conn,
         """
@@ -211,7 +213,6 @@ def _sync_security_events(conn) -> dict:
         )
         counts[result] += 1
 
-    # Resolve open incidents whose hosting was subsequently deleted.
     deleted_incidents = _query(
         conn,
         """
@@ -231,7 +232,6 @@ def _sync_security_events(conn) -> dict:
         ):
             counts["resolved"] += 1
 
-    # Resolve by absence: open incident whose source event is no longer open.
     open_incidents = _query(
         conn,
         "SELECT correlation_key FROM system_incidents"
@@ -255,7 +255,6 @@ def _sync_site_alerts(conn) -> dict:
     counts: dict = {"created": 0, "updated": 0, "resolved": 0}
 
     try:
-        # INNER JOIN excludes alerts for non-existent or deleted hostings.
         open_rows = _query(
             conn,
             """
@@ -305,7 +304,6 @@ def _sync_site_alerts(conn) -> dict:
         )
         counts[result] += 1
 
-    # Resolve open incidents whose hosting was subsequently deleted.
     try:
         deleted_incidents = _query(
             conn,
@@ -328,7 +326,6 @@ def _sync_site_alerts(conn) -> dict:
     except Exception as exc:
         logger.warning("sync_incidents_feed: site_alerts deleted-hosting cleanup failed: %s", exc)
 
-    # Resolve by absence: open incident whose alert no longer exists as unresolved.
     open_incidents = _query(
         conn,
         "SELECT correlation_key FROM system_incidents"
