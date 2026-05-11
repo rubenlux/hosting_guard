@@ -48,11 +48,7 @@ def _check_lockfile(work_dir: str, filename: str) -> Optional[str]:
 
 
 def check_node_sass_preflight(work_dir: str) -> Optional[dict]:
-    """
-    Scan manifest files for node-sass before npm install.
-    Returns {"package": ..., "detection_source": ...} if found, else None.
-    Kept for backward compatibility; prefer run_dependency_preflight.
-    """
+    """Scan manifest files for node-sass. Returns {"package": ..., "detection_source": ...} or None."""
     source = (
         _check_package_json(work_dir)
         or _check_lockfile(work_dir, "package-lock.json")

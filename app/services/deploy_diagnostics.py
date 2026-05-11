@@ -8,7 +8,6 @@ structured JSON response with code/stage/detail/suggested_fix.
 deploy_events are read by sync_incidents_feed to surface repeated failures as
 system_incidents for the AI Sentinel layer.
 """
-import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -31,10 +30,7 @@ BUILD_FAILED               = "build_failed"
 OPENSSL_BUILD_FAILED       = "openssl_build_failed"
 INDEX_HTML_NOT_FOUND       = "index_html_not_found"
 OUTPUT_DIR_MISSING         = "output_directory_missing"
-DOCKER_BUILD_FAILED        = "docker_build_failed"
 CONTAINER_START_FAILED     = "container_start_failed"
-CONTAINER_HEALTH_FAILED    = "container_health_failed"
-TRAEFIK_ROUTE_FAILED       = "traefik_route_failed"
 UNSAFE_PUBLISH_ROOT        = "unsafe_publish_root"
 SITE_RETURNS_403           = "site_returns_403"
 SITE_RETURNS_404           = "site_returns_404"
@@ -68,60 +64,13 @@ BUILD_TIMEOUT                    = "build_timeout"
 MULTIPLE_OUTPUT_DIRECTORIES      = "multiple_output_directories"
 NEXT_SSR_NOT_SUPPORTED           = "next_ssr_not_supported"
 
+
 # ── Severity (for system_incidents) ──────────────────────────────────────────
 
-_SEVERITY: dict = {
-    DEPLOY_RUNTIME_MISSING_TOOL: "high",
-    UNSAFE_PUBLISH_ROOT:         "high",
-    SITE_RETURNS_403:            "high",
-    SITE_RETURNS_404:            "warning",
-    DEPLOY_RATE_LIMIT_EXCEEDED:  "info",
-    PACKAGE_JSON_NOT_FOUND:     "warning",
-    MULTIPLE_PROJECT_ROOTS:     "warning",
-    BUILD_SCRIPT_MISSING:       "warning",
-    NPM_INSTALL_FAILED:         "warning",
-    NPM_PEER_DEP_FAILED:        "warning",
-    BUILD_FAILED:               "warning",
-    OPENSSL_BUILD_FAILED:       "warning",
-    INDEX_HTML_NOT_FOUND:       "warning",
-    OUTPUT_DIR_MISSING:         "warning",
-    GITHUB_REPO_NOT_FOUND:      "warning",
-    GITHUB_BRANCH_NOT_FOUND:    "warning",
-    GITHUB_CLONE_FAILED:        "warning",
-    DOCKER_BUILD_FAILED:        "medium",
-    CONTAINER_START_FAILED:     "medium",
-    CONTAINER_HEALTH_FAILED:    "medium",
-    TRAEFIK_ROUTE_FAILED:       "high",
-    SITE_RETURNS_502:           "high",
-    SITE_RETURNS_503:           "high",
-    SITE_RETURNS_404:               "warning",
-    UNKNOWN_DEPLOY_ERROR:           "medium",
-    NATIVE_DEPENDENCY_BUILD_FAILED: "warning",
-    NODE_SASS_INCOMPATIBLE:         "warning",
-    NATIVE_BUILD_TOOL_MISSING:      "high",
-    NODE_VERSION_MISMATCH:          "warning",
-    MODULE_NOT_FOUND_BUILD:         "warning",
-    SSL_PROVISIONING_TIMEOUT:       "warning",
-    GITHUB_PRIVATE_REPO_UNAUTHORIZED: "warning",
-    GITHUB_CLONE_TIMEOUT:             "warning",
-    INVALID_REPO_URL:                 "warning",
-    SUBDOMAIN_ALREADY_EXISTS:         "warning",
-    NO_WEB_BUILDABLE_PROJECT:         "warning",
-    PACKAGE_MANAGER_PNPM_DETECTED:    "warning",
-    PACKAGE_MANAGER_YARN_DETECTED:    "warning",
-    NPM_PEER_DEPENDENCY_CONFLICT:     "warning",
-    DEPENDENCY_VERSION_NOT_FOUND:     "warning",
-    NPM_INSTALL_TIMEOUT:              "warning",
-    ENV_VAR_MISSING:                  "warning",
-    CASE_SENSITIVE_IMPORT_ERROR:      "warning",
-    BUILD_TIMEOUT:                    "warning",
-    MULTIPLE_OUTPUT_DIRECTORIES:      "warning",
-    NEXT_SSR_NOT_SUPPORTED:           "warning",
-}
-
-
 def deploy_severity(code: str) -> str:
-    return _SEVERITY.get(code, "warning")
+    from app.services.deploy.diagnostics_matrix import MATRIX
+    entry = MATRIX.get(code)
+    return entry["severity"] if entry else "warning"
 
 
 # ── DeployError ───────────────────────────────────────────────────────────────
@@ -165,10 +114,6 @@ class DeployError(Exception):
 
 
 # ── deploy_events DB writer ───────────────────────────────────────────────────
-
-def _repo_hash(repo_url: str) -> str:
-    return hashlib.sha256(repo_url.encode()).hexdigest()[:12]
-
 
 def record_deploy_event(
     *,
