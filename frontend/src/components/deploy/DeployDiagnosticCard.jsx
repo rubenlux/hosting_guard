@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, Wrench } from 'lucide-react';
+import { AlertTriangle, Wrench, Zap } from 'lucide-react';
 import DeployErrorDetails from './DeployErrorDetails';
 
 export default function DeployDiagnosticCard({ errorData }) {
@@ -13,6 +13,15 @@ export default function DeployDiagnosticCard({ errorData }) {
       </div>
 
       <p className="text-gray-200 text-sm leading-relaxed">{detail}</p>
+
+      {evidence?.install_skipped && (
+        <div className="flex items-start gap-2 bg-amber-500/8 border border-amber-500/20 rounded-xl px-4 py-3">
+          <Zap className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-amber-300 text-xs leading-relaxed">
+            Lo detectamos antes de instalar dependencias — no se creó ningún contenedor ni se ejecutó el build.
+          </p>
+        </div>
+      )}
 
       {suggested_fix && (
         <div className="flex items-start gap-2 bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3">

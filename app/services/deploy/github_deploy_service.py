@@ -33,6 +33,7 @@ from app.services.deploy_diagnostics import (
     GITHUB_REPO_NOT_FOUND,
     INDEX_HTML_NOT_FOUND,
     MULTIPLE_PROJECT_ROOTS,
+    NODE_SASS_INCOMPATIBLE,
     PACKAGE_JSON_NOT_FOUND,
     SITE_RETURNS_403,
     SITE_RETURNS_404,
@@ -61,6 +62,7 @@ from app.services.deploy.project_detector import (
     _find_serve_dir,
     _read_pkg,
 )
+from app.services.deploy.dependency_preflight import check_node_sass_preflight
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +300,28 @@ async def run_github_deploy(
                     "github_deploy_stage stage=build_info repo=%s root=%s framework=%s output=%s",
                     data.repo_url, _detected.get("root_directory"), _fw, out_dir,
                 )
+
+                # Preflight: detect known-incompatible deps before running npm install
+                _preflight = check_node_sass_preflight(work_dir)
+                if _preflight:
+                    raise DeployError(
+                        code=NODE_SASS_INCOMPATIBLE,
+                        stage="dependency_preflight",
+                        detail="El proyecto usa node-sass, una dependencia antigua incompatible con Node 20.",
+                        suggested_fix=(
+                            "Migrá de node-sass a sass (npm install sass). "
+                            "node-sass no es compatible con versiones modernas de Node."
+                        ),
+                        evidence={
+                            "detected_root_directory": _detected.get("root_directory", "."),
+                            "framework": _fw,
+                            "node_image": "node:20-alpine",
+                            "suspected_package": "node-sass",
+                            "detection_source": _preflight["detection_source"],
+                            "install_skipped": True,
+                            "reason": "known_incompatible_dependency",
+                        },
+                    )
 
                 # Phase 1 — separate install and build with rich diagnostics
                 _npm_log_dir = tempfile.mkdtemp(prefix="hg_npm_")

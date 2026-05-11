@@ -631,3 +631,125 @@ Añadida función `markSuperseded(events)` que corre en el cliente tras el fetch
 - El evento específico activo (`node_sass_incompatible`) se muestra con estilo normal y expandible
 
 El usuario ve claramente cuál es el problema vigente sin confundirse con diagnósticos anteriores ya superados.
+
+---
+
+## 2026-05-10 — SSL pending post-deploy, UX success card, refactor frontend deploy
+
+### BLOQUE 1 — app/services/deploy/site_health.py (nuevo)
+
+Módulo de probing HTTP post-deploy para manejar el período de provisioning de certificados SSL (Traefik + Let's Encrypt tarda 10-60s después de arrancar el contenedor). Cloudflare devuelve HTTP 526 durante ese período — antes se mostraba al usuario como error.
+
+**`check_site_once(subdomain, timeout=8.0) → dict`**
+- Único probe HTTP con `httpx.AsyncClient(verify=False)`
+- Retorna `{"http_status": int|None, "error_type": None|"tls"|"connection"|"other"}`
+- Captura `ConnectError`, `ConnectTimeout`, `ReadTimeout` → `error_type="connection"`
+
+**`wait_for_site_online(subdomain, timeout_seconds=60, interval_seconds=5) → dict`**
+- Polling hasta 2xx, error HTTP fatal, o timeout
+- Reglas de clasificación:
+  - 2xx → `status="online"` (stop)
+  - 403/404/502/503 → `status="http_failed"` (stop inmediato)
+  - 526/TLS/connection → `status="ssl_pending"` (seguir esperando)
+- Retorna `{status, last_http_status, last_error_type, attempts, duration_seconds}`
+
+---
+
+### BLOQUE 2 — app/services/deploy_diagnostics.py
+
+Agregado:
+- `SSL_PROVISIONING_TIMEOUT = "ssl_provisioning_timeout"` como constante de error
+- Entrada en `_SEVERITY`: `SSL_PROVISIONING_TIMEOUT: "warning"`
+
+---
+
+### BLOQUE 3 — app/services/deploy/github_deploy_service.py
+
+**Health check reemplazado:**
+- Antes: un solo `httpx.AsyncClient.get()` inline con `await asyncio.sleep(2)` y catch-all silencioso
+- Después: dos fases separadas:
+  1. `check_site_once()` antes del persist a DB (detecta errores HTTP fatales inmediatos)
+  2. `wait_for_site_online(timeout_seconds=60)` después del persist (espera SSL activo)
+
+**Manejo de `http_failed` post-persist:** limpia el deploy (container + DB row + client_dir) y registra `deploy_event` antes de re-lanzar `DeployError`.
+
+**SSL pending no bloquea éxito:** si `wait_for_site_online` retorna `ssl_pending`, registra un `deploy_event(stage="ssl_check", status="pending", code=SSL_PROVISIONING_TIMEOUT)` informativo pero retorna éxito al cliente.
+
+**Nuevos campos en el response dict:**
+```python
+{
+  "subdomain":  subdomain,
+  "ssl_status": "online" | "pending",
+  "message":    "Deploy completado exitosamente." | "Sitio publicado. SSL activándose.",
+  # anteriores: status, type, hosting_id, url, repo, branch, webhook_url, webhook_token
+}
+```
+
+**Imports agregados:** `SSL_PROVISIONING_TIMEOUT`, `check_site_once`, `wait_for_site_online`. Eliminado el bloque `import httpx as _httpx` inline.
+
+---
+
+### BLOQUE 4 — app/api/routes/health.py
+
+Nuevo endpoint `GET /health/{hosting_id}/ssl` registrado ANTES del catch-all `/{hosting_id}`:
+- Auth: `verify_token`
+- Llama `check_site_once(subdomain)` en tiempo real
+- Retorna `{"ssl_status": "online"|"pending", "http_status": int|None, "error_type": str|None}`
+- Usado por el frontend para polling del estado SSL en `SslPendingCard`
+
+---
+
+### BLOQUE 5 — frontend: refactor deploy en componentes separados
+
+**Problema:** `HostingCreationForm.jsx` concentraba 5 componentes inline, lógica de error normalization, rate limit countdown, SSL polling y ~670 líneas totales.
+
+**Nueva estructura:**
+
+`frontend/src/hooks/useGithubDeploy.js` (84 líneas):
+- Encapsula `deployFromGithub()` + normalización completa de errores
+- Retorna `{ deploy, loading, result, reset }`
+- `result` tiene campo `kind`:
+  - `"success"` → `{hosting_id, subdomain, url, ssl_status, message}`
+  - `"rate_limit"` → `{code, detail, retry_after_seconds}`
+  - `"diagnostic"` → `{code, stage, detail, suggested_fix, technical_detail, evidence, request_id}`
+  - `"runtime_missing"` → mismos campos que diagnostic
+  - `"network_error"` → `{detail}` (sin `err.response`)
+  - `"generic_error"` → `{error}` (fallback legible)
+
+`frontend/src/components/deploy/` (6 archivos):
+- `DeploySuccessCard.jsx` — URL + "Abrir sitio" + "Ir a Mis sitios" (llama `onClose`)
+- `SslPendingCard.jsx` — stepper 6 pasos, polling `getSslStatus` cada 5s; cuando online muestra URL y botones
+- `DeployDiagnosticCard.jsx` — "Deploy no completado" + `suggested_fix` + `DeployErrorDetails`
+- `DeployErrorDetails.jsx` — bloque colapsable con `code/stage/request_id/technical_detail/evidence` en JSON
+- `RuntimeMissingCard.jsx` — "El problema no está en tu repo" + detalles internos
+- `RateLimitCard.jsx` — countdown autónomo desde `retry_after_seconds` (sin estado externo)
+
+`frontend/src/components/HostingCreationForm.jsx` (405 líneas, −265 vs. antes):
+- Orquestador puro: estado del formulario, `useGithubDeploy()`, despacha `onSuccess(data)` inmediatamente
+- No cierra el formulario en deploy success — `onClose` solo se dispara desde los botones "Ir a Mis sitios"
+- Non-github flows (static/wordpress) mantienen `simpleResult` local, comportamiento idéntico
+
+**Dashboard.jsx:** desacoplado `onSuccess` de close:
+```jsx
+<HostingCreationForm
+  onSuccess={() => refresh()}      // solo refresca Mis Sitios
+  onClose={() => setShowCreate(false)}  // cierra al presionar "Ir a Mis sitios"
+/>
+```
+
+`frontend/src/services/api.js`: agregado `getSslStatus(hostingId)` → `GET /health/{hostingId}/ssl`.
+
+---
+
+### BLOQUE 6 — tests/test_site_health.py (nuevo, 12 tests)
+
+Tests async para `check_site_once` y `wait_for_site_online`:
+- 200 → online, 526 → http_status devuelto, ConnectError → connection error
+- 502 → http_failed (stop inmediato, 1 intento)
+- 526 → 200 → online tras 2 intentos
+- timeout con 526 → ssl_pending
+- connection error → 200 → online
+- `SSL_PROVISIONING_TIMEOUT` constante y severidad correctas
+- result tiene todos los campos esperados
+
+**Total:** 82 → 94 tests, todos verdes.
