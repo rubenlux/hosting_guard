@@ -386,7 +386,10 @@ const Dashboard = () => {
           <div className="flex-1 overflow-y-auto bg-[#0a0a0a]" style={{ padding: activeView === 'dashboard' && !showCreate && !sidebarSection ? 0 : undefined }}>
             {showCreate ? (
               <div className="max-w-4xl mx-auto">
-                <HostingCreationForm onSuccess={() => { setShowCreate(false); refresh(); }} />
+                <HostingCreationForm
+                  onSuccess={() => refresh()}
+                  onClose={() => setShowCreate(false)}
+                />
               </div>
             ) : activeView === 'pixel' ? (
               <PixelAnalytics />

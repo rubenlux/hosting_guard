@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github, ChevronDown, ChevronUp, X, Clock, AlertTriangle, Wrench, Info, Loader2, ShieldCheck } from 'lucide-react';
+import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github, ChevronDown, ChevronUp, X, Clock, AlertTriangle, Wrench, Info, Loader2, ShieldCheck, ExternalLink, ArrowRight } from 'lucide-react';
 import { createHosting, createWordPress, deployFromGithub, getSslStatus } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 
@@ -132,15 +132,47 @@ function DiagnosticCard({ result }) {
 }
 
 const SSL_STEPS = [
-  { label: 'Clonando repositorio' },
-  { label: 'Instalando dependencias' },
-  { label: 'Compilando proyecto' },
-  { label: 'Publicando sitio' },
+  { label: 'Repositorio clonado' },
+  { label: 'Dependencias instaladas' },
+  { label: 'Proyecto compilado' },
+  { label: 'Sitio publicado' },
   { label: 'Activando SSL' },
   { label: 'Sitio en línea' },
 ];
 
-function SslPendingCard({ hostingId, url, onOnline }) {
+function DeploySuccessCard({ url, onClose }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-3 text-emerald-400 font-bold text-sm">
+        <CheckCircle2 className="w-5 h-5 shrink-0" />
+        Tu sitio está en línea
+      </div>
+
+      <div className="bg-background/50 border border-white/8 p-4 rounded-xl">
+        <p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mb-1.5">Tu URL está lista:</p>
+        <a href={url} target="_blank" rel="noopener noreferrer"
+           className="text-primary font-mono block hover:underline text-lg break-all">
+          {url}
+        </a>
+      </div>
+
+      <div className="flex gap-2">
+        <a href={url} target="_blank" rel="noopener noreferrer"
+           className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-bold hover:bg-emerald-500/20 transition-colors">
+          <ExternalLink className="w-4 h-4" /> Abrir sitio
+        </a>
+        {onClose && (
+          <button type="button" onClick={onClose}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white/5 border border-white/10 text-gray-300 text-sm font-bold hover:bg-white/10 transition-colors">
+            <ArrowRight className="w-4 h-4" /> Ir a Mis sitios
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SslPendingCard({ hostingId, url, onClose }) {
   const [sslOnline, setSslOnline] = useState(false);
   const intervalRef = useRef(null);
 
@@ -151,28 +183,30 @@ function SslPendingCard({ hostingId, url, onOnline }) {
         if (data.ssl_status === 'online') {
           clearInterval(intervalRef.current);
           setSslOnline(true);
-          if (onOnline) onOnline();
         }
       } catch {
         // ignore transient errors, keep polling
       }
     }, 5000);
     return () => clearInterval(intervalRef.current);
-  }, [hostingId, onOnline]);
+  }, [hostingId]);
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3 text-blue-400 font-bold text-sm">
-        <ShieldCheck className="w-5 h-5 shrink-0" />
-        {sslOnline ? 'Sitio en línea' : 'Activando SSL…'}
+      <div className={`flex items-center gap-3 font-bold text-sm ${sslOnline ? 'text-emerald-400' : 'text-blue-400'}`}>
+        {sslOnline
+          ? <CheckCircle2 className="w-5 h-5 shrink-0" />
+          : <ShieldCheck className="w-5 h-5 shrink-0" />
+        }
+        {sslOnline ? 'Tu sitio está en línea' : 'Tu sitio fue publicado — activando SSL…'}
       </div>
 
       <div className="space-y-2">
         {SSL_STEPS.map((step, i) => {
           const isSSL    = i === 4;
           const isOnline = i === 5;
-          const done     = isOnline ? sslOnline : (isSSL ? sslOnline : i < 4);
-          const active   = isSSL ? !sslOnline : (isOnline ? sslOnline : false);
+          const done   = isOnline ? sslOnline : (isSSL ? sslOnline : i < 4);
+          const active = isSSL ? !sslOnline : false;
 
           return (
             <div key={i} className="flex items-center gap-3">
@@ -193,16 +227,29 @@ function SslPendingCard({ hostingId, url, onOnline }) {
         })}
       </div>
 
-      {sslOnline && (
-        <div className="bg-background/50 p-4 rounded-xl mt-1">
-          <p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mb-1">Tu sitio está listo:</p>
-          <a href={url} target="_blank" rel="noopener noreferrer" className="text-primary font-mono block hover:underline text-lg">
-            {url}
-          </a>
-        </div>
-      )}
-
-      {!sslOnline && (
+      {sslOnline ? (
+        <>
+          <div className="bg-background/50 border border-white/8 p-4 rounded-xl">
+            <p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mb-1.5">Tu URL está lista:</p>
+            <a href={url} target="_blank" rel="noopener noreferrer"
+               className="text-primary font-mono block hover:underline text-lg break-all">
+              {url}
+            </a>
+          </div>
+          <div className="flex gap-2">
+            <a href={url} target="_blank" rel="noopener noreferrer"
+               className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-bold hover:bg-emerald-500/20 transition-colors">
+              <ExternalLink className="w-4 h-4" /> Abrir sitio
+            </a>
+            {onClose && (
+              <button type="button" onClick={onClose}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white/5 border border-white/10 text-gray-300 text-sm font-bold hover:bg-white/10 transition-colors">
+                <ArrowRight className="w-4 h-4" /> Ir a Mis sitios
+              </button>
+            )}
+          </div>
+        </>
+      ) : (
         <p className="text-xs text-gray-500">
           El certificado SSL se genera automáticamente. Tomará unos segundos.
         </p>
@@ -241,7 +288,7 @@ const TYPES = [
   },
 ];
 
-const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
+const HostingCreationForm = ({ onSuccess, onClose, selectedPlan }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const userPlan = user?.plan || 'free';
@@ -305,7 +352,7 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
         : await createHosting(name, plan);
 
       setResult({ success: true, data });
-      if (onSuccess) onSuccess();
+      if (onSuccess) onSuccess(data);
     } catch (err) {
       const status       = err.response?.status;
       const data         = err.response?.data || {};
@@ -568,14 +615,22 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className={`mt-8 p-6 rounded-2xl border ${result.success ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}
+              className={`mt-8 p-6 rounded-2xl border ${
+                result.success && result.data?.ssl_status === 'pending'
+                  ? 'bg-blue-500/5 border-blue-500/20'
+                  : result.success
+                  ? 'bg-emerald-500/5 border-emerald-500/20'
+                  : 'bg-red-500/10 border-red-500/30'
+              }`}
             >
               {result.success && type === 'github' && result.data?.ssl_status === 'pending' ? (
                 <SslPendingCard
                   hostingId={result.data.hosting_id}
                   url={result.data.url}
-                  onOnline={null}
+                  onClose={onClose}
                 />
+              ) : result.success && type === 'github' && result.data?.url ? (
+                <DeploySuccessCard url={result.data.url} onClose={onClose} />
               ) : result.success ? (
                 <div className="flex flex-col gap-4">
                   <div className="flex items-center gap-3 text-green-400 font-bold">

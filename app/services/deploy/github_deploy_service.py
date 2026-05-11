@@ -669,13 +669,14 @@ async def run_github_deploy(
             "status":        "deployed",
             "type":          "github",
             "hosting_id":    hosting_id,
+            "subdomain":     subdomain,
             "url":           f"https://{subdomain}",
             "ssl_status":    "online" if _ssl_online else "pending",
+            "message":       "Deploy completado exitosamente." if _ssl_online else "Sitio publicado. SSL activándose.",
             "repo":          data.repo_url,
             "branch":        data.branch,
             "webhook_url":   f"/hosting/hostings/{hosting_id}/webhook",
             "webhook_token": webhook_token,
-            "note":          "Sitio en línea." if _ssl_online else "SSL activándose, estará listo en segundos.",
         }
 
     except DeployError as de:
