@@ -537,6 +537,9 @@ export const getHostingHealth = async (hostingId) => {
   return response.data;
 };
 
+export const getSslStatus = async (hostingId) =>
+  api.get(`/health/${hostingId}/ssl`).then(r => r.data);
+
 export const getHostingHealthHistory = async (hostingId, limit = 24) => {
   const response = await api.get(`/health/${hostingId}/history`, { params: { limit } });
   return response.data;

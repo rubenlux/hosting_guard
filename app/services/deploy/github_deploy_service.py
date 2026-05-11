@@ -38,11 +38,13 @@ from app.services.deploy_diagnostics import (
     SITE_RETURNS_404,
     SITE_RETURNS_502,
     SITE_RETURNS_503,
+    SSL_PROVISIONING_TIMEOUT,
     UNKNOWN_DEPLOY_ERROR,
     UNSAFE_PUBLISH_ROOT,
     DeployError,
     record_deploy_event,
 )
+from app.services.deploy.site_health import check_site_once, wait_for_site_online
 from app.services.deploy.build_runner import (
     _check_required_tool,
     _default_install,
@@ -552,19 +554,13 @@ async def run_github_deploy(
             )
         _container_created = True
 
-        # ── Health check ──────────────────────────────────────────────────────
-        _hc_status = 0
-        try:
-            await asyncio.sleep(2)
-            import httpx as _httpx
-            async with _httpx.AsyncClient(
-                verify=False, timeout=5.0, follow_redirects=False
-            ) as _hc_client:
-                _hc_resp = await _hc_client.get(f"https://{subdomain}")
-                _hc_status = _hc_resp.status_code
-        except Exception:
-            pass
-
+        # ── Initial health check (before persisting) ──────────────────────────
+        # Catches hard HTTP failures (403/404/502/503) that won't resolve later.
+        # Skips SSL-related errors (526, TLS, connection) — cert provisioning may
+        # still be in progress and will be polled after the row is persisted.
+        await asyncio.sleep(2)
+        _initial_probe = await check_site_once(subdomain)
+        _hc_status = _initial_probe["http_status"] or 0
         if _hc_status in _HC_ERRORS:
             _hc_code, _hc_fix = _HC_ERRORS[_hc_status]
             raise DeployError(
@@ -611,16 +607,62 @@ async def run_github_deploy(
         deploy_log["finished_at"] = datetime.now().isoformat()
         _hosting_repo.append_deploy_log(hosting_id, deploy_log)
 
+        # ── SSL / liveness poll ───────────────────────────────────────────────
+        _ssl_result = await wait_for_site_online(subdomain, timeout_seconds=60, interval_seconds=5)
+        _ssl_online = _ssl_result["status"] == "online"
+
+        if _ssl_result["status"] == "http_failed":
+            # A hard HTTP error appeared after persist — clean up and fail.
+            _hf_status = _ssl_result["last_http_status"] or 0
+            _hc_code, _hc_fix = _HC_ERRORS.get(
+                _hf_status,
+                (SITE_RETURNS_503, "El sitio respondió un error inesperado después de desplegarse."),
+            )
+            cleanup_status = await _do_cleanup()
+            record_deploy_event(
+                user_id=user_id, hosting_id=hosting_id,
+                repo_url=data.repo_url, branch=data.branch, project_name=project_name,
+                stage="health_check", status="failed",
+                code=_hc_code, message=f"El sitio respondió HTTP {_hf_status} tras el deploy.",
+                suggested_fix=_hc_fix,
+                evidence={**_detected, "http_status": _hf_status, "subdomain": subdomain},
+                cleanup_status=cleanup_status,
+            )
+            raise DeployError(
+                code=_hc_code, stage="health_check",
+                detail=f"El sitio respondió HTTP {_hf_status} tras el deploy.",
+                suggested_fix=_hc_fix,
+                evidence={"http_status": _hf_status, "subdomain": subdomain, "cleanup_status": cleanup_status},
+            )
+
+        _ssl_evidence = {
+            **_detected,
+            "ssl_status":    "online" if _ssl_online else "pending",
+            "ssl_attempts":  _ssl_result["attempts"],
+            "ssl_duration_s": round(_ssl_result["duration_seconds"], 1),
+        }
+
+        if not _ssl_online:
+            record_deploy_event(
+                user_id=user_id, hosting_id=hosting_id,
+                repo_url=data.repo_url, branch=data.branch, project_name=project_name,
+                stage="ssl_check", status="pending",
+                code=SSL_PROVISIONING_TIMEOUT,
+                message="El certificado SSL aún no está activo. Tomará unos segundos más.",
+                suggested_fix="El SSL se activa automáticamente. La página estará disponible en breve.",
+                evidence=_ssl_evidence,
+            )
+
         record_deploy_event(
             user_id=user_id, hosting_id=hosting_id,
             repo_url=data.repo_url, branch=data.branch, project_name=project_name,
             stage="success", status="success",
             message="Deploy completado exitosamente.",
-            evidence=dict(_detected),
+            evidence=_ssl_evidence,
         )
         logger.info(
-            "github_deploy_stage stage=success repo=%s hosting_id=%s user=%s",
-            data.repo_url, hosting_id, user_id,
+            "github_deploy_stage stage=success repo=%s hosting_id=%s user=%s ssl_status=%s",
+            data.repo_url, hosting_id, user_id, "online" if _ssl_online else "pending",
         )
 
         return {
@@ -628,11 +670,12 @@ async def run_github_deploy(
             "type":          "github",
             "hosting_id":    hosting_id,
             "url":           f"https://{subdomain}",
+            "ssl_status":    "online" if _ssl_online else "pending",
             "repo":          data.repo_url,
             "branch":        data.branch,
             "webhook_url":   f"/hosting/hostings/{hosting_id}/webhook",
             "webhook_token": webhook_token,
-            "note":          "Sitio desplegado desde GitHub. Listo en 30 segundos.",
+            "note":          "Sitio en línea." if _ssl_online else "SSL activándose, estará listo en segundos.",
         }
 
     except DeployError as de:

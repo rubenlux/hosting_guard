@@ -255,6 +255,30 @@ async def get_hosting_health_history(hosting_id: int, limit: int = 24, user: dic
     return health_repo.get_health_history(hosting_id, limit=limit)
 
 
+@router.get("/{hosting_id}/ssl")
+async def get_hosting_ssl_status(hosting_id: int, user: dict = Depends(verify_token)):
+    """Live SSL probe — returns ssl_status: online | pending."""
+    user_id = user.get("user_id")
+    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    if not hosting:
+        raise HTTPException(status_code=404, detail="Hosting not found")
+
+    subdomain = hosting.get("subdomain")
+    if not subdomain:
+        raise HTTPException(status_code=400, detail="Hosting has no subdomain")
+
+    from app.services.deploy.site_health import check_site_once
+    probe = await check_site_once(subdomain)
+    http_status = probe["http_status"]
+    ssl_status = "online" if (http_status is not None and http_status < 400) else "pending"
+
+    return {
+        "ssl_status":  ssl_status,
+        "http_status": http_status,
+        "error_type":  probe["error_type"],
+    }
+
+
 @router.get("/{hosting_id}")
 async def get_hosting_health(hosting_id: int, user: dict = Depends(verify_token)):
     """Obtiene el score de salud actual de un hosting."""

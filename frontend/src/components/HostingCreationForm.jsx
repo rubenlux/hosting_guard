@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github, ChevronDown, ChevronUp, X, Clock, AlertTriangle, Wrench, Info } from 'lucide-react';
-import { createHosting, createWordPress, deployFromGithub } from '../services/api';
+import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github, ChevronDown, ChevronUp, X, Clock, AlertTriangle, Wrench, Info, Loader2, ShieldCheck } from 'lucide-react';
+import { createHosting, createWordPress, deployFromGithub, getSslStatus } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 
 // ── Deploy diagnostic cards ───────────────────────────────────────────────────
@@ -126,6 +126,86 @@ function DiagnosticCard({ result }) {
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+const SSL_STEPS = [
+  { label: 'Clonando repositorio' },
+  { label: 'Instalando dependencias' },
+  { label: 'Compilando proyecto' },
+  { label: 'Publicando sitio' },
+  { label: 'Activando SSL' },
+  { label: 'Sitio en línea' },
+];
+
+function SslPendingCard({ hostingId, url, onOnline }) {
+  const [sslOnline, setSslOnline] = useState(false);
+  const intervalRef = useRef(null);
+
+  useEffect(() => {
+    intervalRef.current = setInterval(async () => {
+      try {
+        const data = await getSslStatus(hostingId);
+        if (data.ssl_status === 'online') {
+          clearInterval(intervalRef.current);
+          setSslOnline(true);
+          if (onOnline) onOnline();
+        }
+      } catch {
+        // ignore transient errors, keep polling
+      }
+    }, 5000);
+    return () => clearInterval(intervalRef.current);
+  }, [hostingId, onOnline]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-3 text-blue-400 font-bold text-sm">
+        <ShieldCheck className="w-5 h-5 shrink-0" />
+        {sslOnline ? 'Sitio en línea' : 'Activando SSL…'}
+      </div>
+
+      <div className="space-y-2">
+        {SSL_STEPS.map((step, i) => {
+          const isSSL    = i === 4;
+          const isOnline = i === 5;
+          const done     = isOnline ? sslOnline : (isSSL ? sslOnline : i < 4);
+          const active   = isSSL ? !sslOnline : (isOnline ? sslOnline : false);
+
+          return (
+            <div key={i} className="flex items-center gap-3">
+              <span className="w-4 h-4 shrink-0 flex items-center justify-center">
+                {done ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                ) : active ? (
+                  <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-white/10 mx-auto block" />
+                )}
+              </span>
+              <span className={`text-sm ${done ? 'text-gray-300' : active ? 'text-amber-300' : 'text-gray-600'}`}>
+                {step.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {sslOnline && (
+        <div className="bg-background/50 p-4 rounded-xl mt-1">
+          <p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mb-1">Tu sitio está listo:</p>
+          <a href={url} target="_blank" rel="noopener noreferrer" className="text-primary font-mono block hover:underline text-lg">
+            {url}
+          </a>
+        </div>
+      )}
+
+      {!sslOnline && (
+        <p className="text-xs text-gray-500">
+          El certificado SSL se genera automáticamente. Tomará unos segundos.
+        </p>
       )}
     </div>
   );
@@ -490,7 +570,13 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
               animate={{ opacity: 1, scale: 1 }}
               className={`mt-8 p-6 rounded-2xl border ${result.success ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}
             >
-              {result.success ? (
+              {result.success && type === 'github' && result.data?.ssl_status === 'pending' ? (
+                <SslPendingCard
+                  hostingId={result.data.hosting_id}
+                  url={result.data.url}
+                  onOnline={null}
+                />
+              ) : result.success ? (
                 <div className="flex flex-col gap-4">
                   <div className="flex items-center gap-3 text-green-400 font-bold">
                     <CheckCircle2 className="w-6 h-6" />
@@ -502,7 +588,7 @@ const HostingCreationForm = ({ onSuccess, selectedPlan }) => {
                       {result.data.url}
                     </a>
                     {type === 'wordpress' && (
-                      <p className="text-gray-500 text-xs mt-2">⏳ WordPress estará listo en 30-60 segundos</p>
+                      <p className="text-gray-500 text-xs mt-2">WordPress estará listo en 30-60 segundos</p>
                     )}
                   </div>
                 </div>

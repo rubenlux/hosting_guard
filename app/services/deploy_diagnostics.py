@@ -48,6 +48,7 @@ NODE_SASS_INCOMPATIBLE          = "node_sass_incompatible"
 NATIVE_BUILD_TOOL_MISSING       = "native_build_tool_missing"
 NODE_VERSION_MISMATCH           = "node_version_mismatch"
 MODULE_NOT_FOUND_BUILD          = "module_not_found_build"
+SSL_PROVISIONING_TIMEOUT        = "ssl_provisioning_timeout"
 
 # ── Severity (for system_incidents) ──────────────────────────────────────────
 
@@ -82,6 +83,7 @@ _SEVERITY: dict = {
     NATIVE_BUILD_TOOL_MISSING:      "high",
     NODE_VERSION_MISMATCH:          "warning",
     MODULE_NOT_FOUND_BUILD:         "warning",
+    SSL_PROVISIONING_TIMEOUT:       "warning",
 }
 
 
