@@ -2,13 +2,19 @@
 AI Eyes Layer — Incident Feed Bridge (entrypoint)
 
 Syncs open alerts from detection tables into system_incidents.
-Implementation lives in app/services/incidents/.
+All sync logic lives in app/services/incidents/.
 
-Backward-compat aliases (_sync_*, _GENERIC_DEPLOY_CODES) kept so
-existing callers don't break.
+Re-exports core helpers (_normalize_severity, _upsert_incident,
+_resolve_incident) and sync aliases (_sync_*) so existing callers
+and tests that import from this module continue to work.
 """
 import logging
 
+from app.services.incidents.incident_deduper import (
+    _normalize_severity,
+    _upsert_incident,
+    _resolve_incident,
+)
 from app.services.incidents.sync_security_events import sync_security_events
 from app.services.incidents.sync_site_alerts import sync_site_alerts
 from app.services.incidents.sync_system_alerts import sync_system_alerts
@@ -20,7 +26,9 @@ from app.services.incidents.sync_deploy_events import (
 
 logger = logging.getLogger(__name__)
 
-# Backward-compat aliases used by tests and external callers
+# Backward-compat aliases — used by tests and external callers.
+# The loop below references these names so that patching them in tests
+# intercepts the actual calls.
 _sync_security_events = sync_security_events
 _sync_site_alerts     = sync_site_alerts
 _sync_system_alerts   = sync_system_alerts
@@ -37,10 +45,10 @@ def sync_incidents_feed() -> None:
         totals: dict = {"created": 0, "updated": 0, "resolved": 0}
 
         for label, fn in (
-            ("security_events", sync_security_events),
-            ("site_alerts",     sync_site_alerts),
-            ("system_alerts",   sync_system_alerts),
-            ("deploy_events",   sync_deploy_events),
+            ("security_events", _sync_security_events),
+            ("site_alerts",     _sync_site_alerts),
+            ("system_alerts",   _sync_system_alerts),
+            ("deploy_events",   _sync_deploy_events),
         ):
             try:
                 counts = fn(conn)
