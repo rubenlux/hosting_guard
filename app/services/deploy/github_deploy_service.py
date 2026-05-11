@@ -30,10 +30,13 @@ from app.services.deploy_diagnostics import (
     CONTAINER_START_FAILED,
     GITHUB_BRANCH_NOT_FOUND,
     GITHUB_CLONE_FAILED,
+    GITHUB_CLONE_TIMEOUT,
+    GITHUB_PRIVATE_REPO_UNAUTHORIZED,
     GITHUB_REPO_NOT_FOUND,
     INDEX_HTML_NOT_FOUND,
+    INVALID_REPO_URL,
+    MULTIPLE_OUTPUT_DIRECTORIES,
     MULTIPLE_PROJECT_ROOTS,
-    NODE_SASS_INCOMPATIBLE,
     PACKAGE_JSON_NOT_FOUND,
     SITE_RETURNS_403,
     SITE_RETURNS_404,
@@ -62,7 +65,7 @@ from app.services.deploy.project_detector import (
     _find_serve_dir,
     _read_pkg,
 )
-from app.services.deploy.dependency_preflight import check_node_sass_preflight
+from app.services.deploy.dependency_preflight import run_dependency_preflight
 
 logger = logging.getLogger(__name__)
 
@@ -122,17 +125,34 @@ async def run_github_deploy(
         return cs
 
     try:
-        # ── Precheck: runtime tools ───────────────────────────────────────────
+        # ── Precheck: runtime tools + URL ────────────────────────────────────
         _check_required_tool("git")
 
-        # ── Stage 1: Clone ───────────────────────────────────────────────────
-        clone_result = await loop.run_in_executor(
-            None,
-            lambda: subprocess.run(
-                ["git", "clone", "--branch", data.branch, "--depth", "1", data.repo_url, site_dir],
-                capture_output=True, text=True, timeout=60
+        if not (data.repo_url.startswith("https://") or data.repo_url.startswith("git@")):
+            raise DeployError(
+                code=INVALID_REPO_URL, stage="validation",
+                detail="La URL del repositorio no es válida.",
+                suggested_fix="Usá una URL de GitHub válida, por ejemplo https://github.com/usuario/repo.git",
+                evidence={"repo_url": data.repo_url[:200]},
             )
-        )
+
+        # ── Stage 1: Clone ───────────────────────────────────────────────────
+        try:
+            clone_result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    ["git", "clone", "--branch", data.branch, "--depth", "1", data.repo_url, site_dir],
+                    capture_output=True, text=True, timeout=60
+                )
+            )
+        except subprocess.TimeoutExpired:
+            _site_created = os.path.exists(site_dir)
+            raise DeployError(
+                code=GITHUB_CLONE_TIMEOUT, stage="clone",
+                detail="El repositorio tardó demasiado en clonarse.",
+                suggested_fix="Reintentá o verificá el tamaño/disponibilidad del repositorio.",
+                evidence={"timeout_seconds": 60},
+            )
         _site_created = True
         deploy_log["stages"]["clone"] = {
             "ok": clone_result.returncode == 0,
@@ -141,6 +161,18 @@ async def run_github_deploy(
         }
         if clone_result.returncode != 0:
             _err = clone_result.stderr.lower()
+            if any(m in _err for m in (
+                "invalid username or password",
+                "authentication failed",
+                "could not read username",
+                "permission denied (publickey)",
+            )):
+                raise DeployError(
+                    code=GITHUB_PRIVATE_REPO_UNAUTHORIZED, stage="clone",
+                    detail="No tenemos permisos para clonar este repositorio.",
+                    suggested_fix="Hacé público el repositorio o conectá permisos de GitHub.",
+                    technical_detail=clone_result.stderr[-400:],
+                )
             if "repository not found" in _err or ("not found" in _err and "repository" in _err):
                 raise DeployError(
                     code=GITHUB_REPO_NOT_FOUND, stage="clone",
@@ -301,25 +333,19 @@ async def run_github_deploy(
                     data.repo_url, _detected.get("root_directory"), _fw, out_dir,
                 )
 
-                # Preflight: detect known-incompatible deps before running npm install
-                _preflight = check_node_sass_preflight(work_dir)
+                # Preflight: detect incompatible deps/config before running npm install
+                _preflight = run_dependency_preflight(work_dir, pkg)
                 if _preflight:
                     raise DeployError(
-                        code=NODE_SASS_INCOMPATIBLE,
-                        stage="dependency_preflight",
-                        detail="El proyecto usa node-sass, una dependencia antigua incompatible con Node 20.",
-                        suggested_fix=(
-                            "Migrá de node-sass a sass (npm install sass). "
-                            "node-sass no es compatible con versiones modernas de Node."
-                        ),
+                        code=_preflight["code"],
+                        stage=_preflight.get("stage", "dependency_preflight"),
+                        detail=_preflight["detail"],
+                        suggested_fix=_preflight["suggested_fix"],
                         evidence={
                             "detected_root_directory": _detected.get("root_directory", "."),
                             "framework": _fw,
                             "node_image": "node:20-alpine",
-                            "suspected_package": "node-sass",
-                            "detection_source": _preflight["detection_source"],
-                            "install_skipped": True,
-                            "reason": "known_incompatible_dependency",
+                            **_preflight["evidence"],
                         },
                     )
 
@@ -457,9 +483,9 @@ async def run_github_deploy(
 
                 if len(_found_dirs) > 1:
                     raise DeployError(
-                        code=INDEX_HTML_NOT_FOUND, stage="artifact_detection",
+                        code=MULTIPLE_OUTPUT_DIRECTORIES, stage="artifact_detection",
                         detail=f"Build completado pero se encontraron varios directorios de salida: {', '.join(_found_dirs)}.",
-                        suggested_fix="Especifica output_directory en la configuración avanzada.",
+                        suggested_fix="Indicá Output Directory manualmente en la configuración avanzada.",
                         evidence={"checked_paths": _found_dirs},
                     )
                 if not _found_dirs:

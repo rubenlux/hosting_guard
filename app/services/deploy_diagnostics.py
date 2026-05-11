@@ -50,6 +50,24 @@ NODE_VERSION_MISMATCH           = "node_version_mismatch"
 MODULE_NOT_FOUND_BUILD          = "module_not_found_build"
 SSL_PROVISIONING_TIMEOUT        = "ssl_provisioning_timeout"
 
+# ── Phase 1 matrix additions ──────────────────────────────────────────────────
+
+GITHUB_PRIVATE_REPO_UNAUTHORIZED = "github_private_repo_unauthorized"
+GITHUB_CLONE_TIMEOUT             = "github_clone_timeout"
+INVALID_REPO_URL                 = "invalid_repo_url"
+SUBDOMAIN_ALREADY_EXISTS         = "subdomain_already_exists"
+NO_WEB_BUILDABLE_PROJECT         = "no_web_buildable_project"
+PACKAGE_MANAGER_PNPM_DETECTED    = "package_manager_pnpm_detected"
+PACKAGE_MANAGER_YARN_DETECTED    = "package_manager_yarn_detected"
+NPM_PEER_DEPENDENCY_CONFLICT     = "npm_peer_dependency_conflict"
+DEPENDENCY_VERSION_NOT_FOUND     = "dependency_version_not_found"
+NPM_INSTALL_TIMEOUT              = "npm_install_timeout"
+ENV_VAR_MISSING                  = "env_var_missing"
+CASE_SENSITIVE_IMPORT_ERROR      = "case_sensitive_import_error"
+BUILD_TIMEOUT                    = "build_timeout"
+MULTIPLE_OUTPUT_DIRECTORIES      = "multiple_output_directories"
+NEXT_SSR_NOT_SUPPORTED           = "next_ssr_not_supported"
+
 # ── Severity (for system_incidents) ──────────────────────────────────────────
 
 _SEVERITY: dict = {
@@ -84,6 +102,21 @@ _SEVERITY: dict = {
     NODE_VERSION_MISMATCH:          "warning",
     MODULE_NOT_FOUND_BUILD:         "warning",
     SSL_PROVISIONING_TIMEOUT:       "warning",
+    GITHUB_PRIVATE_REPO_UNAUTHORIZED: "warning",
+    GITHUB_CLONE_TIMEOUT:             "warning",
+    INVALID_REPO_URL:                 "warning",
+    SUBDOMAIN_ALREADY_EXISTS:         "warning",
+    NO_WEB_BUILDABLE_PROJECT:         "warning",
+    PACKAGE_MANAGER_PNPM_DETECTED:    "warning",
+    PACKAGE_MANAGER_YARN_DETECTED:    "warning",
+    NPM_PEER_DEPENDENCY_CONFLICT:     "warning",
+    DEPENDENCY_VERSION_NOT_FOUND:     "warning",
+    NPM_INSTALL_TIMEOUT:              "warning",
+    ENV_VAR_MISSING:                  "warning",
+    CASE_SENSITIVE_IMPORT_ERROR:      "warning",
+    BUILD_TIMEOUT:                    "warning",
+    MULTIPLE_OUTPUT_DIRECTORIES:      "warning",
+    NEXT_SSR_NOT_SUPPORTED:           "warning",
 }
 
 

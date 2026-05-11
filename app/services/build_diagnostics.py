@@ -27,6 +27,8 @@ _RULES: list[tuple[list[str], str]] = [
     # Peer-dependency conflicts (ERESOLVE already triggers a retry upstream,
     # so this only fires when the retry also fails)
     (["ERESOLVE", "peer dep"], "npm_peer_dependency_failed"),
+    # Package/version not found in registry
+    (["No matching version found for", "code E404", "404  Not Found"], "dependency_version_not_found"),
 ]
 
 _DETAILS: dict[str, str] = {
@@ -36,6 +38,7 @@ _DETAILS: dict[str, str] = {
     "openssl_build_failed":           "El build falló por incompatibilidad OpenSSL/Node.",
     "module_not_found_build":         "Falta un módulo o dependencia requerida por el proyecto.",
     "npm_peer_dependency_failed":     "Las dependencias tienen conflictos de peer dependencies.",
+    "dependency_version_not_found":   "Una dependencia solicitada no existe o no está disponible en el registro.",
     "build_failed":                   "El comando de build falló.",
     "npm_install_failed":             "El comando de instalación de dependencias falló.",
 }
@@ -65,6 +68,10 @@ _FIXES: dict[str, str] = {
     "npm_peer_dependency_failed": (
         "Hay conflictos de peer dependencies. "
         "Actualizá las dependencias o ejecutá npm install --legacy-peer-deps."
+    ),
+    "dependency_version_not_found": (
+        "Revisá las versiones en package.json. La versión solicitada puede no existir "
+        "o el paquete puede haber sido eliminado del registro npm."
     ),
 }
 
