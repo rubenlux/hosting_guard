@@ -1,262 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Rocket, Plus, CheckCircle2, Zap, Layout, Terminal, Globe, Database, Github, ChevronDown, ChevronUp, X, Clock, AlertTriangle, Wrench, Info, Loader2, ShieldCheck, ExternalLink, ArrowRight } from 'lucide-react';
-import { createHosting, createWordPress, deployFromGithub, getSslStatus } from '../services/api';
+import {
+  Plus, CheckCircle2, Zap, Layout, Terminal,
+  Globe, Database, Github, ChevronDown, ChevronUp, X,
+} from 'lucide-react';
+import { createHosting, createWordPress } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
-
-// ── Deploy diagnostic cards ───────────────────────────────────────────────────
-
-function RateLimitCard({ detail, countdown }) {
-  const mins = Math.ceil(countdown / 60);
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-3 text-yellow-400 font-bold text-sm">
-        <Clock className="w-5 h-5 shrink-0" />
-        Límite temporal alcanzado
-      </div>
-      <p className="text-gray-300 text-sm">{detail}</p>
-      {countdown > 0 && (
-        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl px-4 py-2 text-yellow-300 font-mono text-sm text-center">
-          Podés volver a intentar en {countdown >= 60 ? `${mins} min` : `${countdown}s`}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RuntimeMissingCard({ result }) {
-  const [expanded, setExpanded] = useState(false);
-  const { code, stage, techDetail, evidence, requestId } = result;
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-start gap-3 text-orange-400 font-bold text-sm">
-        <Wrench className="w-5 h-5 shrink-0 mt-0.5" />
-        No pudimos iniciar el deploy
-      </div>
-
-      <p className="text-gray-200 text-sm leading-relaxed">
-        El problema no está en tu repositorio. HostingGuard necesita una herramienta interna
-        para clonar el proyecto y no está disponible en este momento.
-      </p>
-
-      <div className="flex items-start gap-2 bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3">
-        <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-        <p className="text-blue-300 text-xs leading-relaxed">
-          Nuestro equipo debe corregir el entorno de deploy. No necesitás cambiar tu código.
-        </p>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => setExpanded(e => !e)}
-        className="flex items-center gap-1 text-gray-500 hover:text-gray-300 text-xs transition-colors w-fit"
-      >
-        <Info className="w-3.5 h-3.5" />
-        {expanded ? 'Ocultar detalles técnicos' : 'Ver detalles técnicos'}
-        {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-      </button>
-
-      {expanded && (
-        <div className="bg-black/40 border border-white/8 rounded-xl p-3 font-mono text-xs text-gray-400 space-y-1 max-h-40 overflow-y-auto">
-          {code       && <div><span className="text-gray-600">code:</span>   <span className="text-orange-400">{code}</span></div>}
-          {stage      && <div><span className="text-gray-600">stage:</span>  <span className="text-yellow-400">{stage}</span></div>}
-          {requestId  && <div><span className="text-gray-600">request_id:</span> {requestId}</div>}
-          {evidence?.missing_tool && (
-            <div><span className="text-gray-600">missing_tool:</span> <span className="text-red-400">{evidence.missing_tool}</span></div>
-          )}
-          {techDetail && (
-            <div className="whitespace-pre-wrap break-all text-gray-500 border-t border-white/5 pt-1 mt-1">
-              {techDetail}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DiagnosticCard({ result }) {
-  const [expanded, setExpanded] = useState(false);
-  const { code, stage, detail, suggestedFix, techDetail, evidence, requestId } = result;
-  const hasExtra = techDetail || evidence || requestId;
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-start gap-3 text-red-400 font-bold text-sm">
-        <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-        Deploy no completado
-      </div>
-
-      <p className="text-gray-200 text-sm leading-relaxed">{detail}</p>
-
-      {suggestedFix && (
-        <div className="flex items-start gap-2 bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3">
-          <Wrench className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-          <p className="text-blue-300 text-xs leading-relaxed">{suggestedFix}</p>
-        </div>
-      )}
-
-      {hasExtra && (
-        <button
-          type="button"
-          onClick={() => setExpanded(e => !e)}
-          className="flex items-center gap-1 text-gray-500 hover:text-gray-300 text-xs transition-colors w-fit"
-        >
-          <Info className="w-3.5 h-3.5" />
-          {expanded ? 'Ocultar detalles técnicos' : 'Ver detalles técnicos'}
-          {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-        </button>
-      )}
-
-      {expanded && hasExtra && (
-        <div className="bg-black/40 border border-white/8 rounded-xl p-3 font-mono text-xs text-gray-400 space-y-1 max-h-40 overflow-y-auto">
-          {code    && <div><span className="text-gray-600">code:</span>   <span className="text-red-400">{code}</span></div>}
-          {stage   && <div><span className="text-gray-600">stage:</span>  <span className="text-yellow-400">{stage}</span></div>}
-          {requestId && <div><span className="text-gray-600">request_id:</span> {requestId}</div>}
-          {techDetail && (
-            <div className="whitespace-pre-wrap break-all text-gray-500 border-t border-white/5 pt-1 mt-1">
-              {techDetail}
-            </div>
-          )}
-          {evidence && Object.keys(evidence).length > 0 && (
-            <div className="whitespace-pre-wrap break-all text-gray-500 border-t border-white/5 pt-1 mt-1">
-              {JSON.stringify(evidence, null, 2)}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const SSL_STEPS = [
-  { label: 'Repositorio clonado' },
-  { label: 'Dependencias instaladas' },
-  { label: 'Proyecto compilado' },
-  { label: 'Sitio publicado' },
-  { label: 'Activando SSL' },
-  { label: 'Sitio en línea' },
-];
-
-function DeploySuccessCard({ url, onClose }) {
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3 text-emerald-400 font-bold text-sm">
-        <CheckCircle2 className="w-5 h-5 shrink-0" />
-        Tu sitio está en línea
-      </div>
-
-      <div className="bg-background/50 border border-white/8 p-4 rounded-xl">
-        <p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mb-1.5">Tu URL está lista:</p>
-        <a href={url} target="_blank" rel="noopener noreferrer"
-           className="text-primary font-mono block hover:underline text-lg break-all">
-          {url}
-        </a>
-      </div>
-
-      <div className="flex gap-2">
-        <a href={url} target="_blank" rel="noopener noreferrer"
-           className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-bold hover:bg-emerald-500/20 transition-colors">
-          <ExternalLink className="w-4 h-4" /> Abrir sitio
-        </a>
-        {onClose && (
-          <button type="button" onClick={onClose}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white/5 border border-white/10 text-gray-300 text-sm font-bold hover:bg-white/10 transition-colors">
-            <ArrowRight className="w-4 h-4" /> Ir a Mis sitios
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SslPendingCard({ hostingId, url, onClose }) {
-  const [sslOnline, setSslOnline] = useState(false);
-  const intervalRef = useRef(null);
-
-  useEffect(() => {
-    intervalRef.current = setInterval(async () => {
-      try {
-        const data = await getSslStatus(hostingId);
-        if (data.ssl_status === 'online') {
-          clearInterval(intervalRef.current);
-          setSslOnline(true);
-        }
-      } catch {
-        // ignore transient errors, keep polling
-      }
-    }, 5000);
-    return () => clearInterval(intervalRef.current);
-  }, [hostingId]);
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className={`flex items-center gap-3 font-bold text-sm ${sslOnline ? 'text-emerald-400' : 'text-blue-400'}`}>
-        {sslOnline
-          ? <CheckCircle2 className="w-5 h-5 shrink-0" />
-          : <ShieldCheck className="w-5 h-5 shrink-0" />
-        }
-        {sslOnline ? 'Tu sitio está en línea' : 'Tu sitio fue publicado — activando SSL…'}
-      </div>
-
-      <div className="space-y-2">
-        {SSL_STEPS.map((step, i) => {
-          const isSSL    = i === 4;
-          const isOnline = i === 5;
-          const done   = isOnline ? sslOnline : (isSSL ? sslOnline : i < 4);
-          const active = isSSL ? !sslOnline : false;
-
-          return (
-            <div key={i} className="flex items-center gap-3">
-              <span className="w-4 h-4 shrink-0 flex items-center justify-center">
-                {done ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                ) : active ? (
-                  <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
-                ) : (
-                  <span className="w-2 h-2 rounded-full bg-white/10 mx-auto block" />
-                )}
-              </span>
-              <span className={`text-sm ${done ? 'text-gray-300' : active ? 'text-amber-300' : 'text-gray-600'}`}>
-                {step.label}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-
-      {sslOnline ? (
-        <>
-          <div className="bg-background/50 border border-white/8 p-4 rounded-xl">
-            <p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mb-1.5">Tu URL está lista:</p>
-            <a href={url} target="_blank" rel="noopener noreferrer"
-               className="text-primary font-mono block hover:underline text-lg break-all">
-              {url}
-            </a>
-          </div>
-          <div className="flex gap-2">
-            <a href={url} target="_blank" rel="noopener noreferrer"
-               className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-bold hover:bg-emerald-500/20 transition-colors">
-              <ExternalLink className="w-4 h-4" /> Abrir sitio
-            </a>
-            {onClose && (
-              <button type="button" onClick={onClose}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white/5 border border-white/10 text-gray-300 text-sm font-bold hover:bg-white/10 transition-colors">
-                <ArrowRight className="w-4 h-4" /> Ir a Mis sitios
-              </button>
-            )}
-          </div>
-        </>
-      ) : (
-        <p className="text-xs text-gray-500">
-          El certificado SSL se genera automáticamente. Tomará unos segundos.
-        </p>
-      )}
-    </div>
-  );
-}
+import { useGithubDeploy } from '../hooks/useGithubDeploy';
+import DeploySuccessCard   from './deploy/DeploySuccessCard';
+import SslPendingCard      from './deploy/SslPendingCard';
+import DeployDiagnosticCard from './deploy/DeployDiagnosticCard';
+import RuntimeMissingCard  from './deploy/RuntimeMissingCard';
+import RateLimitCard       from './deploy/RateLimitCard';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -268,137 +24,106 @@ const PLAN_LABELS = {
 };
 
 const TYPES = [
-  {
-    id: 'static',
-    label: 'Sitio Web',
-    desc: 'HTML, PHP, React',
-    icon: Globe,
-  },
-  {
-    id: 'wordpress',
-    label: 'WordPress',
-    desc: 'One-click install',
-    icon: Database,
-  },
-  {
-    id: 'github',
-    label: 'GitHub',
-    desc: 'Deploy desde repo',
-    icon: Github,
-  },
+  { id: 'static',    label: 'Sitio Web',  desc: 'HTML, PHP, React',    icon: Globe    },
+  { id: 'wordpress', label: 'WordPress',  desc: 'One-click install',   icon: Database },
+  { id: 'github',    label: 'GitHub',     desc: 'Deploy desde repo',   icon: Github   },
 ];
 
+function resultWrapperClass(r) {
+  if (!r) return 'bg-red-500/10 border-red-500/30';
+  if (r.kind === 'success' && r.ssl_status === 'pending') return 'bg-blue-500/5 border-blue-500/20';
+  if (r.kind === 'success') return 'bg-emerald-500/5 border-emerald-500/20';
+  return 'bg-red-500/10 border-red-500/30';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const HostingCreationForm = ({ onSuccess, onClose, selectedPlan }) => {
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const userPlan = user?.plan || 'free';
-  const isPaidUser = userPlan !== 'free';
+  const { user }    = useAuth();
+  const navigate    = useNavigate();
+  const userPlan    = user?.plan || 'free';
+  const isPaidUser  = userPlan !== 'free';
 
-  const [name, setName] = useState('');
-  const [plan, setPlan] = useState(selectedPlan || userPlan);
-
-  useEffect(() => {
-    if (selectedPlan) setPlan(selectedPlan);
-  }, [selectedPlan]);
-  const [type, setType] = useState('static');
-  const [repoUrl, setRepoUrl] = useState('');
-  const [branch, setBranch] = useState('main');
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [rootDirectory, setRootDirectory] = useState('');
-  const [installCommand, setInstallCommand] = useState('');
-  const [buildCommand, setBuildCommand] = useState('');
-  const [startCommand, setStartCommand] = useState('');
+  // ── Form state ─────────────────────────────────────────────────────────────
+  const [name,            setName]            = useState('');
+  const [plan,            setPlan]            = useState(selectedPlan || userPlan);
+  const [type,            setType]            = useState('static');
+  const [repoUrl,         setRepoUrl]         = useState('');
+  const [branch,          setBranch]          = useState('main');
+  const [showAdvanced,    setShowAdvanced]     = useState(false);
+  const [rootDirectory,   setRootDirectory]   = useState('');
+  const [installCommand,  setInstallCommand]  = useState('');
+  const [buildCommand,    setBuildCommand]    = useState('');
+  const [startCommand,    setStartCommand]    = useState('');
   const [outputDirectory, setOutputDirectory] = useState('');
-  const [port, setPort] = useState('');
-  const [dockerfilePath, setDockerfilePath] = useState('');
-  const [envVars, setEnvVars] = useState([{ key: '', value: '' }]);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [retryCountdown, setRetryCountdown] = useState(0);
+  const [port,            setPort]            = useState('');
+  const [dockerfilePath,  setDockerfilePath]  = useState('');
+  const [envVars,         setEnvVars]         = useState([{ key: '', value: '' }]);
 
-  useEffect(() => {
-    if (retryCountdown <= 0) return;
-    const t = setTimeout(() => setRetryCountdown(c => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [retryCountdown]);
+  useEffect(() => { if (selectedPlan) setPlan(selectedPlan); }, [selectedPlan]);
 
+  // ── Deploy hooks/state ─────────────────────────────────────────────────────
+  const ghDeploy                          = useGithubDeploy();
+  const [simpleResult, setSimpleResult]   = useState(null);
+  const [simpleLoading, setSimpleLoading] = useState(false);
+
+  const loading       = type === 'github' ? ghDeploy.loading  : simpleLoading;
+  const activeResult  = type === 'github' ? ghDeploy.result   : simpleResult;
+
+  // ── Submit ─────────────────────────────────────────────────────────────────
   const handleCreate = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setResult(null);
+    if (!user) {
+      navigate('.', { replace: true, state: { openLogin: true } });
+      return;
+    }
 
-    try {
-      if (!user) {
-        navigate('.', { replace: true, state: { openLogin: true } });
-        setLoading(false);
-        return;
+    if (type === 'github') {
+      const extra = {
+        root_directory:   rootDirectory   || undefined,
+        install_command:  installCommand  || undefined,
+        build_command:    buildCommand    || undefined,
+        start_command:    startCommand    || undefined,
+        output_directory: outputDirectory || undefined,
+        port:             port ? parseInt(port, 10) : undefined,
+        dockerfile_path:  dockerfilePath  || undefined,
+        env_vars: Object.fromEntries(
+          envVars.filter(ev => ev.key.trim()).map(ev => [ev.key.trim(), ev.value])
+        ),
+      };
+      const data = await ghDeploy.deploy(name, plan, repoUrl, branch, extra);
+      if (data && onSuccess) onSuccess(data);
+    } else {
+      setSimpleLoading(true);
+      setSimpleResult(null);
+      try {
+        const data = type === 'wordpress'
+          ? await createWordPress(name, plan)
+          : await createHosting(name, plan);
+        setSimpleResult({ kind: 'success', data });
+        if (onSuccess) onSuccess(data);
+      } catch (err) {
+        const detail = err.response?.data?.detail || '';
+        const status = err.response?.status;
+        let error = 'Error al crear el proyecto. Inténtalo de nuevo.';
+        if (detail.includes('ya existe') || detail.includes('already exists'))
+          error = 'Ya existe un proyecto con ese nombre.';
+        else if (detail.includes('plan') || detail.includes('suscripción'))
+          error = 'Tu plan actual no permite esta acción. Actualiza tu suscripción.';
+        else if (detail.includes('IP') || detail.includes('free'))
+          error = 'Solo se permite un alojamiento gratuito por dirección IP.';
+        else if (detail.includes('nombre') || detail.includes('inválido'))
+          error = 'Nombre de proyecto inválido. Usa solo letras, números y guiones.';
+        else if (detail && (status === 422 || status === 400))
+          error = detail;
+        setSimpleResult({ kind: 'generic_error', error });
+      } finally {
+        setSimpleLoading(false);
       }
-
-      const data = type === 'wordpress'
-        ? await createWordPress(name, plan)
-        : type === 'github'
-        ? await deployFromGithub(name, plan, repoUrl, branch, {
-            root_directory:   rootDirectory  || undefined,
-            install_command:  installCommand || undefined,
-            build_command:    buildCommand   || undefined,
-            start_command:    startCommand   || undefined,
-            output_directory: outputDirectory|| undefined,
-            port:             port ? parseInt(port, 10) : undefined,
-            dockerfile_path:  dockerfilePath || undefined,
-            env_vars: Object.fromEntries(
-              envVars.filter(e => e.key.trim()).map(e => [e.key.trim(), e.value])
-            ),
-          })
-        : await createHosting(name, plan);
-
-      setResult({ success: true, data });
-      if (onSuccess) onSuccess(data);
-    } catch (err) {
-      const status       = err.response?.status;
-      const data         = err.response?.data || {};
-      const detail       = data.detail || '';
-      const code         = data.code   || '';
-      const stage        = data.stage  || '';
-      const suggestedFix = data.suggested_fix || '';
-      const techDetail   = data.technical_detail || '';
-      const evidence     = data.evidence || null;
-      const retryAfter   = data.retry_after_seconds || 0;
-      const requestId    = data.request_id || '';
-
-      if (status === 429 || code === 'deploy_rate_limit_exceeded') {
-        if (retryAfter > 0) setRetryCountdown(retryAfter);
-        setResult({
-          success: false,
-          isRateLimit: true,
-          detail: detail || 'Alcanzaste el límite de deploys por hora. Esperá unos minutos antes de volver a intentar.',
-          retryAfter,
-        });
-      } else if (code === 'deploy_runtime_missing_tool') {
-        setResult({ success: false, isRuntimeMissing: true, code, stage, techDetail, evidence, requestId });
-      } else if (code && stage) {
-        // Structured deploy diagnostic error
-        setResult({ success: false, isDiagnostic: true, code, stage, detail, suggestedFix, techDetail, evidence, requestId });
-      } else {
-        // Fallback: legacy / validation errors
-        let errorMsg = 'Error al crear el proyecto. Inténtalo de nuevo.';
-        if (detail.includes('ya existe') || detail.includes('already exists')) {
-          errorMsg = 'Ya existe un proyecto con ese nombre.';
-        } else if (detail.includes('plan') || detail.includes('suscripción')) {
-          errorMsg = 'Tu plan actual no permite esta acción. Actualiza tu suscripción.';
-        } else if (detail.includes('IP') || detail.includes('free')) {
-          errorMsg = 'Solo se permite un alojamiento gratuito por dirección IP.';
-        } else if (detail.includes('nombre') || detail.includes('inválido')) {
-          errorMsg = 'Nombre de proyecto inválido. Usa solo letras, números y guiones.';
-        } else if (detail && (status === 422 || status === 400)) {
-          errorMsg = detail;
-        }
-        setResult({ success: false, error: errorMsg });
-      }
-    } finally {
-      setLoading(false);
     }
   };
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div id="nuevo-proyecto" className="glass-card p-6 md:p-10 rounded-3xl border border-white/5 relative overflow-hidden bg-surface shadow-2xl">
       <div className="absolute top-0 right-0 p-8 opacity-5">
@@ -413,12 +138,12 @@ const HostingCreationForm = ({ onSuccess, onClose, selectedPlan }) => {
 
         <form onSubmit={handleCreate} className="space-y-6">
 
-          {/* Selector de tipo */}
+          {/* Tipo de proyecto */}
           <div className="space-y-2">
             <label className="block text-[11px] font-black p-1 text-muted uppercase tracking-widest">Tipo de proyecto</label>
             <div className="grid grid-cols-3 gap-2">
               {TYPES.map((t) => {
-                const Icon = t.icon;
+                const Icon   = t.icon;
                 const active = type === t.id;
                 return (
                   <button
@@ -440,14 +165,14 @@ const HostingCreationForm = ({ onSuccess, onClose, selectedPlan }) => {
             </div>
           </div>
 
-          {/* Campos GitHub */}
+          {/* GitHub fields */}
           {type === 'github' && (
             <div className="space-y-3">
               <div className="space-y-2">
                 <label className="block text-[11px] font-black p-1 text-muted uppercase tracking-widest">URL del repositorio</label>
                 <input
                   type="url"
-                  required={type === 'github'}
+                  required
                   placeholder="https://github.com/usuario/mi-proyecto"
                   className="w-full bg-background border border-white/10 rounded-2xl px-5 py-4 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-sm"
                   value={repoUrl}
@@ -464,7 +189,7 @@ const HostingCreationForm = ({ onSuccess, onClose, selectedPlan }) => {
                   onChange={(e) => setBranch(e.target.value)}
                 />
               </div>
-              {/* Advanced config toggle */}
+
               <button
                 type="button"
                 onClick={() => setShowAdvanced(v => !v)}
@@ -516,17 +241,19 @@ const HostingCreationForm = ({ onSuccess, onClose, selectedPlan }) => {
                     </div>
                   </div>
 
-                  {/* Env vars */}
                   <div className="space-y-2">
                     <label className="block text-[10px] font-bold text-gray-600 uppercase tracking-widest">Variables de entorno</label>
                     {envVars.map((ev, i) => (
                       <div key={i} className="flex gap-2">
-                        <input type="text" placeholder="KEY" value={ev.key} onChange={e => setEnvVars(v => v.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                        <input type="text" placeholder="KEY" value={ev.key}
+                          onChange={e => setEnvVars(v => v.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
                           className="w-2/5 bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
-                        <input type="text" placeholder="value" value={ev.value} onChange={e => setEnvVars(v => v.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                        <input type="text" placeholder="value" value={ev.value}
+                          onChange={e => setEnvVars(v => v.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
                           className="flex-1 bg-background border border-white/10 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary/50 font-mono" />
                         {envVars.length > 1 && (
-                          <button type="button" onClick={() => setEnvVars(v => v.filter((_, j) => j !== i))} className="text-gray-600 hover:text-red-400 transition-colors">
+                          <button type="button" onClick={() => setEnvVars(v => v.filter((_, j) => j !== i))}
+                            className="text-gray-600 hover:text-red-400 transition-colors">
                             <X size={13} />
                           </button>
                         )}
@@ -546,7 +273,7 @@ const HostingCreationForm = ({ onSuccess, onClose, selectedPlan }) => {
             </div>
           )}
 
-          {/* Nombre del proyecto */}
+          {/* Nombre */}
           <div className="space-y-2">
             <label className="block text-[11px] font-black p-1 text-muted uppercase tracking-widest">Nombre del proyecto</label>
             <div className="relative group">
@@ -590,7 +317,6 @@ const HostingCreationForm = ({ onSuccess, onClose, selectedPlan }) => {
             )}
           </div>
 
-          {/* WordPress notice */}
           {type === 'wordpress' && (
             <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3 text-blue-400 text-xs">
               ⚡ WordPress + MariaDB se instalan automáticamente. Listo en 60 segundos.
@@ -604,66 +330,76 @@ const HostingCreationForm = ({ onSuccess, onClose, selectedPlan }) => {
           >
             {loading
               ? (type === 'wordpress' ? 'Instalando WordPress...' : type === 'github' ? 'Clonando repo...' : 'Creando...')
-              : (type === 'wordpress' ? 'INSTALAR WORDPRESS' : type === 'github' ? 'DEPLOY DESDE GITHUB' : 'LANZAR PROYECTO')
+              : (type === 'wordpress' ? 'INSTALAR WORDPRESS'     : type === 'github' ? 'DEPLOY DESDE GITHUB'  : 'LANZAR PROYECTO')
             }
             {!loading && <Plus className="w-6 h-6" />}
           </button>
         </form>
 
+        {/* Result area */}
         <AnimatePresence>
-          {result && (
+          {activeResult && (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className={`mt-8 p-6 rounded-2xl border ${
-                result.success && result.data?.ssl_status === 'pending'
-                  ? 'bg-blue-500/5 border-blue-500/20'
-                  : result.success
-                  ? 'bg-emerald-500/5 border-emerald-500/20'
-                  : 'bg-red-500/10 border-red-500/30'
-              }`}
+              className={`mt-8 p-6 rounded-2xl border ${resultWrapperClass(activeResult)}`}
             >
-              {result.success && type === 'github' && result.data?.ssl_status === 'pending' ? (
-                <SslPendingCard
-                  hostingId={result.data.hosting_id}
-                  url={result.data.url}
-                  onClose={onClose}
-                />
-              ) : result.success && type === 'github' && result.data?.url ? (
-                <DeploySuccessCard url={result.data.url} onClose={onClose} />
-              ) : result.success ? (
-                <div className="flex flex-col gap-4">
-                  <div className="flex items-center gap-3 text-green-400 font-bold">
-                    <CheckCircle2 className="w-6 h-6" />
-                    {type === 'wordpress' ? '¡WordPress instalado!' : '¡Sitio creado con éxito!'}
-                  </div>
-                  <div className="bg-background/50 p-4 rounded-xl">
-                    <p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mb-1">Tu URL está lista:</p>
-                    <a href={result.data.url} target="_blank" rel="noopener noreferrer" className="text-primary font-mono block hover:underline text-lg">
-                      {result.data.url}
-                    </a>
-                    {type === 'wordpress' && (
-                      <p className="text-gray-500 text-xs mt-2">WordPress estará listo en 30-60 segundos</p>
-                    )}
-                  </div>
-                </div>
-              ) : result.isRateLimit ? (
-                <RateLimitCard detail={result.detail} countdown={retryCountdown} />
-              ) : result.isRuntimeMissing ? (
-                <RuntimeMissingCard result={result} />
-              ) : result.isDiagnostic ? (
-                <DiagnosticCard result={result} />
+              {type === 'github' ? (
+                <>
+                  {activeResult.kind === 'success' && activeResult.ssl_status === 'pending' && (
+                    <SslPendingCard hostingId={activeResult.hosting_id} url={activeResult.url} onClose={onClose} />
+                  )}
+                  {activeResult.kind === 'success' && activeResult.ssl_status !== 'pending' && (
+                    <DeploySuccessCard url={activeResult.url} onClose={onClose} />
+                  )}
+                  {activeResult.kind === 'rate_limit' && (
+                    <RateLimitCard detail={activeResult.detail} retry_after_seconds={activeResult.retry_after_seconds} />
+                  )}
+                  {activeResult.kind === 'diagnostic' && (
+                    <DeployDiagnosticCard errorData={activeResult} />
+                  )}
+                  {activeResult.kind === 'runtime_missing' && (
+                    <RuntimeMissingCard errorData={activeResult} />
+                  )}
+                  {(activeResult.kind === 'generic_error' || activeResult.kind === 'network_error') && (
+                    <div className="text-red-400 flex items-center gap-3 font-medium text-sm">
+                      <Zap className="w-5 h-5" /> {activeResult.error || activeResult.detail}
+                    </div>
+                  )}
+                </>
               ) : (
-                <div className="text-red-400 flex items-center gap-3 font-medium text-sm">
-                  <Zap className="w-6 h-6" /> {result.error}
-                </div>
+                <>
+                  {activeResult.kind === 'success' && (
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-center gap-3 text-green-400 font-bold">
+                        <CheckCircle2 className="w-6 h-6" />
+                        {type === 'wordpress' ? '¡WordPress instalado!' : '¡Sitio creado con éxito!'}
+                      </div>
+                      <div className="bg-background/50 p-4 rounded-xl">
+                        <p className="text-[10px] text-gray-500 font-mono uppercase tracking-widest mb-1">Tu URL está lista:</p>
+                        <a href={activeResult.data.url} target="_blank" rel="noopener noreferrer"
+                           className="text-primary font-mono block hover:underline text-lg">
+                          {activeResult.data.url}
+                        </a>
+                        {type === 'wordpress' && (
+                          <p className="text-gray-500 text-xs mt-2">WordPress estará listo en 30-60 segundos</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {activeResult.kind === 'generic_error' && (
+                    <div className="text-red-400 flex items-center gap-3 font-medium text-sm">
+                      <Zap className="w-5 h-5" /> {activeResult.error}
+                    </div>
+                  )}
+                </>
               )}
             </motion.div>
           )}
         </AnimatePresence>
       </div>
     </div>
-);
+  );
 };
 
 export default HostingCreationForm;
