@@ -208,6 +208,9 @@ def write_traefik_config(domain_id: int, domain: str, container_name: str,
                     "service": service_name,
                     "entryPoints": ["websecure"],
                     "tls": {"certResolver": "le"},
+                    # hg-forwardauth is declared in the Docker provider (app service labels).
+                    # File-provider routers must qualify it with @docker.
+                    "middlewares": ["hg-forwardauth@docker"],
                 },
                 f"{router_name}-http": {
                     "rule": host_rule,

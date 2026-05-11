@@ -50,6 +50,7 @@ def _traefik_labels(container_name: str, subdomain: str, port: int) -> list:
         "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
         "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
         "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
+        "-l", f"traefik.http.routers.{container_name}.middlewares=hg-forwardauth",
         "-l", f"traefik.http.services.{container_name}.loadbalancer.server.port={port}",
     ]
 

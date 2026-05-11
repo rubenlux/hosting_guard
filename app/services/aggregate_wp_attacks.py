@@ -231,6 +231,13 @@ def _rule_wp_login() -> tuple[int, int, int]:
                 created += 1
             else:
                 updated += 1
+            _maybe_block(
+                ip=r.get("last_ip"),
+                hosting_id=r["hosting_id"],
+                rule_id="wp_login_brute_force",
+                rule_flag="rate_limit_wp_login",
+                ttl=3600,
+            )
         except Exception as exc:
             logger.warning(
                 "aggregate_wp_attacks: WP_LOGIN upsert failed for hosting_id=%s (%s): %s",
@@ -311,6 +318,13 @@ def _rule_xmlrpc() -> tuple[int, int, int]:
                 created += 1
             else:
                 updated += 1
+            _maybe_block(
+                ip=r.get("last_ip"),
+                hosting_id=r["hosting_id"],
+                rule_id="xmlrpc_attack",
+                rule_flag="block_xmlrpc",
+                ttl=14400,
+            )
         except Exception as exc:
             logger.warning(
                 "aggregate_wp_attacks: XMLRPC upsert failed for hosting_id=%s (%s): %s",
@@ -392,6 +406,13 @@ def _rule_wp_login_rate_limit() -> tuple[int, int, int]:
                 created += 1
             else:
                 updated += 1
+            _maybe_block(
+                ip=r.get("ip"),
+                hosting_id=r["hosting_id"],
+                rule_id="wp_login_rate_limit",
+                rule_flag="rate_limit_wp_login",
+                ttl=1800,
+            )
         except Exception as exc:
             logger.warning(
                 "aggregate_wp_attacks: rate_limit upsert failed for hosting_id=%s (%s): %s",
@@ -399,6 +420,42 @@ def _rule_wp_login_rate_limit() -> tuple[int, int, int]:
             )
 
     return created, updated, len(skipped)
+
+
+# ─── Protection mode enforcement ─────────────────────────────────────────────
+
+def _maybe_block(
+    ip: Optional[str],
+    hosting_id: int,
+    rule_id: str,
+    rule_flag: str,
+    ttl: int,
+) -> None:
+    """Apply protection enforcement after an attack event is upserted.
+
+    protect mode + rule enabled → block the IP in Redis
+    monitor mode → log the would-be block decision
+    off → no-op
+    """
+    if not ip:
+        return
+    try:
+        from app.services.security.security_policy_resolver import get_policy
+        from app.services.security.ip_blocklist import block_ip
+        policy = get_policy(hosting_id)
+        mode = policy.get("mode", "off")
+        if mode == "protect" and policy.get(rule_flag):
+            block_ip(ip, hosting_id, reason=f"attack:{rule_id}", rule_id=rule_id, ttl_seconds=ttl)
+        elif mode == "monitor":
+            logger.info(
+                "aggregate_wp_attacks: MONITOR (would block) ip=%s hosting_id=%s rule=%s",
+                ip, hosting_id, rule_id,
+            )
+    except Exception as exc:
+        logger.warning(
+            "aggregate_wp_attacks: _maybe_block failed hosting_id=%s rule=%s: %s",
+            hosting_id, rule_id, exc,
+        )
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────

@@ -2424,6 +2424,13 @@ def set_protection_mode(
         metadata=settings,
     )
 
+    # Evict Redis policy cache so ForwardAuth picks up the new mode immediately.
+    try:
+        from app.services.security.security_policy_resolver import invalidate_policy
+        invalidate_policy(hosting_id)
+    except Exception as _exc:
+        logger.warning("set_protection_mode: cache invalidation failed: %s", _exc)
+
     return {"ok": True, "hosting_id": hosting_id, "protection_mode": settings}
 
 

@@ -356,6 +356,7 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
             "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
             "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
             "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
+            "-l", f"traefik.http.routers.{container_name}.middlewares=hg-forwardauth",
             "-l", f"traefik.http.services.{container_name}.loadbalancer.server.port=80",
             image
         ]
@@ -787,6 +788,7 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             "-l", f"traefik.http.routers.{wp_container}.rule=Host(`{subdomain}`)",
             "-l", f"traefik.http.routers.{wp_container}.entrypoints=websecure",
             "-l", f"traefik.http.routers.{wp_container}.tls.certresolver=le",
+            "-l", f"traefik.http.routers.{wp_container}.middlewares=hg-forwardauth",
             "-l", f"traefik.http.services.{wp_container}.loadbalancer.server.port=80",
             "hostingguard/wordpress:latest"
         ]

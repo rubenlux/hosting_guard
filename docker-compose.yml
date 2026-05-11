@@ -48,6 +48,9 @@ services:
       - "--providers.docker.endpoint=tcp://docker-socket-proxy:2375"
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
+      # File provider: custom-domain YAML files written by domain_checker.py
+      - "--providers.file.directory=/opt/traefik-dynamic"
+      - "--providers.file.watch=true"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
       - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
@@ -68,6 +71,7 @@ services:
 
     volumes:
       - "./letsencrypt:/letsencrypt"
+      - "/opt/traefik-dynamic:/opt/traefik-dynamic:ro"
       # sin socket directo — usa el proxy
 
     networks:
@@ -101,6 +105,11 @@ services:
       - "traefik.http.routers.hg.tls.certresolver=le"
       - "traefik.http.services.hg.loadbalancer.server.port=8000"
       - "traefik.http.services.hg.loadbalancer.responseForwarding.flushInterval=100ms"
+      # ForwardAuth middleware — applied to tenant site routers, NOT to api.hostingguard.lat.
+      # Tenant containers reference this middleware by name: hg-forwardauth
+      # File-provider custom-domain configs reference it as: hg-forwardauth@docker
+      - "traefik.http.middlewares.hg-forwardauth.forwardauth.address=http://hosting_guard:8000/internal/forwardauth"
+      - "traefik.http.middlewares.hg-forwardauth.forwardauth.trustForwardHeader=true"
 
     volumes:
       - ./data:/app/data
