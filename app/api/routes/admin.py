@@ -2473,32 +2473,146 @@ def list_sentinel_incidents(
     offset:      int = 0,
     _: dict = Depends(require_role("admin")),
 ):
-    """List system_incidents, optionally filtered by source_type / status / user_id / severity."""
+    """List system_incidents with latest ai_diagnosis per incident via LATERAL JOIN."""
     from app.infra.db import get_connection, release_connection
     conn = get_connection()
     try:
         where: list = []
         params: list = []
         if source_type:
-            where.append("source_type = %s"); params.append(source_type)
+            where.append("si.source_type = %s"); params.append(source_type)
         if status:
-            where.append("status = %s"); params.append(status)
+            where.append("si.status = %s"); params.append(status)
         if user_id:
-            where.append("user_id = %s"); params.append(user_id)
+            where.append("si.user_id = %s"); params.append(user_id)
         if severity:
-            where.append("severity = %s"); params.append(severity)
+            where.append("si.severity = %s"); params.append(severity)
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         params += [min(limit, 500), offset]
         cur = conn.cursor()
         cur.execute(
-            f"SELECT * FROM system_incidents {clause}"
-            f" ORDER BY last_seen DESC LIMIT %s OFFSET %s",
+            f"""
+            SELECT si.*,
+                   diag.id            AS diagnosis_id,
+                   diag.summary       AS diagnosis_summary,
+                   diag.root_cause    AS diagnosis_root_cause,
+                   diag.recommended_next_steps AS diagnosis_steps,
+                   diag.customer_message       AS diagnosis_customer_message,
+                   diag.confidence    AS diagnosis_confidence,
+                   diag.model         AS diagnosis_model,
+                   diag.updated_at    AS diagnosis_updated_at,
+                   diag.fingerprint   AS diagnosis_source
+              FROM system_incidents si
+              LEFT JOIN LATERAL (
+                SELECT id, summary, root_cause, recommended_next_steps,
+                       customer_message, confidence, model, updated_at, fingerprint
+                  FROM ai_diagnosis
+                 WHERE incident_id = si.incident_id
+                 ORDER BY created_at DESC
+                 LIMIT 1
+              ) diag ON TRUE
+            {clause}
+             ORDER BY si.last_seen DESC LIMIT %s OFFSET %s
+            """,
             params,
         )
         rows = [dict(r) for r in cur.fetchall()]
         return {"items": rows, "limit": limit, "offset": offset, "count": len(rows)}
     finally:
         release_connection(conn)
+
+
+@router.get("/incidents/{incident_id}/diagnosis")
+def get_incident_diagnosis(
+    incident_id: int,
+    _: dict = Depends(require_role("admin")),
+):
+    """Return the latest ai_diagnosis for a given incident."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, incident_id, source_type, incident_type, severity,
+                   summary, root_cause, recommended_next_steps,
+                   customer_message, admin_notes, confidence,
+                   model, prompt_version, fingerprint AS diagnosis_source,
+                   status, error_message, context_hash,
+                   created_at, updated_at
+              FROM ai_diagnosis
+             WHERE incident_id = %s
+             ORDER BY created_at DESC
+             LIMIT 1
+            """,
+            (incident_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No hay diagnóstico disponible para este incidente")
+        return dict(row)
+    finally:
+        release_connection(conn)
+
+
+@router.post("/incidents/{incident_id}/diagnose")
+def trigger_incident_diagnosis(
+    incident_id: int,
+    background_tasks: BackgroundTasks,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Trigger an on-demand AI diagnosis for a specific incident."""
+    from app.infra.db import get_connection, release_connection
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT incident_id, source_type, incident_type, severity, title, "
+            "summary, evidence, count, hosting_id, user_id, first_seen, last_seen, updated_at "
+            "FROM system_incidents WHERE incident_id = %s",
+            (incident_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Incidente no encontrado")
+    finally:
+        release_connection(conn)
+
+    def _run_diagnosis():
+        from app.infra.db import get_connection, release_connection
+        from app.services.ai.run_ai_diagnostics import _get_existing_diagnosis, _save_diagnosis, _save_error
+        from app.services.ai.diagnostic_context import build_incident_context, compute_context_hash
+        from app.services.ai.llm_client import generate_diagnosis, AI_DIAGNOSTIC_PROMPT_VERSION
+        dconn = get_connection()
+        try:
+            incident = dict(row)
+            context = build_incident_context(dconn, incident)
+            new_hash = compute_context_hash(incident)
+            existing = _get_existing_diagnosis(dconn, incident_id)
+            diagnosis, model = generate_diagnosis(context)
+            existing_id = existing["id"] if existing else None
+            _save_diagnosis(
+                dconn,
+                incident=incident,
+                diagnosis=diagnosis,
+                model=model,
+                context_hash=new_hash,
+                existing_id=existing_id,
+                prompt_version=AI_DIAGNOSTIC_PROMPT_VERSION,
+            )
+            dconn.commit()
+        except Exception as exc:
+            logger.warning("on_demand_diagnosis(%s) failed: %s", incident_id, exc)
+            try:
+                dconn.rollback()
+            except Exception:
+                pass
+        finally:
+            release_connection(dconn)
+
+    background_tasks.add_task(_run_diagnosis)
+    return {"ok": True, "incident_id": incident_id, "status": "queued"}
 
 
 @router.post("/incidents/{incident_id}/resolve")

@@ -969,6 +969,16 @@ export const resolveIncident = async (incidentId) => {
   return response.data;
 };
 
+export const getDiagnosis = async (incidentId) => {
+  const response = await api.get(`/admin/incidents/${incidentId}/diagnosis`);
+  return response.data;
+};
+
+export const triggerDiagnose = async (incidentId) => {
+  const response = await api.post(`/admin/incidents/${incidentId}/diagnose`);
+  return response.data;
+};
+
 export const getAdminDeployEvents = async (params = {}) => {
   const response = await api.get('/admin/deploy-events', { params });
   return response.data;

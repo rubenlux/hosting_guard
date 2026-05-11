@@ -18,6 +18,9 @@ ENABLE_ACTION_EXECUTION = os.getenv("ENABLE_ACTION_EXECUTION", "false").lower() 
 # Flag para exponer /metrics a Prometheus (desactivado por defecto — solo habilitar en red interna)
 ENABLE_METRICS = os.getenv("ENABLE_METRICS", "false").lower() == "true"
 
+# Flag para diagnóstico automático con IA (genera ai_diagnosis por incidente)
+ENABLE_AI_DIAGNOSTICS = os.getenv("ENABLE_AI_DIAGNOSTICS", "false").lower() == "true"
+
 if ENABLE_ACTION_EXECUTION and APP_ENV == "production":
     logger.critical(
         "ENABLE_ACTION_EXECUTION=true detectado en APP_ENV=production. "

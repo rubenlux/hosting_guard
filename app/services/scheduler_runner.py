@@ -87,7 +87,7 @@ async def _main() -> None:
     from app.services.aggregate_wp_attacks import aggregate_wp_attacks
     from app.services.domain_checker import check_pending_domains
     from app.services.sync_incidents_feed import sync_incidents_feed
-    from app.api.config import ENABLE_CAPACITY_FORECAST
+    from app.api.config import ENABLE_CAPACITY_FORECAST, ENABLE_AI_DIAGNOSTICS
 
     # Single pass of the intelligent orchestrator (throttle / autoscale / restart).
     # The orchestrator.py module exposes get_container_stats() + handle_container()
@@ -133,6 +133,8 @@ async def _main() -> None:
     schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
     base_count = 18
+    optional_count = 0
+
     if ENABLE_CAPACITY_FORECAST:
         def _run_capacity_forecast():
             try:
@@ -142,9 +144,31 @@ async def _main() -> None:
                 logger.warning("capacity_forecast job failed: %s", exc)
 
         schedule_job(_run_capacity_forecast, interval=600)         # 10 min
-        logger.info("scheduler: %d background jobs scheduled (capacity forecast enabled)", base_count + 1)
+        optional_count += 1
+
+    if ENABLE_AI_DIAGNOSTICS:
+        def _run_ai_diagnostics():
+            try:
+                from app.services.ai.run_ai_diagnostics import run_ai_diagnostics
+                counts = run_ai_diagnostics(limit=10)
+                if any(counts.get(k, 0) for k in ("created", "updated", "failed")):
+                    logger.info("ai_diagnostics: %s", counts)
+            except Exception as exc:
+                logger.warning("ai_diagnostics job failed: %s", exc)
+
+        schedule_job(_run_ai_diagnostics, interval=120, initial_delay=30)  # 2 min
+        optional_count += 1
+
+    total = base_count + optional_count
+    flags = []
+    if ENABLE_CAPACITY_FORECAST:
+        flags.append("capacity_forecast")
+    if ENABLE_AI_DIAGNOSTICS:
+        flags.append("ai_diagnostics")
+    if flags:
+        logger.info("scheduler: %d background jobs scheduled (%s enabled)", total, ", ".join(flags))
     else:
-        logger.info("scheduler: %d background jobs scheduled", base_count)
+        logger.info("scheduler: %d background jobs scheduled", total)
 
     # ── Wait for shutdown signal ──────────────────────────────────────────────
     stop = asyncio.Event()

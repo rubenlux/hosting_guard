@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   ShieldAlert, RefreshCw, CheckCircle2, ChevronDown, ChevronRight,
-  Copy, Loader2, AlertTriangle, Terminal, Globe, Cpu, Zap,
+  Copy, Loader2, AlertTriangle, Terminal, Globe, Cpu, Zap, Brain,
 } from 'lucide-react';
-import { getSentinelIncidents, resolveIncident } from '../../services/api';
+import { getSentinelIncidents, resolveIncident, getDiagnosis, triggerDiagnose } from '../../services/api';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -65,8 +65,146 @@ function buildReport(inc) {
   if (ev.stage)         lines.push(`Etapa:       ${ev.stage}`);
   if (ev.message)       lines.push('', `Descripción: ${ev.message}`);
   if (ev.suggested_fix) lines.push('', `Solución sugerida:`, ev.suggested_fix);
+  if (inc.diagnosis_summary) {
+    lines.push('', '─'.repeat(40), 'DIAGNÓSTICO IA');
+    lines.push(`Resumen: ${inc.diagnosis_summary}`);
+    if (inc.diagnosis_root_cause) lines.push(`Causa raíz: ${inc.diagnosis_root_cause}`);
+    if (inc.diagnosis_customer_message) lines.push('', `Mensaje al usuario: ${inc.diagnosis_customer_message}`);
+    const steps = inc.diagnosis_steps;
+    if (Array.isArray(steps) && steps.length) {
+      lines.push('', 'Próximos pasos:');
+      steps.forEach((s, i) => lines.push(`  ${i + 1}. ${s}`));
+    }
+    if (inc.diagnosis_confidence != null)
+      lines.push('', `Confianza: ${Math.round(inc.diagnosis_confidence * 100)}%`);
+  }
   lines.push('', '─'.repeat(40), 'Generado por HostingGuard AI Sentinel');
   return lines.join('\n');
+}
+
+// ─── DiagnosisPanel ───────────────────────────────────────────────────────────
+
+function DiagnosisPanel({ inc }) {
+  const [diag, setDiag]       = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState(null);
+
+  const hasDiag = !!inc.diagnosis_summary;
+
+  useEffect(() => {
+    if (hasDiag) {
+      setDiag({
+        summary:               inc.diagnosis_summary,
+        root_cause:            inc.diagnosis_root_cause,
+        recommended_next_steps: inc.diagnosis_steps,
+        customer_message:      inc.diagnosis_customer_message,
+        confidence:            inc.diagnosis_confidence,
+        diagnosis_source:      inc.diagnosis_source,
+        updated_at:            inc.diagnosis_updated_at,
+      });
+    }
+  }, [inc.incident_id]);
+
+  async function handleTrigger() {
+    setLoading(true);
+    setError(null);
+    try {
+      await triggerDiagnose(inc.incident_id);
+      await new Promise(r => setTimeout(r, 2500));
+      const fresh = await getDiagnosis(inc.incident_id);
+      setDiag(fresh);
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Error al generar diagnóstico');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const steps = diag?.recommended_next_steps;
+  const confidence = diag?.confidence;
+  const isRuleBased = diag?.diagnosis_source === 'rule_based';
+
+  return (
+    <div className="border border-white/8 rounded-lg p-3 bg-white/2">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5 text-[10px] text-purple-400 uppercase tracking-wide font-medium">
+          <Brain className="w-3 h-3" />
+          Diagnóstico IA
+          {isRuleBased && (
+            <span className="text-gray-600 normal-case tracking-normal">(basado en reglas)</span>
+          )}
+        </div>
+        <button
+          onClick={handleTrigger}
+          disabled={loading}
+          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition-colors disabled:opacity-50"
+        >
+          {loading
+            ? <Loader2 className="w-3 h-3 animate-spin" />
+            : <Brain className="w-3 h-3" />}
+          {diag ? 'Regenerar' : 'Generar diagnóstico'}
+        </button>
+      </div>
+
+      {error && (
+        <p className="text-xs text-red-400 mb-2">{error}</p>
+      )}
+
+      {loading && !diag && (
+        <div className="flex items-center gap-1.5 text-xs text-gray-500 py-1">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          Analizando incidente…
+        </div>
+      )}
+
+      {diag && (
+        <div className="space-y-2">
+          {diag.summary && (
+            <p className="text-xs text-gray-300">{diag.summary}</p>
+          )}
+          {diag.root_cause && (
+            <div>
+              <div className="text-[10px] text-gray-600 uppercase tracking-wide mb-0.5">Causa raíz</div>
+              <p className="text-xs text-gray-400">{diag.root_cause}</p>
+            </div>
+          )}
+          {Array.isArray(steps) && steps.length > 0 && (
+            <div>
+              <div className="text-[10px] text-gray-600 uppercase tracking-wide mb-1">Próximos pasos</div>
+              <ol className="space-y-0.5">
+                {steps.map((s, i) => (
+                  <li key={i} className="flex gap-1.5 text-xs text-gray-400">
+                    <span className="text-purple-500 flex-shrink-0">{i + 1}.</span>
+                    {s}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+          {diag.customer_message && (
+            <div className="bg-blue-500/5 border border-blue-500/15 rounded p-2">
+              <div className="text-[10px] text-blue-500 uppercase tracking-wide mb-0.5">Mensaje al usuario</div>
+              <p className="text-xs text-blue-300">{diag.customer_message}</p>
+            </div>
+          )}
+          {confidence != null && (
+            <div className="flex items-center gap-2 pt-0.5">
+              <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-purple-500/60 rounded-full transition-all"
+                  style={{ width: `${Math.round(confidence * 100)}%` }}
+                />
+              </div>
+              <span className="text-[10px] text-gray-600">{Math.round(confidence * 100)}% confianza</span>
+            </div>
+          )}
+          {diag.updated_at && (
+            <div className="text-[10px] text-gray-700">{fmt(diag.updated_at)}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── IncidentRow ──────────────────────────────────────────────────────────────
@@ -157,6 +295,9 @@ function IncidentRow({ inc, onResolved }) {
               {ev.branch && <span className="ml-2 text-gray-600">rama: {ev.branch}</span>}
             </div>
           )}
+
+          {/* AI Diagnosis */}
+          <DiagnosisPanel inc={inc} />
 
           {/* Raw evidence */}
           <details className="text-xs">

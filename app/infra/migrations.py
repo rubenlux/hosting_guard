@@ -898,6 +898,23 @@ _INDEXES = [
     "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS incident_id BIGINT REFERENCES system_incidents(incident_id) ON DELETE SET NULL",
     "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_incident ON ai_diagnosis(incident_id) WHERE incident_id IS NOT NULL",
 
+    # ai_diagnosis Phase 2: incident-based diagnosis columns
+    "ALTER TABLE ai_diagnosis ALTER COLUMN hosting_id DROP NOT NULL",
+    "ALTER TABLE ai_diagnosis ALTER COLUMN user_id DROP NOT NULL",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS source_type TEXT",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS incident_type TEXT",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS recommended_next_steps JSONB DEFAULT '[]'",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS customer_message TEXT",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS admin_notes TEXT",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS prompt_version TEXT",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS context_hash TEXT",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS error_message TEXT",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS model TEXT",
+    "ALTER TABLE ai_diagnosis ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
+    "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_context_hash ON ai_diagnosis(context_hash) WHERE context_hash IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_ai_diagnosis_source_type ON ai_diagnosis(source_type, created_at DESC)",
+
     # action_recommendations: human-approval queue for AI-proposed actions
     """CREATE TABLE IF NOT EXISTS action_recommendations (
         action_id          BIGSERIAL PRIMARY KEY,
