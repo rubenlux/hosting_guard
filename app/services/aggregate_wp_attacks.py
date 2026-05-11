@@ -34,16 +34,16 @@ def _sev_wp_login(count: int) -> str:
     if count >= 20:
         return "critical"
     if count >= 10:
-        return "high"
-    return "medium"
+        return "warning"
+    return "warning"
 
 
 def _sev_xmlrpc(count: int) -> str:
-    return "critical" if count >= 10 else "high"
+    return "critical" if count >= 10 else "warning"
 
 
 def _sev_rate_limit(count: int) -> str:
-    return "high" if count >= 20 else "medium"
+    return "warning"
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -209,7 +209,7 @@ def _rule_wp_login() -> tuple[int, int, int]:
         try:
             action = _upsert(
                 event_type      = "WP_LOGIN_BRUTE_FORCE",
-                category        = "wordpress",
+                category        = "wordpress_auth",
                 severity_fn     = _sev_wp_login,
                 title           = f"Intentos repetidos de login WordPress: {cname}",
                 message         = (
@@ -289,7 +289,7 @@ def _rule_xmlrpc() -> tuple[int, int, int]:
         try:
             action = _upsert(
                 event_type      = "XMLRPC_ATTACK",
-                category        = "wordpress",
+                category        = "wordpress_auth",
                 severity_fn     = _sev_xmlrpc,
                 title           = f"Ataque XML-RPC detectado: {cname}",
                 message         = (
@@ -370,7 +370,7 @@ def _rule_wp_login_rate_limit() -> tuple[int, int, int]:
         try:
             action = _upsert(
                 event_type      = "WP_LOGIN_RATE_LIMITED",
-                category        = "wordpress",
+                category        = "wordpress_auth",
                 severity_fn     = _sev_rate_limit,
                 title           = f"IP con exceso de intentos de login: {cname}",
                 message         = (

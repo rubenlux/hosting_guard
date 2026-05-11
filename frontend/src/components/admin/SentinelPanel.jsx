@@ -1,11 +1,15 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, {
+  useEffect, useState, useCallback, useMemo, memo,
+} from 'react';
 import {
-  ShieldAlert, RefreshCw, CheckCircle2, ChevronDown, ChevronRight,
+  ShieldAlert, RefreshCw, CheckCircle2, ChevronDown,
   Copy, Loader2, AlertTriangle, Terminal, Globe, Cpu, Zap, Brain,
 } from 'lucide-react';
-import { getSentinelIncidents, resolveIncident, getDiagnosis, triggerDiagnose } from '../../services/api';
+import {
+  getSentinelIncidents, resolveIncident, getDiagnosis, triggerDiagnose,
+} from '../../services/api';
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
+// ─── stable constants (never recreated) ──────────────────────────────────────
 
 function fmt(str) {
   if (!str) return '—';
@@ -43,211 +47,286 @@ const STATUS_TABS = [
   { id: '',         label: 'Todos' },
 ];
 
-// ─── Copy report ─────────────────────────────────────────────────────────────
+// ─── report builder ───────────────────────────────────────────────────────────
 
-function buildReport(inc) {
+function buildReport(inc, diag) {
   const ev = inc.evidence || {};
   const lines = [
     'INFORME DE INCIDENTE — HostingGuard',
     '─'.repeat(40),
-    `Título:      ${inc.title}`,
-    `Tipo:        ${inc.incident_type}`,
-    `Fuente:      ${inc.source_type}`,
-    `Severidad:   ${inc.severity}`,
-    `Estado:      ${inc.status}`,
-    `Detectado:   ${fmt(inc.first_seen)}`,
+    `Título:       ${inc.title}`,
+    `Tipo:         ${inc.incident_type}`,
+    `Fuente:       ${inc.source_type}`,
+    `Severidad:    ${inc.severity}`,
+    `Estado:       ${inc.status}`,
+    `Detectado:    ${fmt(inc.first_seen)}`,
     `Último aviso: ${fmt(inc.last_seen)}`,
-    `Apariciones: ${inc.count}`,
+    `Apariciones:  ${inc.count}`,
   ];
-  if (ev.repo_url)      lines.push(`Repositorio: ${ev.repo_url}`);
-  if (ev.branch)        lines.push(`Rama:        ${ev.branch}`);
-  if (ev.project_name)  lines.push(`Proyecto:    ${ev.project_name}`);
-  if (ev.stage)         lines.push(`Etapa:       ${ev.stage}`);
-  if (ev.message)       lines.push('', `Descripción: ${ev.message}`);
-  if (ev.suggested_fix) lines.push('', `Solución sugerida:`, ev.suggested_fix);
-  if (inc.diagnosis_summary) {
+  if (ev.repo_url)      lines.push(`Repositorio:  ${ev.repo_url}`);
+  if (ev.branch)        lines.push(`Rama:         ${ev.branch}`);
+  if (ev.project_name)  lines.push(`Proyecto:     ${ev.project_name}`);
+  if (ev.stage)         lines.push(`Etapa:        ${ev.stage}`);
+  if (ev.message)       lines.push('', `Descripción:  ${ev.message}`);
+  if (ev.suggested_fix) lines.push('', 'Solución sugerida:', ev.suggested_fix);
+
+  if (diag?.summary) {
     lines.push('', '─'.repeat(40), 'DIAGNÓSTICO IA');
-    lines.push(`Resumen: ${inc.diagnosis_summary}`);
-    if (inc.diagnosis_root_cause) lines.push(`Causa raíz: ${inc.diagnosis_root_cause}`);
-    if (inc.diagnosis_customer_message) lines.push('', `Mensaje al usuario: ${inc.diagnosis_customer_message}`);
-    const steps = inc.diagnosis_steps;
+    lines.push(`Resumen: ${diag.summary}`);
+    if (diag.root_cause)       lines.push(`Causa raíz: ${diag.root_cause}`);
+    if (diag.customer_message) lines.push('', `Mensaje al usuario: ${diag.customer_message}`);
+    const steps = diag.recommended_next_steps;
     if (Array.isArray(steps) && steps.length) {
       lines.push('', 'Próximos pasos:');
       steps.forEach((s, i) => lines.push(`  ${i + 1}. ${s}`));
     }
-    if (inc.diagnosis_confidence != null)
-      lines.push('', `Confianza: ${Math.round(inc.diagnosis_confidence * 100)}%`);
+    if (diag.confidence != null)
+      lines.push('', `Confianza: ${Math.round(diag.confidence * 100)}%`);
   }
+
   lines.push('', '─'.repeat(40), 'Generado por HostingGuard AI Sentinel');
   return lines.join('\n');
 }
 
+// ─── skeleton ─────────────────────────────────────────────────────────────────
+
+function SkeletonRow() {
+  return (
+    <div className="border border-white/5 bg-[#111] rounded-xl p-4 animate-pulse">
+      <div className="flex items-start gap-3">
+        <div className="w-3.5 h-3.5 rounded-full bg-white/10 mt-0.5 shrink-0" />
+        <div className="flex-1 space-y-2">
+          <div className="flex gap-2 items-center">
+            <div className="h-3.5 bg-white/8 rounded w-52" />
+            <div className="h-4 bg-white/6 rounded w-14" />
+          </div>
+          <div className="h-3 bg-white/5 rounded w-36" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── DiagnosisPanel ───────────────────────────────────────────────────────────
 
-function DiagnosisPanel({ inc }) {
-  const [diag, setDiag]       = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
+const DiagnosisPanel = memo(function DiagnosisPanel({
+  incidentId,
+  diagSummary, diagRootCause, diagSteps, diagCustomerMessage,
+  diagConfidence, diagSource, diagUpdatedAt,
+  onDiagReady,
+}) {
+  const [diag, setDiag] = useState(() =>
+    diagSummary
+      ? {
+          summary:                diagSummary,
+          root_cause:             diagRootCause,
+          recommended_next_steps: diagSteps,
+          customer_message:       diagCustomerMessage,
+          confidence:             diagConfidence,
+          fingerprint:            diagSource,
+          updated_at:             diagUpdatedAt,
+        }
+      : null
+  );
+  const [status, setStatus] = useState('idle'); // 'idle' | 'generating' | 'regenerating'
+  const [error, setError]   = useState(null);
 
-  const hasDiag = !!inc.diagnosis_summary;
-
+  // Sync if parent fetched fresher diagnosis data (compare updated_at string)
   useEffect(() => {
-    if (hasDiag) {
+    if (diagUpdatedAt && diag?.updated_at !== diagUpdatedAt) {
       setDiag({
-        summary:               inc.diagnosis_summary,
-        root_cause:            inc.diagnosis_root_cause,
-        recommended_next_steps: inc.diagnosis_steps,
-        customer_message:      inc.diagnosis_customer_message,
-        confidence:            inc.diagnosis_confidence,
-        diagnosis_source:      inc.diagnosis_source,
-        updated_at:            inc.diagnosis_updated_at,
+        summary:                diagSummary,
+        root_cause:             diagRootCause,
+        recommended_next_steps: diagSteps,
+        customer_message:       diagCustomerMessage,
+        confidence:             diagConfidence,
+        fingerprint:            diagSource,
+        updated_at:             diagUpdatedAt,
       });
     }
-  }, [inc.incident_id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diagUpdatedAt]);
+
+  const isGenerating   = status === 'generating';
+  const isRegenerating = status === 'regenerating';
+  const isLoading      = isGenerating || isRegenerating;
+  const isRuleBased    = diag?.fingerprint === 'rule_based';
+  const steps          = diag?.recommended_next_steps;
+  const confidence     = diag?.confidence;
 
   async function handleTrigger() {
-    setLoading(true);
+    setStatus(diag ? 'regenerating' : 'generating');
     setError(null);
     try {
-      await triggerDiagnose(inc.incident_id);
+      await triggerDiagnose(incidentId);
+      // Give the background task time to complete
       await new Promise(r => setTimeout(r, 2500));
-      const fresh = await getDiagnosis(inc.incident_id);
+      const fresh = await getDiagnosis(incidentId);
       setDiag(fresh);
+      onDiagReady?.(fresh);
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al generar diagnóstico');
     } finally {
-      setLoading(false);
+      setStatus('idle');
     }
   }
 
-  const steps = diag?.recommended_next_steps;
-  const confidence = diag?.confidence;
-  const isRuleBased = diag?.diagnosis_source === 'rule_based';
-
   return (
-    <div className="border border-white/8 rounded-lg p-3 bg-white/2">
-      <div className="flex items-center justify-between mb-2">
+    <div className="border border-white/8 rounded-lg overflow-hidden">
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-3 py-2 bg-white/[0.02] border-b border-white/5">
         <div className="flex items-center gap-1.5 text-[10px] text-purple-400 uppercase tracking-wide font-medium">
           <Brain className="w-3 h-3" />
           Diagnóstico IA
           {isRuleBased && (
-            <span className="text-gray-600 normal-case tracking-normal">(basado en reglas)</span>
+            <span className="text-gray-600 normal-case tracking-normal font-normal">(reglas)</span>
+          )}
+          {isRegenerating && (
+            <span className="flex items-center gap-1 text-purple-400/60 normal-case tracking-normal font-normal ml-1">
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+              Regenerando…
+            </span>
           )}
         </div>
         <button
+          data-testid="diagnose-btn"
           onClick={handleTrigger}
-          disabled={loading}
-          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition-colors disabled:opacity-50"
+          disabled={isLoading}
+          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition-colors disabled:opacity-40"
         >
-          {loading
+          {isGenerating
             ? <Loader2 className="w-3 h-3 animate-spin" />
             : <Brain className="w-3 h-3" />}
           {diag ? 'Regenerar' : 'Generar diagnóstico'}
         </button>
       </div>
 
-      {error && (
-        <p className="text-xs text-red-400 mb-2">{error}</p>
-      )}
+      {/* Body */}
+      <div className="px-3 pb-3 pt-2.5 min-h-[3rem]">
+        {error && (
+          <p className="text-xs text-red-400 mb-2">{error}</p>
+        )}
 
-      {loading && !diag && (
-        <div className="flex items-center gap-1.5 text-xs text-gray-500 py-1">
-          <Loader2 className="w-3 h-3 animate-spin" />
-          Analizando incidente…
-        </div>
-      )}
+        {isGenerating && !diag && (
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 py-2">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Analizando incidente…
+          </div>
+        )}
 
-      {diag && (
-        <div className="space-y-2">
-          {diag.summary && (
-            <p className="text-xs text-gray-300">{diag.summary}</p>
-          )}
-          {diag.root_cause && (
-            <div>
-              <div className="text-[10px] text-gray-600 uppercase tracking-wide mb-0.5">Causa raíz</div>
-              <p className="text-xs text-gray-400">{diag.root_cause}</p>
-            </div>
-          )}
-          {Array.isArray(steps) && steps.length > 0 && (
-            <div>
-              <div className="text-[10px] text-gray-600 uppercase tracking-wide mb-1">Próximos pasos</div>
-              <ol className="space-y-0.5">
-                {steps.map((s, i) => (
-                  <li key={i} className="flex gap-1.5 text-xs text-gray-400">
-                    <span className="text-purple-500 flex-shrink-0">{i + 1}.</span>
-                    {s}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-          {diag.customer_message && (
-            <div className="bg-blue-500/5 border border-blue-500/15 rounded p-2">
-              <div className="text-[10px] text-blue-500 uppercase tracking-wide mb-0.5">Mensaje al usuario</div>
-              <p className="text-xs text-blue-300">{diag.customer_message}</p>
-            </div>
-          )}
-          {confidence != null && (
-            <div className="flex items-center gap-2 pt-0.5">
-              <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-purple-500/60 rounded-full transition-all"
-                  style={{ width: `${Math.round(confidence * 100)}%` }}
-                />
+        {!diag && !isGenerating && !error && (
+          <p className="text-xs text-gray-600 py-1">Sin diagnóstico IA todavía.</p>
+        )}
+
+        {diag && (
+          <div
+            className={`space-y-2 transition-opacity duration-200 ${
+              isRegenerating ? 'opacity-40' : 'opacity-100'
+            }`}
+          >
+            {diag.summary && (
+              <p className="text-xs text-gray-300">{diag.summary}</p>
+            )}
+            {diag.root_cause && (
+              <div>
+                <div className="text-[10px] text-gray-600 uppercase tracking-wide mb-0.5">Causa raíz</div>
+                <p className="text-xs text-gray-400">{diag.root_cause}</p>
               </div>
-              <span className="text-[10px] text-gray-600">{Math.round(confidence * 100)}% confianza</span>
-            </div>
-          )}
-          {diag.updated_at && (
-            <div className="text-[10px] text-gray-700">{fmt(diag.updated_at)}</div>
-          )}
-        </div>
-      )}
+            )}
+            {Array.isArray(steps) && steps.length > 0 && (
+              <div>
+                <div className="text-[10px] text-gray-600 uppercase tracking-wide mb-1">Próximos pasos</div>
+                <ol className="space-y-0.5">
+                  {steps.map((s, i) => (
+                    <li key={i} className="flex gap-1.5 text-xs text-gray-400">
+                      <span className="text-purple-500 shrink-0">{i + 1}.</span>
+                      {s}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {diag.customer_message && (
+              <div className="bg-blue-500/5 border border-blue-500/15 rounded p-2">
+                <div className="text-[10px] text-blue-500 uppercase tracking-wide mb-0.5">Mensaje al usuario</div>
+                <p className="text-xs text-blue-300">{diag.customer_message}</p>
+              </div>
+            )}
+            {confidence != null && (
+              <div className="flex items-center gap-2 pt-0.5">
+                <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-purple-500/60 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.round(confidence * 100)}%` }}
+                  />
+                </div>
+                <span className="text-[10px] text-gray-600">
+                  {Math.round(confidence * 100)}% confianza
+                </span>
+              </div>
+            )}
+            {diag.updated_at && (
+              <div className="text-[10px] text-gray-700">{fmt(diag.updated_at)}</div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
-}
+});
 
 // ─── IncidentRow ──────────────────────────────────────────────────────────────
 
-function IncidentRow({ inc, onResolved }) {
-  const [open, setOpen]     = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
+const IncidentRow = memo(function IncidentRow({ inc, expanded, onToggle, onResolved }) {
+  const [resolving, setResolving] = useState(false);
+  const [copied, setCopied]       = useState(false);
+  // diag ref so the copy button always uses latest diagnosis
+  const [currentDiag, setCurrentDiag] = useState(null);
 
-  const ev = inc.evidence || {};
+  const ev       = inc.evidence || {};
   const sevClass = SEV[inc.severity] || SEV.info;
-  const isOpen = inc.status === 'open';
+  const isOpen   = inc.status === 'open';
 
   async function handleResolve() {
     if (!window.confirm(`¿Resolver incidente #${inc.incident_id}?`)) return;
-    setLoading(true);
+    setResolving(true);
     try {
       await resolveIncident(inc.incident_id);
       onResolved(inc.incident_id);
     } catch {
       alert('Error al resolver el incidente.');
     } finally {
-      setLoading(false);
+      setResolving(false);
     }
   }
 
   function handleCopy() {
-    navigator.clipboard.writeText(buildReport(inc)).then(() => {
+    const diagForReport = currentDiag ?? (inc.diagnosis_summary ? {
+      summary:                inc.diagnosis_summary,
+      root_cause:             inc.diagnosis_root_cause,
+      recommended_next_steps: inc.diagnosis_steps,
+      customer_message:       inc.diagnosis_customer_message,
+      confidence:             inc.diagnosis_confidence,
+    } : null);
+    navigator.clipboard.writeText(buildReport(inc, diagForReport)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
   }
 
   return (
-    <div className={`border rounded-xl overflow-hidden transition-colors ${
-      isOpen ? 'border-white/10 bg-[#111]' : 'border-white/5 bg-[#0d0d0f]'
-    }`}>
-      {/* Header row */}
+    <div
+      data-incident-id={inc.incident_id}
+      className={`border rounded-xl overflow-hidden transition-colors duration-150 ${
+        isOpen ? 'border-white/10 bg-[#111]' : 'border-white/5 bg-[#0d0d0f]'
+      }`}
+    >
+      {/* Header — always visible */}
       <div
-        className="flex items-start gap-3 p-4 cursor-pointer hover:bg-white/3 transition-colors"
-        onClick={() => setOpen(o => !o)}
+        className="flex items-start gap-3 p-4 cursor-pointer hover:bg-white/[0.025] transition-colors select-none"
+        onClick={() => onToggle(inc.incident_id)}
       >
-        <span className={`mt-0.5 flex-shrink-0 ${sevClass.split(' ')[0]}`}>
+        <span className={`mt-0.5 shrink-0 ${sevClass.split(' ')[0]}`}>
           {SOURCE_ICON[inc.source_type] || <Zap className="w-3.5 h-3.5" />}
         </span>
         <div className="flex-1 min-w-0">
@@ -271,102 +350,165 @@ function IncidentRow({ inc, onResolved }) {
             <span>×{inc.count} · {fmt(inc.last_seen)}</span>
           </div>
         </div>
-        {open ? <ChevronDown className="w-4 h-4 text-gray-600 flex-shrink-0 mt-0.5" />
-               : <ChevronRight className="w-4 h-4 text-gray-600 flex-shrink-0 mt-0.5" />}
+        <ChevronDown
+          className={`w-4 h-4 text-gray-600 shrink-0 mt-0.5 transition-transform duration-200 ${
+            expanded ? 'rotate-0' : '-rotate-90'
+          }`}
+        />
       </div>
 
-      {/* Expanded detail */}
-      {open && (
-        <div className="border-t border-white/5 px-4 pb-4 pt-3 space-y-3">
-          {ev.message && (
-            <p className="text-sm text-gray-300">{ev.message}</p>
-          )}
-          {ev.suggested_fix && (
-            <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
-              <div className="text-[10px] text-emerald-500 uppercase tracking-wide mb-1">Solución sugerida</div>
-              <p className="text-sm text-emerald-300">{ev.suggested_fix}</p>
-            </div>
-          )}
-          {ev.repo_url && (
-            <div className="text-xs text-gray-500">
-              <span className="text-gray-600">Repo: </span>
-              <a href={ev.repo_url} target="_blank" rel="noreferrer"
-                 className="text-blue-400 hover:underline">{ev.repo_url}</a>
-              {ev.branch && <span className="ml-2 text-gray-600">rama: {ev.branch}</span>}
-            </div>
-          )}
-
-          {/* AI Diagnosis */}
-          <DiagnosisPanel inc={inc} />
-
-          {/* Raw evidence */}
-          <details className="text-xs">
-            <summary className="cursor-pointer text-gray-600 hover:text-gray-400 select-none">
-              Evidencia técnica
-            </summary>
-            <pre className="mt-2 bg-black/40 rounded p-2 text-[10px] text-gray-400 overflow-x-auto max-h-40">
-              {JSON.stringify(ev, null, 2)}
-            </pre>
-          </details>
-
-          {/* Actions */}
-          <div className="flex gap-2 pt-1">
-            {isOpen && (
-              <button
-                onClick={handleResolve}
-                disabled={loading}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
-              >
-                {loading
-                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  : <CheckCircle2 className="w-3.5 h-3.5" />}
-                Marcar resuelto
-              </button>
+      {/* Accordion — CSS grid trick: smooth height, always-mounted children */}
+      <div
+        className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+          expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+        }`}
+      >
+        <div className="overflow-hidden min-h-0">
+          <div className="border-t border-white/5 px-4 pb-4 pt-3 space-y-3">
+            {ev.message && (
+              <p className="text-sm text-gray-300">{ev.message}</p>
             )}
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/5 text-gray-400 border border-white/8 hover:bg-white/8 transition-colors"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              {copied ? 'Copiado' : 'Copiar informe'}
-            </button>
+            {ev.suggested_fix && (
+              <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
+                <div className="text-[10px] text-emerald-500 uppercase tracking-wide mb-1">
+                  Solución sugerida
+                </div>
+                <p className="text-sm text-emerald-300">{ev.suggested_fix}</p>
+              </div>
+            )}
+            {ev.repo_url && (
+              <div className="text-xs text-gray-500">
+                <span className="text-gray-600">Repo: </span>
+                <a
+                  href={ev.repo_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-blue-400 hover:underline"
+                >
+                  {ev.repo_url}
+                </a>
+                {ev.branch && (
+                  <span className="ml-2 text-gray-600">rama: {ev.branch}</span>
+                )}
+              </div>
+            )}
+
+            {/* DiagnosisPanel — always mounted to preserve its state */}
+            <DiagnosisPanel
+              incidentId={inc.incident_id}
+              diagSummary={inc.diagnosis_summary}
+              diagRootCause={inc.diagnosis_root_cause}
+              diagSteps={inc.diagnosis_steps}
+              diagCustomerMessage={inc.diagnosis_customer_message}
+              diagConfidence={inc.diagnosis_confidence}
+              diagSource={inc.diagnosis_source}
+              diagUpdatedAt={inc.diagnosis_updated_at}
+              onDiagReady={setCurrentDiag}
+            />
+
+            {/* Raw evidence */}
+            <details className="text-xs">
+              <summary className="cursor-pointer text-gray-600 hover:text-gray-400 select-none">
+                Evidencia técnica
+              </summary>
+              <pre className="mt-2 bg-black/40 rounded p-2 text-[10px] text-gray-400 overflow-x-auto max-h-40">
+                {JSON.stringify(ev, null, 2)}
+              </pre>
+            </details>
+
+            {/* Actions */}
+            <div className="flex gap-2 pt-1">
+              {isOpen && (
+                <button
+                  onClick={handleResolve}
+                  disabled={resolving}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                >
+                  {resolving
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <CheckCircle2 className="w-3.5 h-3.5" />}
+                  Marcar resuelto
+                </button>
+              )}
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/5 text-gray-400 border border-white/8 hover:bg-white/8 transition-colors"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                {copied ? 'Copiado' : 'Copiar informe'}
+              </button>
+            </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
-}
+});
 
 // ─── SentinelPanel ────────────────────────────────────────────────────────────
 
 export default function SentinelPanel() {
-  const [sourceTab, setSourceTab] = useState('deploy');
-  const [statusTab, setStatusTab] = useState('open');
-  const [items, setItems]         = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState(null);
+  const [sourceTab, setSourceTab]   = useState('deploy');
+  const [statusTab, setStatusTab]   = useState('open');
+  // allItems holds ALL source types for the current statusTab (sourceTab is client-side filtered)
+  const [allItems, setAllItems]     = useState([]);
+  const [isFirstLoad, setIsFirstLoad] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError]           = useState(null);
+  // Stable expand state by incident_id — survives tab changes
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
 
-  const load = useCallback(() => {
-    setLoading(true);
+  // sourceTab → client-side filter, no refetch
+  const filteredItems = useMemo(
+    () => sourceTab ? allItems.filter(i => i.source_type === sourceTab) : allItems,
+    [allItems, sourceTab],
+  );
+
+  const openCount = useMemo(
+    () => filteredItems.filter(i => i.status === 'open').length,
+    [filteredItems],
+  );
+
+  // Only fetch when statusTab changes (sourceTab is filtered client-side)
+  const load = useCallback(async () => {
+    setIsRefreshing(true);
     setError(null);
     const params = {};
-    if (sourceTab) params.source_type = sourceTab;
-    if (statusTab) params.status      = statusTab;
-    getSentinelIncidents(params)
-      .then(d => setItems(d.items || []))
-      .catch(e => setError(e?.response?.data?.detail || 'Error cargando incidentes'))
-      .finally(() => setLoading(false));
-  }, [sourceTab, statusTab]);
+    if (statusTab) params.status = statusTab;
+    try {
+      const d = await getSentinelIncidents(params);
+      setAllItems(d.items || []);
+      setIsFirstLoad(false);
+    } catch (e) {
+      // Keep previous data visible on error
+      setError(e?.response?.data?.detail || 'Error al cargar incidentes');
+      setIsFirstLoad(false);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [statusTab]);
 
   useEffect(() => { load(); }, [load]);
 
   function handleResolved(id) {
-    setItems(prev => prev.map(i =>
-      i.incident_id === id ? { ...i, status: 'resolved' } : i
-    ));
+    if (statusTab === 'open') {
+      // Optimistic remove from open list
+      setAllItems(prev => prev.filter(i => i.incident_id !== id));
+    } else {
+      setAllItems(prev => prev.map(i =>
+        i.incident_id === id ? { ...i, status: 'resolved' } : i,
+      ));
+    }
   }
 
-  const openCount = items.filter(i => i.status === 'open').length;
+  const toggleExpanded = useCallback((id) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -386,15 +528,25 @@ export default function SentinelPanel() {
             )}
           </p>
         </div>
-        <button
-          onClick={load}
-          className="p-2 rounded-lg bg-white/5 border border-white/8 text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+
+        <div className="flex items-center gap-3">
+          {isRefreshing && (
+            <span className="flex items-center gap-1.5 text-xs text-gray-600">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Actualizando…
+            </span>
+          )}
+          <button
+            onClick={load}
+            disabled={isRefreshing || isFirstLoad}
+            className="p-2 rounded-lg bg-white/5 border border-white/8 text-gray-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
+          >
+            <RefreshCw className={`w-4 h-4 ${(isRefreshing || isFirstLoad) ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
-      {/* Source tabs */}
+      {/* Source tabs — switching these never triggers a refetch */}
       <div className="flex gap-1 mb-4 bg-white/4 p-1 rounded-xl w-fit">
         {TABS.map(t => (
           <button
@@ -411,7 +563,7 @@ export default function SentinelPanel() {
         ))}
       </div>
 
-      {/* Status tabs */}
+      {/* Status tabs — switching triggers refetch */}
       <div className="flex gap-2 mb-5">
         {STATUS_TABS.map(t => (
           <button
@@ -428,32 +580,50 @@ export default function SentinelPanel() {
         ))}
       </div>
 
-      {/* Content */}
-      {loading && (
-        <div className="flex items-center gap-2 text-gray-500 py-8 justify-center">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-sm">Cargando incidentes…</span>
-        </div>
-      )}
-      {error && (
-        <div className="flex items-center gap-2 text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl p-4">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span className="text-sm">{error}</span>
-        </div>
-      )}
-      {!loading && !error && items.length === 0 && (
-        <div className="text-center py-12 text-gray-600">
-          <CheckCircle2 className="w-8 h-8 mx-auto mb-2 opacity-40" />
-          <p className="text-sm">Sin incidentes{statusTab === 'open' ? ' abiertos' : ''} en este segmento</p>
-        </div>
-      )}
-      {!loading && !error && items.length > 0 && (
-        <div className="space-y-2">
-          {items.map(inc => (
-            <IncidentRow key={inc.incident_id} inc={inc} onResolved={handleResolved} />
-          ))}
-        </div>
-      )}
+      {/* Incident list — min-height prevents collapse flicker */}
+      <div className="min-h-[300px]">
+        {isFirstLoad && (
+          <div className="space-y-2">
+            {[1, 2, 3].map(i => <SkeletonRow key={i} />)}
+          </div>
+        )}
+
+        {!isFirstLoad && (
+          <>
+            {error && (
+              <div className="flex items-center gap-2 text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl p-4 mb-4">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span className="text-sm">{error} — mostrando últimos datos disponibles</span>
+              </div>
+            )}
+
+            {filteredItems.length === 0 && !isRefreshing ? (
+              <div className="text-center py-12 text-gray-600">
+                <CheckCircle2 className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                <p className="text-sm">
+                  Sin incidentes{statusTab === 'open' ? ' abiertos' : ''} en este segmento
+                </p>
+              </div>
+            ) : (
+              <div
+                className={`space-y-2 transition-opacity duration-150 ${
+                  isRefreshing ? 'opacity-60' : 'opacity-100'
+                }`}
+              >
+                {filteredItems.map(inc => (
+                  <IncidentRow
+                    key={inc.incident_id}
+                    inc={inc}
+                    expanded={expandedIds.has(inc.incident_id)}
+                    onToggle={toggleExpanded}
+                    onResolved={handleResolved}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
