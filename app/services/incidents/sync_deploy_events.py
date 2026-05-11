@@ -11,7 +11,7 @@ from .incident_deduper import _query, _resolve_incident, _upsert_incident
 logger = logging.getLogger(__name__)
 
 _GENERIC_DEPLOY_CODES: frozenset = frozenset({
-    "build_failed", "npm_install_failed", "unknown_deploy_error",
+    "build_failed", "npm_install_failed", "unknown_deploy_error", "invalid_repo_url",
 })
 
 
@@ -60,7 +60,7 @@ def sync_deploy_events(conn) -> dict:
         if code not in _GENERIC_DEPLOY_CODES:
             tgt = (
                 row.get("user_id"),
-                row.get("repo_url") or "",
+                (row.get("repo_url") or "").strip(),
                 row.get("branch") or "",
                 row.get("project_name") or "",
             )
@@ -74,7 +74,7 @@ def sync_deploy_events(conn) -> dict:
         if code in _GENERIC_DEPLOY_CODES:
             tgt = (
                 row.get("user_id"),
-                row.get("repo_url") or "",
+                (row.get("repo_url") or "").strip(),
                 row.get("branch") or "",
                 row.get("project_name") or "",
             )
@@ -146,12 +146,15 @@ def sync_deploy_events(conn) -> dict:
         logger.warning("sync_incidents_feed: open-incidents query failed: %s", exc)
         all_open = []
 
-    # Step A: supersede generic codes when a specific code is open for same target
+    # Step A: supersede generic codes when a specific code is open for same target.
+    # repo_url is stripped so that incidents created from URL-with-space bugs are
+    # matched against incidents created from the correctly-normalized URL.
     target_map: dict = {}
     for inc in all_open:
-        tgt = (inc.get("user_id"), inc.get("repo_url") or "")
+        tgt = (inc.get("user_id"), (inc.get("repo_url") or "").strip())
         target_map.setdefault(tgt, []).append(inc)
 
+    superseded_keys: set = set()
     for _target, _incs in target_map.items():
         _codes = {i["incident_type"] for i in _incs}
         _specific = _codes - _GENERIC_DEPLOY_CODES
@@ -166,6 +169,7 @@ def sync_deploy_events(conn) -> dict:
                     "superseded_by_code": _by,
                 }):
                     counts["resolved"] += 1
+                    superseded_keys.add(_inc["correlation_key"])
 
     # Step B: resolve by absence.
     # Success only counts as the resolution reason when it is strictly after the
@@ -173,7 +177,7 @@ def sync_deploy_events(conn) -> dict:
     # from claiming credit for resolving a later failure.
     try:
         _success_targets = {
-            (r.get("user_id"), r.get("repo_url") or "")
+            (r.get("user_id"), (r.get("repo_url") or "").strip())
             for r in _query(
                 conn,
                 """
@@ -198,7 +202,9 @@ def sync_deploy_events(conn) -> dict:
     for inc in all_open:
         if inc["correlation_key"] in seen_keys:
             continue
-        tgt = (inc.get("user_id"), inc.get("repo_url") or "")
+        if inc["correlation_key"] in superseded_keys:
+            continue
+        tgt = (inc.get("user_id"), (inc.get("repo_url") or "").strip())
         reason = "deploy_success" if tgt in _success_targets else "no_recent_failure"
         if _resolve_incident(conn, inc["correlation_key"], {
             "resolved_by":     "sync_incidents_feed",

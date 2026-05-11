@@ -64,6 +64,7 @@ def _upsert_incident(
         UPDATE system_incidents
            SET last_seen  = %s,
                count      = count + 1,
+               title      = %s,
                evidence   = %s,
                updated_at = %s,
                severity   = CASE
@@ -74,7 +75,7 @@ def _upsert_incident(
                    THEN %s ELSE severity END
          WHERE correlation_key = %s AND status = 'open'
         """,
-        (now, evidence_json, now, _sev_rank(severity), severity, correlation_key),
+        (now, title, evidence_json, now, _sev_rank(severity), severity, correlation_key),
     )
     if cur.rowcount > 0:
         return "updated"
