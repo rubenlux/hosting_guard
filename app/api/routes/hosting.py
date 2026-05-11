@@ -15,7 +15,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.api.security import verify_token, require_support_write
 from app.api.rate_limit import limiter, DEPLOY_RATE_LIMIT
 from app.services.deploy_diagnostics import DeployError
@@ -140,7 +140,8 @@ def _validate_project_name(name: str) -> None:
 
 
 def _validate_repo_url(url: str) -> None:
-    """Valida que la URL sea HTTPS y pertenezca a un host de confianza."""
+    """Validates HTTPS URL from a trusted host with at least user/repo path."""
+    url = url.strip()
     try:
         parsed = urlparse(url)
     except Exception:
@@ -151,6 +152,12 @@ def _validate_repo_url(url: str) -> None:
         raise HTTPException(
             status_code=400,
             detail=f"Host no permitido. Usar: {', '.join(sorted(ALLOWED_REPO_HOSTS))}"
+        )
+    path_parts = [p for p in parsed.path.split("/") if p]
+    if len(path_parts) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="La URL debe incluir usuario y repositorio: https://github.com/usuario/repo"
         )
 
 
@@ -864,6 +871,11 @@ class GitDeployRequest(BaseModel):
     framework:        Optional[str] = None  # explicit: 'static' | 'node' | 'python' | 'dockerfile'
     dockerfile_path:  Optional[str] = None  # path relative to root_directory
     env_vars:         dict = {}             # { KEY: value } — injected at runtime
+
+    @field_validator("repo_url", "branch", "name", mode="before")
+    @classmethod
+    def _strip_str(cls, v: object) -> object:
+        return v.strip() if isinstance(v, str) else v
 
 
 ENV_KEY_RE = re.compile(r'^[A-Z_][A-Z0-9_]{0,63}$')

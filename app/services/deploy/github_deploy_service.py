@@ -15,6 +15,7 @@ import tempfile
 import uuid
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
@@ -128,7 +129,9 @@ async def run_github_deploy(
         # ── Precheck: runtime tools + URL ────────────────────────────────────
         _check_required_tool("git")
 
-        if not (data.repo_url.startswith("https://") or data.repo_url.startswith("git@")):
+        _parsed_url = urlparse(data.repo_url)
+        _url_parts  = [p for p in _parsed_url.path.split("/") if p]
+        if _parsed_url.scheme != "https" or not _parsed_url.hostname or len(_url_parts) < 2:
             raise DeployError(
                 code=INVALID_REPO_URL, stage="validation",
                 detail="La URL del repositorio no es válida.",
