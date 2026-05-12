@@ -892,3 +892,185 @@ python scripts/backfill_forwardauth.py --dry-run
 
 # Only proceed after dry-run is clean on a throwaway hosting
 python scripts/backfill_forwardauth.py --hosting-id <test_id>
+
+---
+
+## 2026-05-12 — Phase 3A: AI Action Recommendations con aprobación humana
+
+### Restricciones permanentes de esta fase
+
+En esta fase está prohibido:
+- Ejecutar comandos, reiniciar contenedores, bloquear IPs
+- Modificar Protection Mode, DNS, docker-compose
+- Borrar archivos o eliminar containers
+- Resolver incidentes automáticamente
+- Cualquier escritura a DB salvo INSERT/UPDATE en `action_recommendations`
+
+`execution_allowed` y `can_execute` son SIEMPRE false. Sin botón Ejecutar en ningún lugar.
+
+---
+
+### BLOQUE 1 — Migraciones (`app/infra/migrations.py`)
+
+Añadidas al final de `_MIGRATIONS_PG`:
+
+```sql
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS diagnosis_id BIGINT REFERENCES ai_diagnosis(id) ON DELETE SET NULL
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS source_type TEXT
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS incident_type TEXT
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS recommendation_source TEXT NOT NULL DEFAULT 'rule_based'
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS confidence REAL
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS reason TEXT
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS expected_impact TEXT
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS rollback_notes TEXT
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS safety_notes TEXT
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS payload JSONB DEFAULT '{}'
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS context_hash TEXT
+ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()
+CREATE INDEX IF NOT EXISTS idx_action_recs_diagnosis ON action_recommendations(diagnosis_id) WHERE diagnosis_id IS NOT NULL
+CREATE INDEX IF NOT EXISTS idx_action_recs_risk ON action_recommendations(risk_level, created_at DESC)
+CREATE INDEX IF NOT EXISTS idx_action_recs_hash ON action_recommendations(context_hash) WHERE context_hash IS NOT NULL
+```
+
+---
+
+### BLOQUE 2 — `app/services/ai/action_safety_classifier.py` (nuevo)
+
+Clasificador puro de riesgo por `action_type`. Cuatro niveles:
+- `_POLICY_BLOCKED`: delete_container, delete_files, modify_dns, drop_database, force_restart_container, modify_docker_compose, resolve_incident_auto
+- `_LOW_RISK`: customer_fix, monitor, manual_check, dependency_fix, branch_correction, site_recovery_monitor
+- `_MEDIUM_RISK`: admin_review, security_review, enable_protection_mode_monitor, notify_customer, check_credentials
+- `_HIGH_RISK`: block_ip_candidate, enable_protection_mode_protect, redeploy_candidate, restart_container_suggestion, escalate_to_admin
+
+`classify_action(action_type) → SafetyResult`:
+- `execution_allowed` SIEMPRE False
+- `requires_approval` SIEMPRE True
+- `blocked_by_policy=True` para tipos en `_POLICY_BLOCKED`
+
+---
+
+### BLOQUE 3 — `app/services/ai/action_recommendations.py` (nuevo, reescrito en 3A.1)
+
+**Estructuras clave:**
+
+`_OWNER_MAP`: mapeo `action_type → "cliente" | "admin" | "seguridad"`. Derivado por `_derive_owner(action_type)`. Default `"admin"`.
+
+`_RULES`: dict `incident_type → list[dict]` con 8 tipos de incidente. Copy evita verbos de auto-ejecución. Cada entrada tiene `action_type`, `title`, `description`, `safety_notes`.
+
+`_enrich(row) → dict`: añade `owner`, `owner_label`, `can_approve`, `can_reject`, `can_execute=False`, `execution_allowed=False`. `can_execute` nunca se almacena en DB, siempre derivado.
+
+`_log_audit_event(action_id, incident_id, diagnosis_id, actor_user_id, previous_status, new_status)`: llama `activity_service.log_event` con `event_type=f"action_recommendation_{new_status}"`. Fallo no bloquea la operación.
+
+`approve_action(conn, action_id, admin_user_id)`: UPDATE SET status=approved, `executed_at` permanece NULL siempre.
+
+`reject_action(conn, action_id, admin_user_id, reason=None)`: SELECT status (captura `previous_status`), luego UPDATE.
+
+**Idempotencia:** SHA-256 de `incident_id:diagnosis_id:action_type:context_hash` truncado a 32 chars. Si ya existe en DB, salta a menos que `force=True`.
+
+**Copy de `github_private_repo_unauthorized`:**
+- Título: "Verificar acceso al repositorio GitHub"
+- Description: cubre URL inexistente / privado / sin permisos; no menciona token como única causa
+- Safety notes: no modifica repositorio ni ejecuta comandos
+
+---
+
+### BLOQUE 4 — `app/api/routes/admin.py` (4 endpoints añadidos)
+
+```
+GET  /incidents/{incident_id}/actions         — lista acciones enriquecidas
+POST /incidents/{incident_id}/actions/generate — genera en background (force: bool=False)
+POST /actions/{action_id}/approve             — aprueba (audit log)
+POST /actions/{action_id}/reject              — rechaza con reason opcional
+```
+
+`_RejectBody(reason: Optional[str] = Field(None, max_length=500))`
+
+`generate_for_incident` usa `BackgroundTasks` de FastAPI; `LATERAL JOIN` para obtener último `ai_diagnosis` por incidente.
+
+---
+
+### BLOQUE 5 — `frontend/src/services/api.js` (añadido)
+
+```javascript
+getIncidentActions(incidentId)
+generateActions(incidentId, force = false)
+approveAction(actionId)
+rejectAction(actionId, reason = null)
+```
+
+---
+
+### BLOQUE 6 — `frontend/src/components/admin/SentinelPanel.jsx` (actualizado en 3A.1)
+
+**Constantes nuevas:**
+- `RISK_CLASS/RISK_LABEL/RISK_TOOLTIP`: Bajo/Medio/Alto/Crítico
+- `STATUS_LABEL`: "Pendiente de revisión" / "Aprobada, no ejecutada" / "Rechazada" / "Reemplazada" / "Bloqueada por política"
+- `STATUS_CLASS`: colores por estado
+
+**`ActionsPanel` cambios clave:**
+- `confirmId`: estado para aprobación en dos pasos (click Aprobar → dialog → Confirmar)
+- `onActionsLoaded` prop: notifica al padre con items para incluir en copy report
+- `data-testid="phase-notice"`: aviso persistente "aprobar solo registra la decisión, no ejecuta comandos"
+- `data-testid="risk-badge"`: etiqueta de riesgo en español
+- `data-testid="owner-label"`: "Responsable: Cliente/Admin/Seguridad"
+- `data-testid="approved-notice"`: aparece en acciones aprobadas — explica no-ejecución automática
+- `data-testid="blocked-notice"`: para `blocked_by_policy`
+- Botones Aprobar/Rechazar ocultos en estados approved/rejected/blocked
+
+**`buildReport(inc, diag, actions=[])` actualizado:**
+- Sección ACCIONES RECOMENDADAS con title/owner/risk/status para cada acción no bloqueada
+- Nota final: "HostingGuard no ejecutó cambios sobre tu sitio ni repositorio."
+- Filtra acciones `blocked_by_policy`
+
+**`IncidentRow`:**
+- Estado `currentActions`
+- Pasa `onActionsLoaded={setCurrentActions}` a ActionsPanel
+- Pasa `currentActions` a `buildReport`
+
+---
+
+### BLOQUE 7 — Tests
+
+**Backend `tests/test_action_recommendations.py` — 58 tests:**
+- `TestActionSafetyClassifier`: risk levels, execution_allowed=False always, blocked_by_policy
+- `TestGenerateActions`: generación, idempotencia, force override
+- `TestApproveRejectAction`: approve/reject, executed_at siempre NULL
+- `TestOwnerDerivation`: 7 tests para `_derive_owner`
+- `TestEnrichRow`: 10 tests — can_execute=False always, can_approve/can_reject por status
+- `TestCopyCorrectness`: 7 tests — no verbos de auto-ejecución, github title correcto, no policy-blocked en rules
+
+**Frontend `SentinelPanel.test.jsx` — 35 tests:**
+- Phase notice visible
+- Risk badge en español ("Bajo" no "low")
+- Owner label visible ("Cliente")
+- Status label en español ("Pendiente de revisión")
+- Two-step approve: click Aprobar → dialog → Confirmar → llama approveAction
+- Approved state: "Aprobada, no ejecutada" + approved-notice
+- Approved: oculta botón Aprobar
+- Rejected: oculta ambos botones
+- blocked_by_policy: blocked-notice visible
+- Sin botón Ejecutar en ningún lugar
+- github_private_repo description cubre más que solo token
+
+---
+
+### Estado de tests al cierre
+
+- **Backend**: 58 tests en `test_action_recommendations.py`, todos verdes
+- **Frontend**: 35 tests en `SentinelPanel.test.jsx`, todos verdes
+
+### Pendiente producción
+
+```sql
+-- Tras deploy, verificar:
+SELECT action_id, status, approved_at, executed_at
+FROM action_recommendations ORDER BY created_at DESC LIMIT 10;
+-- Esperado: approved_at NOT NULL cuando status='approved', executed_at siempre NULL
+
+SELECT * FROM action_recommendations WHERE executed_at IS NOT NULL;
+-- Esperado: 0 rows
+
+-- Regenerar acciones para incident_id=38:
+-- Título debe ser "Verificar acceso al repositorio GitHub"
+-- No debe aparecer "Revisar permisos del token GitHub"
+```

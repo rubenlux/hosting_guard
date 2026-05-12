@@ -50,7 +50,7 @@ const STATUS_TABS = [
 
 // ─── report builder ───────────────────────────────────────────────────────────
 
-function buildReport(inc, diag) {
+function buildReport(inc, diag, actions = []) {
   const ev = inc.evidence || {};
   const lines = [
     'INFORME DE INCIDENTE — HostingGuard',
@@ -83,6 +83,24 @@ function buildReport(inc, diag) {
     }
     if (diag.confidence != null)
       lines.push('', `Confianza: ${Math.round(diag.confidence * 100)}%`);
+  }
+
+  const visibleActions = actions.filter(a => a.status !== 'blocked_by_policy');
+  if (visibleActions.length > 0) {
+    lines.push('', '─'.repeat(40), 'ACCIONES RECOMENDADAS');
+    visibleActions.forEach((a, i) => {
+      const riskLabel   = RISK_LABEL[a.risk_level]  || a.risk_level;
+      const statusLabel = STATUS_LABEL[a.status]    || a.status;
+      const ownerLabel  = a.owner_label || '—';
+      lines.push(`${i + 1}. ${a.title}`);
+      lines.push(`   Responsable: ${ownerLabel}`);
+      lines.push(`   Riesgo: ${riskLabel}`);
+      lines.push(`   Estado: ${statusLabel}`);
+    });
+    lines.push(
+      '',
+      'Nota: HostingGuard no ejecutó cambios sobre tu sitio ni repositorio.',
+    );
   }
 
   lines.push('', '─'.repeat(40), 'Generado por HostingGuard AI Sentinel');
@@ -278,31 +296,58 @@ const DiagnosisPanel = memo(function DiagnosisPanel({
 
 // ─── ActionsPanel ─────────────────────────────────────────────────────────────
 
-const RISK = {
-  low:    'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
-  medium: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30',
-  high:   'text-orange-400 bg-orange-500/10 border-orange-500/30',
+const RISK_CLASS = {
+  low:      'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+  medium:   'text-yellow-400 bg-yellow-500/10 border-yellow-500/30',
+  high:     'text-orange-400 bg-orange-500/10 border-orange-500/30',
   critical: 'text-red-400 bg-red-500/10 border-red-500/30',
 };
 
-const STATUS_COLOR = {
-  pending_approval: 'text-gray-400',
-  approved:         'text-emerald-400',
-  rejected:         'text-red-400',
+const RISK_LABEL = {
+  low:      'Bajo',
+  medium:   'Medio',
+  high:     'Alto',
+  critical: 'Crítico',
 };
 
-const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis }) {
-  const [actions, setActions]     = useState([]);
-  const [status, setStatus]       = useState('idle'); // idle | loading | generating
-  const [error, setError]         = useState(null);
-  const [actingId, setActingId]   = useState(null); // action_id being approved/rejected
+const RISK_TOOLTIP = {
+  low:      'Recomendación informativa o de bajo impacto. No cambia infraestructura.',
+  medium:   'Requiere revisión operativa antes de aplicar.',
+  high:     'Puede afectar disponibilidad, tráfico o configuración. Requiere aprobación estricta.',
+  critical: 'No permitido para ejecución automática.',
+};
+
+const STATUS_LABEL = {
+  pending_approval:  'Pendiente de revisión',
+  approved:          'Aprobada, no ejecutada',
+  rejected:          'Rechazada',
+  superseded:        'Reemplazada',
+  blocked_by_policy: 'Bloqueada por política',
+};
+
+const STATUS_CLASS = {
+  pending_approval:  'text-gray-400',
+  approved:          'text-emerald-400',
+  rejected:          'text-red-400',
+  superseded:        'text-gray-600',
+  blocked_by_policy: 'text-red-500',
+};
+
+const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onActionsLoaded }) {
+  const [actions, setActions]         = useState([]);
+  const [status, setStatus]           = useState('idle'); // idle | loading | generating
+  const [error, setError]             = useState(null);
+  const [actingId, setActingId]       = useState(null);
+  const [confirmId, setConfirmId]     = useState(null); // action_id pending confirm
 
   const load = useCallback(async () => {
     setStatus('loading');
     setError(null);
     try {
       const data = await getIncidentActions(incidentId);
-      setActions(data.items || []);
+      const items = data.items || [];
+      setActions(items);
+      onActionsLoaded?.(items);
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al cargar acciones');
     } finally {
@@ -326,11 +371,14 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis }) {
   }
 
   async function handleApprove(actionId) {
+    setConfirmId(null);
     setActingId(actionId);
     try {
       await approveAction(actionId);
       setActions(prev => prev.map(a =>
-        a.action_id === actionId ? { ...a, status: 'approved' } : a,
+        a.action_id === actionId
+          ? { ...a, status: 'approved', can_approve: false, can_reject: true }
+          : a,
       ));
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al aprobar acción');
@@ -344,7 +392,9 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis }) {
     try {
       await rejectAction(actionId);
       setActions(prev => prev.map(a =>
-        a.action_id === actionId ? { ...a, status: 'rejected' } : a,
+        a.action_id === actionId
+          ? { ...a, status: 'rejected', can_approve: false, can_reject: false }
+          : a,
       ));
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al rechazar acción');
@@ -383,8 +433,16 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis }) {
         </button>
       </div>
 
+      {/* Persistent phase notice */}
+      <div className="px-3 pt-2 pb-0">
+        <p className="text-[10px] text-gray-600 leading-snug" data-testid="phase-notice">
+          En esta fase, aprobar una recomendación solo registra la decisión. No ejecuta comandos,
+          no reinicia servicios y no modifica infraestructura.
+        </p>
+      </div>
+
       {/* Body */}
-      <div className="px-3 pb-3 pt-2.5">
+      <div className="px-3 pb-3 pt-2">
         {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
 
         {isLoading && (
@@ -403,12 +461,20 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis }) {
         )}
 
         {actions.length > 0 && (
-          <div className="space-y-2 mt-1">
+          <div className="space-y-2">
             {actions.map(action => {
-              const riskClass   = RISK[action.risk_level] || RISK.medium;
-              const statusColor = STATUS_COLOR[action.status] || 'text-gray-500';
+              const riskClass   = RISK_CLASS[action.risk_level] || RISK_CLASS.medium;
+              const riskLabel   = RISK_LABEL[action.risk_level]  || action.risk_level;
+              const riskTip     = RISK_TOOLTIP[action.risk_level] || '';
+              const statusLabel = STATUS_LABEL[action.status]    || action.status;
+              const statusClass = STATUS_CLASS[action.status]    || 'text-gray-500';
               const isPending   = action.status === 'pending_approval';
+              const isApproved  = action.status === 'approved';
+              const isBlocked   = action.status === 'blocked_by_policy';
               const isBusy      = actingId === action.action_id;
+              const isConfirm   = confirmId === action.action_id;
+              const canApprove  = action.can_approve ?? isPending;
+              const canReject   = action.can_reject  ?? (isPending || isApproved);
 
               return (
                 <div
@@ -416,19 +482,35 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis }) {
                   data-testid="action-card"
                   className="border border-white/6 rounded-lg p-2.5 bg-black/20 space-y-1.5"
                 >
-                  {/* Title row */}
+                  {/* Title + badges */}
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-xs text-white/85 font-medium leading-snug">
                       {action.title}
                     </span>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${riskClass}`}>
-                        {action.risk_level}
+                    <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded border ${riskClass}`}
+                        title={riskTip}
+                        data-testid="risk-badge"
+                      >
+                        {riskLabel}
                       </span>
-                      <span className={`text-[10px] ${statusColor}`}>
-                        {action.status === 'pending_approval' ? 'pendiente' : action.status}
+                      <span className={`text-[10px] ${statusClass}`} data-testid="status-label">
+                        {statusLabel}
                       </span>
                     </div>
+                  </div>
+
+                  {/* Meta row: owner + requires_approval */}
+                  <div className="flex items-center gap-3 text-[10px] text-gray-600">
+                    {action.owner_label && (
+                      <span data-testid="owner-label">
+                        <span className="text-gray-500">Responsable: </span>{action.owner_label}
+                      </span>
+                    )}
+                    {action.requires_approval && (
+                      <span className="text-gray-700">Requiere aprobación</span>
+                    )}
                   </div>
 
                   {/* Description */}
@@ -436,42 +518,82 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis }) {
                     <p className="text-[11px] text-gray-400">{action.description}</p>
                   )}
 
-                  {/* Impact & Safety */}
+                  {/* Impact */}
                   {action.expected_impact && (
                     <p className="text-[10px] text-gray-600">
-                      <span className="text-gray-500">Impacto: </span>{action.expected_impact}
+                      <span className="text-gray-500">Impacto esperado: </span>{action.expected_impact}
                     </p>
                   )}
+
+                  {/* Safety notes */}
                   {action.safety_notes && (
                     <p className="text-[10px] text-gray-600">
                       <span className="text-gray-500">Seguridad: </span>{action.safety_notes}
                     </p>
                   )}
 
-                  {/* Approve / Reject — only for pending */}
-                  {isPending && (
-                    <div className="flex items-center gap-2 pt-0.5">
+                  {/* Approved state notice */}
+                  {isApproved && (
+                    <p className="text-[10px] text-emerald-600" data-testid="approved-notice">
+                      Esta recomendación fue aprobada, pero todavía no existe ejecución automática en esta fase.
+                    </p>
+                  )}
+
+                  {/* Blocked state notice */}
+                  {isBlocked && (
+                    <p className="text-[10px] text-red-500" data-testid="blocked-notice">
+                      Esta acción no puede ejecutarse desde HostingGuard.
+                    </p>
+                  )}
+
+                  {/* Approve confirmation inline */}
+                  {isConfirm && (
+                    <div className="flex items-center gap-2 pt-0.5 bg-amber-500/5 border border-amber-500/20 rounded px-2 py-1.5">
+                      <span className="text-[10px] text-amber-400 flex-1">
+                        ¿Aprobar esta recomendación? Esto no ejecutará la acción.
+                      </span>
                       <button
-                        data-testid="approve-btn"
+                        data-testid="confirm-approve-btn"
                         onClick={() => handleApprove(action.action_id)}
                         disabled={isBusy}
-                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors disabled:opacity-40"
+                        className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors disabled:opacity-40"
                       >
-                        {isBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <CheckCircle2 className="w-2.5 h-2.5" />}
-                        Aprobar
+                        Confirmar
                       </button>
                       <button
-                        data-testid="reject-btn"
-                        onClick={() => handleReject(action.action_id)}
-                        disabled={isBusy}
-                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 transition-colors disabled:opacity-40"
+                        onClick={() => setConfirmId(null)}
+                        className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-gray-500 border border-white/8 hover:bg-white/8 transition-colors"
                       >
-                        {isBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <AlertTriangle className="w-2.5 h-2.5" />}
-                        Rechazar
+                        Cancelar
                       </button>
-                      <span className="text-[10px] text-gray-700">
-                        Aprobar no ejecuta la acción todavía.
-                      </span>
+                    </div>
+                  )}
+
+                  {/* Approve / Reject buttons — only for eligible statuses, not in confirm mode */}
+                  {!isConfirm && (canApprove || canReject) && (
+                    <div className="flex items-center gap-2 pt-0.5">
+                      {canApprove && (
+                        <button
+                          data-testid="approve-btn"
+                          onClick={() => setConfirmId(action.action_id)}
+                          disabled={isBusy}
+                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors disabled:opacity-40"
+                        >
+                          <CheckCircle2 className="w-2.5 h-2.5" />
+                          Aprobar
+                        </button>
+                      )}
+                      {canReject && (
+                        <button
+                          data-testid="reject-btn"
+                          onClick={() => handleReject(action.action_id)}
+                          disabled={isBusy}
+                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 transition-colors disabled:opacity-40"
+                        >
+                          {isBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <AlertTriangle className="w-2.5 h-2.5" />}
+                          Rechazar
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -487,10 +609,10 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis }) {
 // ─── IncidentRow ──────────────────────────────────────────────────────────────
 
 const IncidentRow = memo(function IncidentRow({ inc, expanded, onToggle, onResolved }) {
-  const [resolving, setResolving] = useState(false);
-  const [copied, setCopied]       = useState(false);
-  // diag ref so the copy button always uses latest diagnosis
-  const [currentDiag, setCurrentDiag] = useState(null);
+  const [resolving, setResolving]         = useState(false);
+  const [copied, setCopied]               = useState(false);
+  const [currentDiag, setCurrentDiag]     = useState(null);
+  const [currentActions, setCurrentActions] = useState([]);
 
   const ev       = inc.evidence || {};
   const sevClass = SEV[inc.severity] || SEV.info;
@@ -517,7 +639,7 @@ const IncidentRow = memo(function IncidentRow({ inc, expanded, onToggle, onResol
       customer_message:       inc.diagnosis_customer_message,
       confidence:             inc.diagnosis_confidence,
     } : null);
-    navigator.clipboard.writeText(buildReport(inc, diagForReport)).then(() => {
+    navigator.clipboard.writeText(buildReport(inc, diagForReport, currentActions)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -620,6 +742,7 @@ const IncidentRow = memo(function IncidentRow({ inc, expanded, onToggle, onResol
               <ActionsPanel
                 incidentId={inc.incident_id}
                 hasDiagnosis={!!(currentDiag || inc.diagnosis_summary)}
+                onActionsLoaded={setCurrentActions}
               />
             )}
 

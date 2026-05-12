@@ -61,18 +61,49 @@ const DEPLOY_INC = makeInc({ incident_id: 42, source_type: 'deploy', title: 'Dep
 const SITE_INC   = makeInc({ incident_id: 99, source_type: 'site',   title: 'Site is down' });
 
 const MOCK_ACTION = {
-  action_id:       1,
-  incident_id:     42,
-  diagnosis_id:    99,
-  action_type:     'customer_fix',
-  title:           'Verificar nombre de rama en configuración GitHub',
-  description:     'La rama configurada no existe en el repositorio.',
-  risk_level:      'low',
-  status:          'pending_approval',
+  action_id:        1,
+  incident_id:      42,
+  diagnosis_id:     99,
+  action_type:      'customer_fix',
+  title:            'Verificar acceso al repositorio GitHub',
+  description:      'HostingGuard no pudo acceder al repositorio. Puede que la URL no exista, que el repositorio sea privado o que falten permisos de lectura.',
+  risk_level:       'low',
+  status:           'pending_approval',
   requires_approval: true,
-  expected_impact: 'El deploy comenzará a funcionar.',
-  safety_notes:    'No se modifica ningún contenedor.',
-  created_at:      '2026-05-11T12:00:00Z',
+  expected_impact:  'Corregir el acceso permitirá volver a intentar el deploy.',
+  safety_notes:     'Esta recomendación no modifica el repositorio ni ejecuta comandos.',
+  owner:            'cliente',
+  owner_label:      'Cliente',
+  can_approve:      true,
+  can_reject:       true,
+  can_execute:      false,
+  execution_allowed: false,
+  created_at:       '2026-05-11T12:00:00Z',
+};
+
+const MOCK_ACTION_APPROVED = {
+  ...MOCK_ACTION,
+  action_id:   2,
+  status:      'approved',
+  can_approve: false,
+  can_reject:  true,
+  approved_at: '2026-05-12T10:00:00Z',
+};
+
+const MOCK_ACTION_REJECTED = {
+  ...MOCK_ACTION,
+  status:      'rejected',
+  can_approve: false,
+  can_reject:  false,
+};
+
+const MOCK_ACTION_BLOCKED = {
+  ...MOCK_ACTION,
+  action_type: 'delete_container',
+  title:       'Eliminar contenedor',
+  status:      'blocked_by_policy',
+  can_approve: false,
+  can_reject:  false,
 };
 
 beforeEach(() => {
@@ -347,6 +378,14 @@ describe('ActionsPanel', () => {
     await waitFor(() => expect(getIncidentActions).toHaveBeenCalledWith(42));
   });
 
+  it('shows persistent phase notice about no execution', async () => {
+    await expandIncident();
+    await waitFor(() =>
+      expect(screen.getByTestId('phase-notice')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('phase-notice').textContent).toMatch(/no ejecuta comandos/i);
+  });
+
   it('shows empty state message when no actions', async () => {
     getIncidentActions.mockResolvedValue({ items: [] });
     await expandIncident();
@@ -355,21 +394,35 @@ describe('ActionsPanel', () => {
     );
   });
 
-  it('shows action card when actions are loaded', async () => {
+  it('shows action card with title when actions are loaded', async () => {
     getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
     await expandIncident();
     await waitFor(() =>
-      expect(screen.getByText('Verificar nombre de rama en configuración GitHub')).toBeInTheDocument(),
+      expect(screen.getByText('Verificar acceso al repositorio GitHub')).toBeInTheDocument(),
     );
   });
 
-  it('shows risk level badge on action card', async () => {
+  it('shows risk badge in Spanish (Bajo for low)', async () => {
     getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
     await expandIncident();
-    await waitFor(() => expect(screen.getByText('low')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('risk-badge')).toHaveTextContent('Bajo'));
   });
 
-  it('shows Approve and Reject buttons for pending_approval action', async () => {
+  it('shows owner label on action card', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+    await expandIncident();
+    await waitFor(() => expect(screen.getByTestId('owner-label')).toHaveTextContent('Cliente'));
+  });
+
+  it('shows status label in Spanish for pending_approval', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+    await expandIncident();
+    await waitFor(() =>
+      expect(screen.getByTestId('status-label')).toHaveTextContent('Pendiente de revisión'),
+    );
+  });
+
+  it('shows Approve and Reject buttons only for pending_approval', async () => {
     getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
     await expandIncident();
     await waitFor(() => screen.getByTestId('approve-btn'));
@@ -377,12 +430,26 @@ describe('ActionsPanel', () => {
     expect(screen.getByTestId('reject-btn')).toBeInTheDocument();
   });
 
-  it('calls approveAction and updates status optimistically', async () => {
+  it('clicking Approve shows inline confirmation, not immediate call', async () => {
     getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
     await expandIncident();
     await waitFor(() => screen.getByTestId('approve-btn'));
 
     fireEvent.click(screen.getByTestId('approve-btn'));
+
+    // Should show confirm button, not call approveAction yet
+    await waitFor(() => screen.getByTestId('confirm-approve-btn'));
+    expect(approveAction).not.toHaveBeenCalled();
+  });
+
+  it('confirm approve calls approveAction', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+    await expandIncident();
+    await waitFor(() => screen.getByTestId('approve-btn'));
+
+    fireEvent.click(screen.getByTestId('approve-btn'));
+    await waitFor(() => screen.getByTestId('confirm-approve-btn'));
+    fireEvent.click(screen.getByTestId('confirm-approve-btn'));
 
     await waitFor(() => expect(approveAction).toHaveBeenCalledWith(1));
   });
@@ -397,6 +464,58 @@ describe('ActionsPanel', () => {
     await waitFor(() => expect(rejectAction).toHaveBeenCalledWith(1));
   });
 
+  it('approved action shows "Aprobada, no ejecutada" status label', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    await expandIncident();
+    await waitFor(() =>
+      expect(screen.getByTestId('status-label')).toHaveTextContent('Aprobada, no ejecutada'),
+    );
+  });
+
+  it('approved action shows notice about no automatic execution', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    await expandIncident();
+    await waitFor(() => screen.getByTestId('approved-notice'));
+    expect(screen.getByTestId('approved-notice').textContent).toMatch(/no existe ejecución automática/i);
+  });
+
+  it('approved action hides Approve button', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    await expandIncident();
+    await waitFor(() => expect(screen.queryByTestId('approve-btn')).not.toBeInTheDocument());
+  });
+
+  it('rejected action hides Approve and Reject buttons', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_REJECTED] });
+    await expandIncident();
+    await waitFor(() => expect(screen.queryByTestId('approve-btn')).not.toBeInTheDocument());
+    expect(screen.queryByTestId('reject-btn')).not.toBeInTheDocument();
+  });
+
+  it('rejected action shows "Rechazada" status label', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_REJECTED] });
+    await expandIncident();
+    await waitFor(() =>
+      expect(screen.getByTestId('status-label')).toHaveTextContent('Rechazada'),
+    );
+  });
+
+  it('blocked_by_policy action shows "Bloqueada por política"', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_BLOCKED] });
+    await expandIncident();
+    await waitFor(() => screen.getByTestId('blocked-notice'));
+    expect(screen.getByTestId('blocked-notice').textContent).toMatch(/no puede ejecutarse/i);
+  });
+
+  it('no Ejecutar button exists anywhere', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION, MOCK_ACTION_APPROVED] });
+    await expandIncident();
+    await waitFor(() => screen.getAllByTestId('action-card'));
+    const buttons = screen.getAllByRole('button');
+    const execBtn = buttons.find(b => /ejecutar/i.test(b.textContent));
+    expect(execBtn).toBeUndefined();
+  });
+
   it('calls generateActions when generate button is clicked with diagnosis', async () => {
     const incWithDiag = makeInc({ diagnosis_summary: 'Has diag', diagnosis_updated_at: '2026-05-11T10:00:00Z' });
     getSentinelIncidents.mockResolvedValue({ items: [incWithDiag] });
@@ -406,7 +525,6 @@ describe('ActionsPanel', () => {
     await waitFor(() => screen.getByText('Deploy failed: myrepo'));
     fireEvent.click(screen.getByText('Deploy failed: myrepo'));
 
-    // Wait for getIncidentActions to resolve (loading finished → idle state)
     await waitFor(() =>
       expect(screen.getByText(/Sin recomendaciones todavía/i)).toBeInTheDocument(),
     );
@@ -418,11 +536,22 @@ describe('ActionsPanel', () => {
     await waitFor(() => expect(generateActions).toHaveBeenCalledWith(42, false));
   });
 
-  it('shows disclaimer "Aprobar no ejecuta la acción todavía" on pending action', async () => {
-    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+  it('github_private_repo description does not mention only token', async () => {
+    const githubAction = {
+      ...MOCK_ACTION,
+      action_type:   'customer_fix',
+      title:         'Verificar acceso al repositorio GitHub',
+      description:   'HostingGuard no pudo acceder al repositorio. Puede que la URL no exista, que el repositorio sea privado o que falten permisos.',
+      owner_label:   'Cliente',
+      can_approve:   true,
+      can_reject:    true,
+    };
+    getIncidentActions.mockResolvedValue({ items: [githubAction] });
     await expandIncident();
-    await waitFor(() =>
-      expect(screen.getByText(/Aprobar no ejecuta la acción todavía/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => screen.getByText('Verificar acceso al repositorio GitHub'));
+    const desc = screen.getByText(/no pudo acceder al repositorio/i);
+    expect(desc).toBeInTheDocument();
+    // Description must not say ONLY token
+    expect(desc.textContent).not.toMatch(/^Revisar permisos del token/);
   });
 });
