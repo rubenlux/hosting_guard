@@ -425,7 +425,7 @@ def _enrich(row: dict) -> dict:
         "owner": owner,
         "owner_label": _OWNER_LABEL.get(owner, owner.capitalize()),
         "can_approve":      status == "pending_approval",
-        "can_reject":       status in ("pending_approval", "approved"),
+        "can_reject":       status == "pending_approval",
         "can_execute":      False,   # ALWAYS false in Phase 3A
         "execution_allowed": False,
     }
@@ -464,8 +464,9 @@ def _run_generation_loop(conn, incidents: list[dict], force: bool) -> dict:
                 context_hash,
             )
 
-            # Exact hash already exists → this version's copy was already generated.
-            if not force and idem_hash in existing_hashes:
+            # Exact hash already exists → this exact version was already generated.
+            # Always deduplicate by hash; force only bypasses the approved-row guard below.
+            if idem_hash in existing_hashes:
                 stats["skipped"] += 1
                 continue
 

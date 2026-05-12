@@ -86,8 +86,9 @@ const MOCK_ACTION_APPROVED = {
   action_id:   2,
   status:      'approved',
   can_approve: false,
-  can_reject:  true,
+  can_reject:  false,
   approved_at: '2026-05-12T10:00:00Z',
+  rules_version: null,  // simulates old v1 row without version
 };
 
 const MOCK_ACTION_REJECTED = {
@@ -606,5 +607,81 @@ describe('ActionsPanel — resolved incident', () => {
     await expandResolved();
     await waitFor(() => expect(getIncidentActions).toHaveBeenCalled());
     expect(screen.queryByTestId('phase-notice')).not.toBeInTheDocument();
+  });
+});
+
+// ── ActionsPanel — approved hides Rechazar ────────────────────────────────────
+
+describe('ActionsPanel — approved action buttons', () => {
+  it('approved action hides Rechazar button', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    await expandIncident();
+    await waitFor(() => expect(screen.queryByTestId('approve-btn')).not.toBeInTheDocument());
+    expect(screen.queryByTestId('reject-btn')).not.toBeInTheDocument();
+  });
+
+  it('approved action hides Aprobar button', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    await expandIncident();
+    await waitFor(() => expect(screen.queryByTestId('approve-btn')).not.toBeInTheDocument());
+  });
+
+  it('approved action shows Aprobada status label', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    await expandIncident();
+    await waitFor(() =>
+      expect(screen.getByTestId('status-label')).toHaveTextContent('Aprobada, no ejecutada'),
+    );
+  });
+});
+
+// ── ActionsPanel — Regenerar vs Generar ──────────────────────────────────────
+
+describe('ActionsPanel — Regenerar / Generar button', () => {
+  it('shows Generar when no actions exist', async () => {
+    getIncidentActions.mockResolvedValue({ items: [] });
+    await expandIncident();
+    // hasDiagnosis=false → button disabled but label is "Generar recomendaciones"
+    await waitFor(() =>
+      expect(screen.getByTestId('generate-actions-btn')).toHaveTextContent('Generar recomendaciones'),
+    );
+  });
+
+  it('shows Regenerar when actions exist (old rules_version null)', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    await expandIncident();
+    await waitFor(() =>
+      expect(screen.getByTestId('generate-actions-btn')).toHaveTextContent('Regenerar recomendaciones'),
+    );
+  });
+
+  it('Generar button calls generateActions with force=false', async () => {
+    const incWithDiag = makeInc({ diagnosis_summary: 'Has diag', diagnosis_updated_at: '2026-05-11T10:00:00Z' });
+    getSentinelIncidents.mockResolvedValue({ items: [incWithDiag] });
+    getIncidentActions.mockResolvedValue({ items: [] });
+
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByText(/Sin recomendaciones todavía/i));
+
+    fireEvent.click(screen.getByTestId('generate-actions-btn'));
+    await waitFor(() => expect(generateActions).toHaveBeenCalledWith(42, false));
+  });
+
+  it('Regenerar button calls generateActions with force=true', async () => {
+    const incWithDiag = makeInc({ diagnosis_summary: 'Has diag', diagnosis_updated_at: '2026-05-11T10:00:00Z' });
+    getSentinelIncidents.mockResolvedValue({ items: [incWithDiag] });
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() =>
+      expect(screen.getByTestId('generate-actions-btn')).toHaveTextContent('Regenerar recomendaciones'),
+    );
+
+    fireEvent.click(screen.getByTestId('generate-actions-btn'));
+    await waitFor(() => expect(generateActions).toHaveBeenCalledWith(42, true));
   });
 });

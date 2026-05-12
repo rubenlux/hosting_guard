@@ -357,11 +357,15 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
 
   useEffect(() => { load(); }, [load]);
 
+  const hasActions = actions.length > 0;
+
   async function handleGenerate() {
+    // Use force=true when re-generating over existing actions (picks up new rules copy).
+    const force = hasActions;
     setStatus('generating');
     setError(null);
     try {
-      await generateActions(incidentId, false);
+      await generateActions(incidentId, force);
       await new Promise(r => setTimeout(r, 1500));
       await load();
     } catch (e) {
@@ -431,7 +435,7 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
             {isGenerating
               ? <Loader2 className="w-3 h-3 animate-spin" />
               : <Zap className="w-3 h-3" />}
-            {isGenerating ? 'Generando…' : 'Generar recomendaciones'}
+            {isGenerating ? 'Generando…' : hasActions ? 'Regenerar recomendaciones' : 'Generar recomendaciones'}
           </button>
         )}
       </div>
@@ -483,7 +487,7 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
               const isBusy      = actingId === action.action_id;
               const isConfirm   = confirmId === action.action_id;
               const canApprove  = action.can_approve ?? isPending;
-              const canReject   = action.can_reject  ?? (isPending || isApproved);
+              const canReject   = action.can_reject  ?? isPending;
 
               return (
                 <div
