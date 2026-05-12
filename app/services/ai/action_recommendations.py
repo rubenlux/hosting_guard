@@ -53,11 +53,11 @@ _RULES: dict[str, list[dict]] = {
     "github_private_repo_unauthorized": [
         {
             "action_type": "customer_fix",
-            "title": "Revisar permisos del token GitHub",
-            "description": "El token de acceso no tiene permisos sobre el repositorio privado. El cliente debe actualizar el token con acceso 'repo' completo.",
-            "expected_impact": "El deploy podrá clonar el repositorio una vez actualizado el token.",
+            "title": "Verificar acceso al repositorio GitHub",
+            "description": "El repositorio no está disponible para clonación. Puede no existir, ser privado o requerir permisos de lectura. Verificar URL, visibilidad del repositorio y permisos de acceso.",
+            "expected_impact": "El deploy podrá clonar el repositorio una vez corregida la URL o los permisos.",
             "rollback_notes": "No aplica — cambio de configuración reversible.",
-            "safety_notes": "El token se almacena cifrado. No afecta contenedores en ejecución.",
+            "safety_notes": "No se ejecuta ninguna acción. Solo se recomienda verificar URL, visibilidad o permisos del repositorio.",
         },
     ],
     "build_failed": [
