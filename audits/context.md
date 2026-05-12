@@ -868,3 +868,27 @@ curl -s https://matrix-vite-ok.hostingguard.lat | head -5  # no debe decir "Welc
 python scripts/backfill_forwardauth.py --dry-run
 python scripts/backfill_forwardauth.py
 ```
+
+62/62. The IDE diagnostics are all Pylance hints (unused vars in lambdas, unresolved import due to scripts/ not being a standard package) — none cause runtime errors.
+
+Here's what changed in the new design and what the production dry-run will now show:
+
+Before (broken): Mounts (0) → [DRY-RUN] would run: docker run ... → false safety signal.
+
+After (fail-closed): Mounts (0) → [ABORT] no safe html source found. → [ABORT] No destructive action would be taken.
+
+The three-option safety chain (_select_html_source):
+
+A — existing bind to /usr/share/nginx/html with valid index.html that isn't nginx default
+B — host artifact at /opt/clients/<container>/dist or build
+C — docker cp from the running container before any docker stop/rm (live mode only; dry-run always aborts if A/B fail)
+--force cannot bypass A/B/C — the html source check runs before the force check.
+
+Production procedure (unchanged from before):
+
+
+# Must show ABORT for affected containers, never "would run docker run"
+python scripts/backfill_forwardauth.py --dry-run
+
+# Only proceed after dry-run is clean on a throwaway hosting
+python scripts/backfill_forwardauth.py --hosting-id <test_id>

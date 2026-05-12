@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import {
   getSentinelIncidents, resolveIncident, getDiagnosis, triggerDiagnose,
+  getIncidentActions, generateActions, approveAction, rejectAction,
 } from '../../services/api';
 
 // ─── stable constants (never recreated) ──────────────────────────────────────
@@ -275,6 +276,214 @@ const DiagnosisPanel = memo(function DiagnosisPanel({
   );
 });
 
+// ─── ActionsPanel ─────────────────────────────────────────────────────────────
+
+const RISK = {
+  low:    'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+  medium: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30',
+  high:   'text-orange-400 bg-orange-500/10 border-orange-500/30',
+  critical: 'text-red-400 bg-red-500/10 border-red-500/30',
+};
+
+const STATUS_COLOR = {
+  pending_approval: 'text-gray-400',
+  approved:         'text-emerald-400',
+  rejected:         'text-red-400',
+};
+
+const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis }) {
+  const [actions, setActions]     = useState([]);
+  const [status, setStatus]       = useState('idle'); // idle | loading | generating
+  const [error, setError]         = useState(null);
+  const [actingId, setActingId]   = useState(null); // action_id being approved/rejected
+
+  const load = useCallback(async () => {
+    setStatus('loading');
+    setError(null);
+    try {
+      const data = await getIncidentActions(incidentId);
+      setActions(data.items || []);
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Error al cargar acciones');
+    } finally {
+      setStatus('idle');
+    }
+  }, [incidentId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleGenerate() {
+    setStatus('generating');
+    setError(null);
+    try {
+      await generateActions(incidentId, false);
+      await new Promise(r => setTimeout(r, 1500));
+      await load();
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Error al generar recomendaciones');
+      setStatus('idle');
+    }
+  }
+
+  async function handleApprove(actionId) {
+    setActingId(actionId);
+    try {
+      await approveAction(actionId);
+      setActions(prev => prev.map(a =>
+        a.action_id === actionId ? { ...a, status: 'approved' } : a,
+      ));
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Error al aprobar acción');
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  async function handleReject(actionId) {
+    setActingId(actionId);
+    try {
+      await rejectAction(actionId);
+      setActions(prev => prev.map(a =>
+        a.action_id === actionId ? { ...a, status: 'rejected' } : a,
+      ));
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Error al rechazar acción');
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  const isLoading    = status === 'loading';
+  const isGenerating = status === 'generating';
+
+  return (
+    <div className="border border-white/8 rounded-lg overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 bg-white/[0.02] border-b border-white/5">
+        <div className="flex items-center gap-1.5 text-[10px] text-amber-400 uppercase tracking-wide font-medium">
+          <Zap className="w-3 h-3" />
+          Acciones recomendadas
+          {actions.length > 0 && (
+            <span className="text-gray-600 normal-case tracking-normal font-normal ml-1">
+              ({actions.length})
+            </span>
+          )}
+        </div>
+        <button
+          data-testid="generate-actions-btn"
+          onClick={handleGenerate}
+          disabled={isLoading || isGenerating || !hasDiagnosis}
+          title={!hasDiagnosis ? 'Genera un diagnóstico primero' : undefined}
+          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors disabled:opacity-40"
+        >
+          {isGenerating
+            ? <Loader2 className="w-3 h-3 animate-spin" />
+            : <Zap className="w-3 h-3" />}
+          {isGenerating ? 'Generando…' : 'Generar recomendaciones'}
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="px-3 pb-3 pt-2.5">
+        {error && <p className="text-xs text-red-400 mb-2">{error}</p>}
+
+        {isLoading && (
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 py-2">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Cargando…
+          </div>
+        )}
+
+        {!isLoading && actions.length === 0 && (
+          <p className="text-xs text-gray-600 py-1">
+            {hasDiagnosis
+              ? 'Sin recomendaciones todavía. Haz clic en "Generar recomendaciones".'
+              : 'Genera un diagnóstico IA antes de generar recomendaciones.'}
+          </p>
+        )}
+
+        {actions.length > 0 && (
+          <div className="space-y-2 mt-1">
+            {actions.map(action => {
+              const riskClass   = RISK[action.risk_level] || RISK.medium;
+              const statusColor = STATUS_COLOR[action.status] || 'text-gray-500';
+              const isPending   = action.status === 'pending_approval';
+              const isBusy      = actingId === action.action_id;
+
+              return (
+                <div
+                  key={action.action_id}
+                  data-testid="action-card"
+                  className="border border-white/6 rounded-lg p-2.5 bg-black/20 space-y-1.5"
+                >
+                  {/* Title row */}
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs text-white/85 font-medium leading-snug">
+                      {action.title}
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${riskClass}`}>
+                        {action.risk_level}
+                      </span>
+                      <span className={`text-[10px] ${statusColor}`}>
+                        {action.status === 'pending_approval' ? 'pendiente' : action.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Description */}
+                  {action.description && (
+                    <p className="text-[11px] text-gray-400">{action.description}</p>
+                  )}
+
+                  {/* Impact & Safety */}
+                  {action.expected_impact && (
+                    <p className="text-[10px] text-gray-600">
+                      <span className="text-gray-500">Impacto: </span>{action.expected_impact}
+                    </p>
+                  )}
+                  {action.safety_notes && (
+                    <p className="text-[10px] text-gray-600">
+                      <span className="text-gray-500">Seguridad: </span>{action.safety_notes}
+                    </p>
+                  )}
+
+                  {/* Approve / Reject — only for pending */}
+                  {isPending && (
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <button
+                        data-testid="approve-btn"
+                        onClick={() => handleApprove(action.action_id)}
+                        disabled={isBusy}
+                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors disabled:opacity-40"
+                      >
+                        {isBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <CheckCircle2 className="w-2.5 h-2.5" />}
+                        Aprobar
+                      </button>
+                      <button
+                        data-testid="reject-btn"
+                        onClick={() => handleReject(action.action_id)}
+                        disabled={isBusy}
+                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 transition-colors disabled:opacity-40"
+                      >
+                        {isBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <AlertTriangle className="w-2.5 h-2.5" />}
+                        Rechazar
+                      </button>
+                      <span className="text-[10px] text-gray-700">
+                        Aprobar no ejecuta la acción todavía.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
 // ─── IncidentRow ──────────────────────────────────────────────────────────────
 
 const IncidentRow = memo(function IncidentRow({ inc, expanded, onToggle, onResolved }) {
@@ -405,6 +614,14 @@ const IncidentRow = memo(function IncidentRow({ inc, expanded, onToggle, onResol
               diagUpdatedAt={inc.diagnosis_updated_at}
               onDiagReady={setCurrentDiag}
             />
+
+            {/* ActionsPanel — only for open incidents */}
+            {isOpen && (
+              <ActionsPanel
+                incidentId={inc.incident_id}
+                hasDiagnosis={!!(currentDiag || inc.diagnosis_summary)}
+              />
+            )}
 
             {/* Raw evidence */}
             <details className="text-xs">

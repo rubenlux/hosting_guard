@@ -20,10 +20,15 @@ vi.mock('../../services/api', () => ({
   resolveIncident:      vi.fn(),
   getDiagnosis:         vi.fn(),
   triggerDiagnose:      vi.fn(),
+  getIncidentActions:   vi.fn(),
+  generateActions:      vi.fn(),
+  approveAction:        vi.fn(),
+  rejectAction:         vi.fn(),
 }));
 
 import {
   getSentinelIncidents, triggerDiagnose, getDiagnosis,
+  getIncidentActions, generateActions, approveAction, rejectAction,
 } from '../../services/api';
 import SentinelPanel from './SentinelPanel';
 
@@ -55,6 +60,21 @@ const makeInc = (overrides = {}) => ({
 const DEPLOY_INC = makeInc({ incident_id: 42, source_type: 'deploy', title: 'Deploy failed: myrepo' });
 const SITE_INC   = makeInc({ incident_id: 99, source_type: 'site',   title: 'Site is down' });
 
+const MOCK_ACTION = {
+  action_id:       1,
+  incident_id:     42,
+  diagnosis_id:    99,
+  action_type:     'customer_fix',
+  title:           'Verificar nombre de rama en configuración GitHub',
+  description:     'La rama configurada no existe en el repositorio.',
+  risk_level:      'low',
+  status:          'pending_approval',
+  requires_approval: true,
+  expected_impact: 'El deploy comenzará a funcionar.',
+  safety_notes:    'No se modifica ningún contenedor.',
+  created_at:      '2026-05-11T12:00:00Z',
+};
+
 beforeEach(() => {
   getSentinelIncidents.mockResolvedValue({ items: [DEPLOY_INC, SITE_INC] });
   triggerDiagnose.mockResolvedValue({ ok: true });
@@ -67,6 +87,10 @@ beforeEach(() => {
     fingerprint:            'rule_based',
     updated_at:             '2026-05-11T13:00:00Z',
   });
+  getIncidentActions.mockResolvedValue({ items: [] });
+  generateActions.mockResolvedValue({ ok: true });
+  approveAction.mockResolvedValue({ ok: true, action_id: 1, status: 'approved' });
+  rejectAction.mockResolvedValue({ ok: true, action_id: 1, status: 'rejected' });
 });
 
 afterEach(() => {
@@ -299,5 +323,106 @@ describe('loading states', () => {
     expect(screen.getByText(/Actualizando/i)).toBeInTheDocument();
 
     await act(async () => { resolveRefresh({ items: [DEPLOY_INC] }); });
+  });
+});
+
+// ── ActionsPanel ─────────────────────────────────────────────────────────────
+
+async function expandIncident(title = 'Deploy failed: myrepo') {
+  render(<SentinelPanel />);
+  await waitFor(() => screen.getByText(title));
+  fireEvent.click(screen.getByText(title));
+}
+
+describe('ActionsPanel', () => {
+  it('renders "Acciones recomendadas" header after expand', async () => {
+    await expandIncident();
+    await waitFor(() =>
+      expect(screen.getByText('Acciones recomendadas')).toBeInTheDocument(),
+    );
+  });
+
+  it('calls getIncidentActions on expand', async () => {
+    await expandIncident();
+    await waitFor(() => expect(getIncidentActions).toHaveBeenCalledWith(42));
+  });
+
+  it('shows empty state message when no actions', async () => {
+    getIncidentActions.mockResolvedValue({ items: [] });
+    await expandIncident();
+    await waitFor(() =>
+      expect(screen.getByText(/Genera un diagnóstico/i)).toBeInTheDocument(),
+    );
+  });
+
+  it('shows action card when actions are loaded', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+    await expandIncident();
+    await waitFor(() =>
+      expect(screen.getByText('Verificar nombre de rama en configuración GitHub')).toBeInTheDocument(),
+    );
+  });
+
+  it('shows risk level badge on action card', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+    await expandIncident();
+    await waitFor(() => expect(screen.getByText('low')).toBeInTheDocument());
+  });
+
+  it('shows Approve and Reject buttons for pending_approval action', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+    await expandIncident();
+    await waitFor(() => screen.getByTestId('approve-btn'));
+    expect(screen.getByTestId('approve-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('reject-btn')).toBeInTheDocument();
+  });
+
+  it('calls approveAction and updates status optimistically', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+    await expandIncident();
+    await waitFor(() => screen.getByTestId('approve-btn'));
+
+    fireEvent.click(screen.getByTestId('approve-btn'));
+
+    await waitFor(() => expect(approveAction).toHaveBeenCalledWith(1));
+  });
+
+  it('calls rejectAction when reject is clicked', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+    await expandIncident();
+    await waitFor(() => screen.getByTestId('reject-btn'));
+
+    fireEvent.click(screen.getByTestId('reject-btn'));
+
+    await waitFor(() => expect(rejectAction).toHaveBeenCalledWith(1));
+  });
+
+  it('calls generateActions when generate button is clicked with diagnosis', async () => {
+    const incWithDiag = makeInc({ diagnosis_summary: 'Has diag', diagnosis_updated_at: '2026-05-11T10:00:00Z' });
+    getSentinelIncidents.mockResolvedValue({ items: [incWithDiag] });
+    getIncidentActions.mockResolvedValue({ items: [] });
+
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+
+    // Wait for getIncidentActions to resolve (loading finished → idle state)
+    await waitFor(() =>
+      expect(screen.getByText(/Sin recomendaciones todavía/i)).toBeInTheDocument(),
+    );
+
+    const genBtn = screen.getByTestId('generate-actions-btn');
+    expect(genBtn).not.toBeDisabled();
+    fireEvent.click(genBtn);
+
+    await waitFor(() => expect(generateActions).toHaveBeenCalledWith(42, false));
+  });
+
+  it('shows disclaimer "Aprobar no ejecuta la acción todavía" on pending action', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+    await expandIncident();
+    await waitFor(() =>
+      expect(screen.getByText(/Aprobar no ejecuta la acción todavía/i)).toBeInTheDocument(),
+    );
   });
 });

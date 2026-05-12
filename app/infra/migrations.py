@@ -955,6 +955,23 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_deploy_events_user    ON deploy_events(user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_deploy_events_status  ON deploy_events(status, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_deploy_events_code    ON deploy_events(code) WHERE code IS NOT NULL",
+
+    # ── Phase 3A: action_recommendations extended columns ────────────────────
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS diagnosis_id BIGINT REFERENCES ai_diagnosis(id) ON DELETE SET NULL",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS source_type TEXT",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS incident_type TEXT",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS recommendation_source TEXT NOT NULL DEFAULT 'rule_based'",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS confidence REAL",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS reason TEXT",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS expected_impact TEXT",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS rollback_notes TEXT",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS safety_notes TEXT",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS payload JSONB DEFAULT '{}'",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS context_hash TEXT",
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
+    "CREATE INDEX IF NOT EXISTS idx_action_recs_diagnosis ON action_recommendations(diagnosis_id) WHERE diagnosis_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_action_recs_risk ON action_recommendations(risk_level, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_action_recs_hash ON action_recommendations(context_hash) WHERE context_hash IS NOT NULL",
 ]
 
 def ensure_monthly_partitions(cursor):

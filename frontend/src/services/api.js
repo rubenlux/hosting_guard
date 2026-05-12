@@ -979,6 +979,30 @@ export const triggerDiagnose = async (incidentId) => {
   return response.data;
 };
 
+// ── Action Recommendations (Phase 3A) ─────────────────────────────────────────
+
+export const getIncidentActions = async (incidentId) => {
+  const response = await api.get(`/admin/incidents/${incidentId}/actions`);
+  return response.data;
+};
+
+export const generateActions = async (incidentId, force = false) => {
+  const response = await api.post(`/admin/incidents/${incidentId}/actions/generate`, null, {
+    params: { force },
+  });
+  return response.data;
+};
+
+export const approveAction = async (actionId) => {
+  const response = await api.post(`/admin/actions/${actionId}/approve`);
+  return response.data;
+};
+
+export const rejectAction = async (actionId, reason = null) => {
+  const response = await api.post(`/admin/actions/${actionId}/reject`, { reason });
+  return response.data;
+};
+
 export const getAdminDeployEvents = async (params = {}) => {
   const response = await api.get('/admin/deploy-events', { params });
   return response.data;

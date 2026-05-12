@@ -2680,6 +2680,105 @@ def resolve_sentinel_incident(
         release_connection(conn)
 
 
+# ── Phase 3A: Action Recommendations ─────────────────────────────────────────
+
+class _RejectBody(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+@router.get("/incidents/{incident_id}/actions")
+def get_incident_actions(
+    incident_id: int,
+    _: dict = Depends(require_role("admin")),
+):
+    """Return all action recommendations for a given incident."""
+    from app.infra.db import get_connection, release_connection
+    from app.services.ai.action_recommendations import get_actions_for_incident
+
+    conn = get_connection()
+    try:
+        return {"items": get_actions_for_incident(conn, incident_id)}
+    finally:
+        release_connection(conn)
+
+
+@router.post("/incidents/{incident_id}/actions/generate")
+def generate_incident_actions(
+    incident_id: int,
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+    admin: dict = Depends(require_role("admin")),
+):
+    """
+    Trigger rule-based action recommendation generation for a specific incident.
+    Runs in background; returns immediately.
+    """
+    from app.infra.db import get_connection, release_connection
+
+    def _run():
+        from app.infra.db import get_connection, release_connection
+        from app.services.ai.action_recommendations import generate_for_incident
+        bconn = get_connection()
+        try:
+            stats = generate_for_incident(bconn, incident_id=incident_id, force=force)
+            logger.info("generate_incident_actions done: incident=%s stats=%s", incident_id, stats)
+        except Exception as exc:
+            logger.error("generate_incident_actions background error: incident=%s err=%s", incident_id, exc)
+        finally:
+            release_connection(bconn)
+
+    background_tasks.add_task(_run)
+    return {"ok": True, "incident_id": incident_id, "status": "queued"}
+
+
+@router.post("/actions/{action_id}/approve")
+def approve_incident_action(
+    action_id: int,
+    admin: dict = Depends(require_role("admin")),
+):
+    """
+    Approve a pending action recommendation.
+    NOTE: approval does NOT execute the action — Phase 3A constraint.
+    """
+    from app.infra.db import get_connection, release_connection
+    from app.services.ai.action_recommendations import approve_action
+
+    conn = get_connection()
+    try:
+        result = approve_action(conn, action_id=action_id, admin_user_id=admin["user_id"])
+        return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        release_connection(conn)
+
+
+@router.post("/actions/{action_id}/reject")
+def reject_incident_action(
+    action_id: int,
+    body: _RejectBody = _RejectBody(),
+    admin: dict = Depends(require_role("admin")),
+):
+    """Reject a pending or approved action recommendation."""
+    from app.infra.db import get_connection, release_connection
+    from app.services.ai.action_recommendations import reject_action
+
+    conn = get_connection()
+    try:
+        result = reject_action(conn, action_id=action_id, admin_user_id=admin["user_id"], reason=body.reason)
+        return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        release_connection(conn)
+
+
 @router.get("/deploy-events")
 def list_admin_deploy_events(
     user_id:  Optional[int] = None,
