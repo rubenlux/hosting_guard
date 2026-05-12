@@ -2781,6 +2781,51 @@ def reject_incident_action(
 
 # ── Phase 3B: Execution Plans ─────────────────────────────────────────────────
 
+_PLAN_STATUS_LABEL: dict[str, str] = {
+    "draft":             "Borrador",
+    "ready_for_review":  "Listo para revisión",
+    "blocked_by_policy": "Bloqueado por política",
+    "superseded":        "Reemplazado",
+    "cancelled":         "Cancelado",
+}
+_PLAN_RISK_LABEL: dict[str, str] = {
+    "low":      "Bajo",
+    "medium":   "Medio",
+    "high":     "Alto",
+    "critical": "Crítico",
+}
+_PLAN_CAN_CANCEL_STATUSES = {"draft", "ready_for_review"}
+_PLAN_INACTIVE_STATUSES   = {"cancelled", "superseded"}
+
+
+def _enrich_plan(plan: dict, *, is_current: bool) -> dict:
+    """Add UI-friendly derived fields to a plan dict."""
+    status = plan.get("status", "")
+    return {
+        **plan,
+        "status_label":                    _PLAN_STATUS_LABEL.get(status, status),
+        "risk_label":                      _PLAN_RISK_LABEL.get(plan.get("risk_level", ""), ""),
+        "execution_allowed_label":         "No permitido en esta fase",
+        "requires_final_approval_label":   "Requiere aprobación final",
+        "can_cancel":                      status in _PLAN_CAN_CANCEL_STATUSES,
+        "can_copy":                        True,
+        "is_current":                      is_current,
+        "is_historical":                   not is_current,
+    }
+
+
+def _enrich_plans(plans: list[dict]) -> list[dict]:
+    """Mark the most-recent non-inactive plan as current; the rest as historical."""
+    current_marked = False
+    enriched = []
+    for p in plans:  # plans arrive ordered by created_at DESC
+        is_curr = not current_marked and p.get("status") not in _PLAN_INACTIVE_STATUSES
+        if is_curr:
+            current_marked = True
+        enriched.append(_enrich_plan(p, is_current=is_curr))
+    return enriched
+
+
 @router.get("/actions/{action_id}/plans")
 def get_action_plans(
     action_id: int,
@@ -2792,7 +2837,8 @@ def get_action_plans(
 
     conn = get_connection()
     try:
-        return {"items": get_execution_plans_for_action(conn, action_id)}
+        plans = get_execution_plans_for_action(conn, action_id)
+        return {"items": _enrich_plans(plans)}
     finally:
         release_connection(conn)
 
@@ -2816,6 +2862,8 @@ def generate_action_plan(
             conn, action_id=action_id, force=force,
             actor=admin.get("email") or str(admin.get("user_id", "admin")),
         )
+        if result.get("plan"):
+            result["plan"] = _enrich_plan(result["plan"], is_current=True)
         return {"ok": True, **result}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -2837,7 +2885,8 @@ def get_incident_plans(
 
     conn = get_connection()
     try:
-        return {"items": get_execution_plans_for_incident(conn, incident_id)}
+        plans = get_execution_plans_for_incident(conn, incident_id)
+        return {"items": _enrich_plans(plans)}
     finally:
         release_connection(conn)
 

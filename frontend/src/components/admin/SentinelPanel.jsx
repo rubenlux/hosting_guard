@@ -49,9 +49,62 @@ const STATUS_TABS = [
   { id: '',         label: 'Todos' },
 ];
 
+// ─── plan report builder ──────────────────────────────────────────────────────
+
+function buildPlanReport(plan, { incidentTitle = '', actionTitle = '', incidentType = '' } = {}) {
+  const lines = ['PLAN DE EJECUCIÓN — SOLO REVISIÓN, NO EJECUTA CAMBIOS', ''];
+
+  if (incidentTitle) {
+    lines.push('Incidente:');
+    lines.push(incidentType ? `${incidentTitle} [${incidentType}]` : incidentTitle);
+    lines.push('');
+  }
+  if (actionTitle) {
+    lines.push('Acción aprobada:');
+    lines.push(actionTitle);
+    lines.push('');
+  }
+
+  lines.push('Plan:',       plan.title || '—', '');
+  lines.push('Estado:',     plan.status_label || plan.status || '—', '');
+  lines.push('Riesgo:',     plan.risk_label   || plan.risk_level   || '—', '');
+  lines.push('Permitido ejecutar:',          'No', '');
+  lines.push('Requiere aprobación final:',   'Sí', '');
+
+  if (plan.summary) { lines.push('Resumen:', plan.summary, ''); }
+
+  const prechecks = Array.isArray(plan.prechecks) ? plan.prechecks : [];
+  if (prechecks.length) {
+    lines.push('Verificaciones previas:');
+    prechecks.forEach((p, i) => lines.push(`${p.order ?? i + 1}. ${p.description}`));
+    lines.push('');
+  }
+
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  if (steps.length) {
+    lines.push('Pasos:');
+    steps.forEach((s, i) => lines.push(`${s.order ?? i + 1}. ${s.description}`));
+    lines.push('');
+  }
+
+  const rollback = Array.isArray(plan.rollback_steps) ? plan.rollback_steps : [];
+  if (rollback.length) {
+    lines.push('Rollback:');
+    rollback.forEach((r, i) => lines.push(`${r.order ?? i + 1}. ${r.description}`));
+    lines.push('');
+  }
+
+  if (plan.safety_notes) { lines.push('Notas de seguridad:', plan.safety_notes, ''); }
+
+  lines.push('Nota:');
+  lines.push('Aprobar o generar este plan no ejecuta cambios sobre HostingGuard, Docker, Traefik, DNS ni el repositorio del cliente.');
+
+  return lines.join('\n');
+}
+
 // ─── report builder ───────────────────────────────────────────────────────────
 
-function buildReport(inc, diag, actions = []) {
+function buildReport(inc, diag, actions = [], activePlansMap = {}) {
   const ev = inc.evidence || {};
   const lines = [
     'INFORME DE INCIDENTE — HostingGuard',
@@ -97,14 +150,33 @@ function buildReport(inc, diag, actions = []) {
       lines.push(`   Responsable: ${ownerLabel}`);
       lines.push(`   Riesgo: ${riskLabel}`);
       lines.push(`   Estado: ${statusLabel}`);
+
+      const plan = activePlansMap[a.action_id];
+      if (plan) {
+        lines.push('', '   Plan asociado:');
+        lines.push(`   ${plan.title}`);
+        lines.push(`   Estado: ${plan.status_label || PLAN_STATUS_LABEL[plan.status] || plan.status}`);
+        lines.push('   Ejecución permitida: No');
+        const planPrechecks = Array.isArray(plan.prechecks) ? plan.prechecks : [];
+        if (planPrechecks.length) {
+          lines.push('', '   Verificaciones:');
+          planPrechecks.forEach((p, j) => lines.push(`     ${p.order ?? j + 1}. ${p.description}`));
+        }
+        const planSteps = Array.isArray(plan.steps) ? plan.steps : [];
+        if (planSteps.length) {
+          lines.push('', '   Pasos:');
+          planSteps.forEach((s, j) => lines.push(`     ${s.order ?? j + 1}. ${s.description}`));
+        }
+      }
     });
-    lines.push(
-      '',
-      'Nota: HostingGuard no ejecutó cambios sobre tu sitio ni repositorio.',
-    );
   }
 
-  lines.push('', '─'.repeat(40), 'Generado por HostingGuard AI Sentinel');
+  lines.push(
+    '', '─'.repeat(40),
+    'Nota de seguridad:',
+    'HostingGuard no ejecutó cambios automáticamente. Este informe es una guía de revisión.',
+    '', '─'.repeat(40), 'Generado por HostingGuard AI Sentinel',
+  );
   return lines.join('\n');
 }
 
@@ -313,16 +385,31 @@ const PLAN_STATUS_CLASS = {
   cancelled:         'text-gray-600',
 };
 
-function PlanCard({ plan, onCancel, isCancelling }) {
+function PlanCard({
+  plan, onCancel, isCancelling,
+  historyPlans = [], actionTitle = '', incidentTitle = '', incidentType = '',
+}) {
   const [expanded, setExpanded] = useState(false);
-  const statusLabel = PLAN_STATUS_LABEL[plan.status] || plan.status;
+  const [histExpanded, setHistExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const statusLabel = plan.status_label || PLAN_STATUS_LABEL[plan.status] || plan.status;
   const statusClass = PLAN_STATUS_CLASS[plan.status] || 'text-gray-400';
-  const riskLabel   = RISK_LABEL[plan.risk_level] || plan.risk_level;
+  const riskLabel   = plan.risk_label || RISK_LABEL[plan.risk_level] || plan.risk_level;
   const riskClass   = RISK_CLASS[plan.risk_level]  || RISK_CLASS.medium;
+  const canCancel   = plan.can_cancel ?? !['cancelled', 'superseded'].includes(plan.status);
 
   const steps        = Array.isArray(plan.steps)         ? plan.steps         : [];
   const prechecks    = Array.isArray(plan.prechecks)      ? plan.prechecks      : [];
   const rollback     = Array.isArray(plan.rollback_steps) ? plan.rollback_steps : [];
+
+  function handleCopy() {
+    const text = buildPlanReport(plan, { incidentTitle, actionTitle, incidentType });
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   return (
     <div
@@ -422,8 +509,16 @@ function PlanCard({ plan, onCancel, isCancelling }) {
             )}
 
             {/* execution_allowed is ALWAYS false — never show Ejecutar */}
-            <div className="flex items-center gap-2 pt-0.5">
-              {!['cancelled', 'superseded'].includes(plan.status) && (
+            <div className="flex items-center gap-2 pt-0.5 flex-wrap">
+              <button
+                data-testid="copy-plan-btn"
+                onClick={handleCopy}
+                className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-white/5 text-gray-500 border border-white/8 hover:bg-white/8 transition-colors"
+              >
+                <Copy className="w-2.5 h-2.5" />
+                {copied ? 'Copiado' : 'Copiar plan'}
+              </button>
+              {canCancel && (
                 <button
                   data-testid="cancel-plan-btn"
                   onClick={() => onCancel(plan.plan_id)}
@@ -435,6 +530,32 @@ function PlanCard({ plan, onCancel, isCancelling }) {
                 </button>
               )}
             </div>
+
+            {historyPlans.length > 0 && (
+              <div className="pt-0.5">
+                <button
+                  data-testid="history-plans-toggle"
+                  onClick={() => setHistExpanded(v => !v)}
+                  className="flex items-center gap-1 text-[10px] text-gray-600 hover:text-gray-400 transition-colors"
+                >
+                  <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${histExpanded ? '' : '-rotate-90'}`} />
+                  Planes anteriores ({historyPlans.length})
+                </button>
+                {histExpanded && (
+                  <div className="mt-1 space-y-0.5 opacity-60" data-testid="history-plans-list">
+                    {historyPlans.map(hp => (
+                      <div key={hp.plan_id} className="flex items-center justify-between text-[10px] text-gray-600 px-1">
+                        <span>{hp.title}</span>
+                        <span className="flex items-center gap-2 shrink-0">
+                          <span>{hp.status_label || PLAN_STATUS_LABEL[hp.status] || hp.status}</span>
+                          <span className="text-gray-700">{fmt(hp.created_at)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -481,16 +602,20 @@ const STATUS_CLASS = {
   blocked_by_policy: 'text-red-500',
 };
 
-const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onActionsLoaded, incidentStatus = 'open' }) {
+const ActionsPanel = memo(function ActionsPanel({
+  incidentId, hasDiagnosis, onActionsLoaded, onPlansLoaded,
+  incidentStatus = 'open', incidentTitle = '', incidentType = '',
+}) {
   const [actions, setActions]         = useState([]);
   const [status, setStatus]           = useState('idle'); // idle | loading | generating
   const [error, setError]             = useState(null);
   const [actingId, setActingId]       = useState(null);
   const [confirmId, setConfirmId]     = useState(null); // action_id pending confirm
-  const [plansMap, setPlansMap]       = useState({});   // action_id → plan | null
+  const [plansMap, setPlansMap]       = useState({});   // action_id → allPlans[]
   const [planGenId, setPlanGenId]     = useState(null); // action_id currently generating plan
   const [planCancelId, setPlanCancelId] = useState(null); // plan_id being cancelled
   const [showHistorical, setShowHistorical] = useState(false);
+  const [cancelSuccessActionId, setCancelSuccessActionId] = useState(null);
 
   const INACTIVE_PLAN_STATUSES = ['cancelled', 'superseded'];
 
@@ -529,11 +654,14 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
           approvedIds.map(id => getActionPlans(id).then(d => ({ id, plans: d.items || [] })))
         );
         const map = {};
+        const activePlanMap = {};
         results.forEach(({ id, plans }) => {
-          const active = (plans || []).find(p => !INACTIVE_PLAN_STATUSES.includes(p.status));
-          map[id] = active || null;
+          map[id] = plans;
+          const active = plans.find(p => !INACTIVE_PLAN_STATUSES.includes(p.status));
+          if (active) activePlanMap[id] = active;
         });
         setPlansMap(map);
+        onPlansLoaded?.(activePlanMap);
       }
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al cargar acciones');
@@ -572,7 +700,7 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
           : a,
       ));
       // Initialize plan slot for this newly approved action
-      setPlansMap(prev => ({ ...prev, [actionId]: prev[actionId] ?? null }));
+      setPlansMap(prev => ({ ...prev, [actionId]: prev[actionId] ?? [] }));
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al aprobar acción');
     } finally {
@@ -586,8 +714,9 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
       await generateActionPlan(actionId, force);
       const fresh = await getActionPlans(actionId);
       const freshPlans = fresh.items || [];
+      setPlansMap(prev => ({ ...prev, [actionId]: freshPlans }));
       const active = freshPlans.find(p => !INACTIVE_PLAN_STATUSES.includes(p.status));
-      setPlansMap(prev => ({ ...prev, [actionId]: active || null }));
+      onPlansLoaded?.({ [actionId]: active });
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al generar plan');
     } finally {
@@ -601,8 +730,11 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
       await cancelPlan(planId);
       const fresh = await getActionPlans(actionId);
       const freshPlans = fresh.items || [];
+      setPlansMap(prev => ({ ...prev, [actionId]: freshPlans }));
       const active = freshPlans.find(p => !INACTIVE_PLAN_STATUSES.includes(p.status));
-      setPlansMap(prev => ({ ...prev, [actionId]: active || null }));
+      onPlansLoaded?.({ [actionId]: active });
+      setCancelSuccessActionId(actionId);
+      setTimeout(() => setCancelSuccessActionId(id => id === actionId ? null : id), 4000);
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al cancelar plan');
     } finally {
@@ -707,9 +839,11 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
               const isConfirm      = confirmId === action.action_id;
               const canApprove     = action.can_approve ?? isPending;
               const canReject      = action.can_reject  ?? isPending;
-              const existingPlan   = plansMap[action.action_id];
+              const allPlans       = plansMap[action.action_id] || [];
+              const existingPlan   = allPlans.find(p => !INACTIVE_PLAN_STATUSES.includes(p.status));
+              const historyPlans   = allPlans.filter(p => INACTIVE_PLAN_STATUSES.includes(p.status));
               const isGenPlan      = planGenId === action.action_id;
-              const hasPlan        = !!(isApproved && existingPlan && !INACTIVE_PLAN_STATUSES.includes(existingPlan.status));
+              const hasPlan        = !!(isApproved && existingPlan);
 
               return (
                 <div
@@ -782,11 +916,23 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
                         {isGenPlan ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}
                         {isGenPlan ? 'Generando plan…' : hasPlan ? 'Regenerar plan' : 'Generar plan'}
                       </button>
+                      {cancelSuccessActionId === action.action_id && (
+                        <p
+                          data-testid="cancel-success-msg"
+                          className="text-[10px] text-gray-500"
+                        >
+                          Plan cancelado. No se ejecutó ninguna acción.
+                        </p>
+                      )}
                       {hasPlan && (
                         <PlanCard
                           plan={existingPlan}
                           onCancel={planId => handleCancelPlan(planId, action.action_id)}
                           isCancelling={planCancelId === existingPlan.plan_id}
+                          historyPlans={historyPlans}
+                          actionTitle={action.title}
+                          incidentTitle={incidentTitle}
+                          incidentType={incidentType}
                         />
                       )}
                     </div>
@@ -893,6 +1039,7 @@ const IncidentRow = memo(function IncidentRow({ inc, expanded, onToggle, onResol
   const [copied, setCopied]               = useState(false);
   const [currentDiag, setCurrentDiag]     = useState(null);
   const [currentActions, setCurrentActions] = useState([]);
+  const [currentPlansMap, setCurrentPlansMap] = useState({});
 
   const ev       = inc.evidence || {};
   const sevClass = SEV[inc.severity] || SEV.info;
@@ -919,7 +1066,7 @@ const IncidentRow = memo(function IncidentRow({ inc, expanded, onToggle, onResol
       customer_message:       inc.diagnosis_customer_message,
       confidence:             inc.diagnosis_confidence,
     } : null);
-    navigator.clipboard.writeText(buildReport(inc, diagForReport, currentActions)).then(() => {
+    navigator.clipboard.writeText(buildReport(inc, diagForReport, currentActions, currentPlansMap)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -1022,7 +1169,10 @@ const IncidentRow = memo(function IncidentRow({ inc, expanded, onToggle, onResol
               incidentId={inc.incident_id}
               hasDiagnosis={!!(currentDiag || inc.diagnosis_summary)}
               onActionsLoaded={setCurrentActions}
+              onPlansLoaded={updates => setCurrentPlansMap(prev => ({ ...prev, ...updates }))}
               incidentStatus={inc.status}
+              incidentTitle={inc.title}
+              incidentType={inc.incident_type}
             />
 
             {/* Raw evidence */}

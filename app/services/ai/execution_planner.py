@@ -647,6 +647,7 @@ def create_execution_plan(
     # End any active plan before creating a new one.
     # Hash mismatch (template upgrade) → superseded automatically.
     # Explicit force=True → cancelled by user.
+    old_plan_id: Optional[int] = None
     if existing_hash:
         cur = conn.cursor()
         now = datetime.now(timezone.utc)
@@ -656,9 +657,13 @@ def create_execution_plan(
             UPDATE execution_plans
                SET status = %s, updated_at = %s
              WHERE action_id = %s AND status NOT IN ('cancelled', 'superseded')
+             RETURNING plan_id
             """,
             (end_status, now, action_id),
         )
+        row = cur.fetchone()
+        if row:
+            old_plan_id = dict(row)["plan_id"]
 
     plan = _insert_plan(conn, action=action, template=template, safety=safety,
                         plan_hash=plan_hash, actor=actor,
@@ -673,6 +678,15 @@ def create_execution_plan(
         actor=actor,
         event="created",
     )
+    if old_plan_id and not force:
+        _log_plan_audit(
+            action_id=action_id,
+            plan_id=old_plan_id,
+            incident_id=action["incident_id"],
+            diagnosis_id=action.get("diagnosis_id"),
+            actor=actor,
+            event="superseded",
+        )
     logger.info("execution plan created: plan=%s action=%s risk=%s", plan["plan_id"], action_id, safety["risk_level"])
     return {"created": True, "plan": plan}
 

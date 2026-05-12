@@ -1009,3 +1009,228 @@ describe('Phase 3B — current vs historical grouping', () => {
     expect(screen.queryByTestId('historical-toggle')).not.toBeInTheDocument();
   });
 });
+
+// ── Phase 3B.1 — PlanCard copy plan ──────────────────────────────────────────
+
+function mockClipboard() {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText },
+    writable: true,
+    configurable: true,
+  });
+  return writeText;
+}
+
+async function openExpandedPlanCard() {
+  getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+  getActionPlans.mockResolvedValue({ items: [MOCK_PLAN] });
+  render(<SentinelPanel />);
+  await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+  fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+  await waitFor(() => screen.getByTestId('plan-card'));
+  // Expand plan card body
+  fireEvent.click(screen.getByTestId('plan-card').querySelector('div'));
+  await waitFor(() => screen.getByTestId('copy-plan-btn'));
+}
+
+describe('Phase 3B.1 — PlanCard copy plan', () => {
+  it('shows Copiar plan button', async () => {
+    await openExpandedPlanCard();
+    expect(screen.getByTestId('copy-plan-btn')).toBeInTheDocument();
+  });
+
+  it('clicking Copiar plan calls clipboard.writeText', async () => {
+    const writeText = mockClipboard();
+    await openExpandedPlanCard();
+    fireEvent.click(screen.getByTestId('copy-plan-btn'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+  });
+
+  it('Copiar plan text includes no-execute disclaimer', async () => {
+    let capturedText = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(text => { capturedText = text; return Promise.resolve(); }) },
+      writable: true,
+      configurable: true,
+    });
+    await openExpandedPlanCard();
+    fireEvent.click(screen.getByTestId('copy-plan-btn'));
+    await waitFor(() => expect(capturedText).toBeTruthy());
+    expect(capturedText).toMatch(/no ejecuta cambios/i);
+  });
+
+  it('Copiar plan text does not contain raw JSON object syntax', async () => {
+    let capturedText = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(text => { capturedText = text; return Promise.resolve(); }) },
+      writable: true,
+      configurable: true,
+    });
+    await openExpandedPlanCard();
+    fireEvent.click(screen.getByTestId('copy-plan-btn'));
+    await waitFor(() => expect(capturedText).toBeTruthy());
+    expect(capturedText).not.toContain('"plan_id"');
+    expect(capturedText).not.toContain('"steps"');
+  });
+});
+
+// ── Phase 3B.1 — PlanCard can_cancel ─────────────────────────────────────────
+
+describe('Phase 3B.1 — PlanCard can_cancel', () => {
+  it('can_cancel=false from API hides cancel-plan-btn', async () => {
+    const planNoCanccel = { ...MOCK_PLAN, can_cancel: false };
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [planNoCanccel] });
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    fireEvent.click(screen.getByTestId('plan-card').querySelector('div'));
+    await waitFor(() => screen.getByTestId('copy-plan-btn'));
+    expect(screen.queryByTestId('cancel-plan-btn')).not.toBeInTheDocument();
+  });
+
+  it('can_cancel=true from API shows cancel-plan-btn', async () => {
+    const planCanCancel = { ...MOCK_PLAN, can_cancel: true };
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [planCanCancel] });
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    fireEvent.click(screen.getByTestId('plan-card').querySelector('div'));
+    await waitFor(() => screen.getByTestId('cancel-plan-btn'));
+    expect(screen.getByTestId('cancel-plan-btn')).toBeInTheDocument();
+  });
+});
+
+// ── Phase 3B.1 — cancel success message ──────────────────────────────────────
+
+describe('Phase 3B.1 — cancel success message', () => {
+  it('shows "Plan cancelado. No se ejecutó ninguna acción." after cancel', async () => {
+    getActionPlans
+      .mockResolvedValueOnce({ items: [MOCK_PLAN] })
+      .mockResolvedValue({ items: [] });
+    cancelPlan.mockResolvedValue({ ok: true, plan_id: 100, status: 'cancelled' });
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    fireEvent.click(screen.getByTestId('plan-card').querySelector('div'));
+    await waitFor(() => screen.getByTestId('cancel-plan-btn'));
+    fireEvent.click(screen.getByTestId('cancel-plan-btn'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cancel-success-msg')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('cancel-success-msg').textContent).toMatch(
+      /no se ejecutó ninguna acción/i,
+    );
+  });
+});
+
+// ── Phase 3B.1 — Planes anteriores (history plans) ───────────────────────────
+
+describe('Phase 3B.1 — history plans in PlanCard', () => {
+  const ACTIVE_PLAN = {
+    ...MOCK_PLAN, plan_id: 101, status: 'ready_for_review',
+    status_label: 'Listo para revisión', title: 'Plan activo', can_cancel: true,
+  };
+  const CANCELLED_PLAN = {
+    ...MOCK_PLAN, plan_id: 100, status: 'cancelled',
+    status_label: 'Cancelado', title: 'Plan cancelado anterior', can_cancel: false,
+  };
+
+  it('shows history-plans-toggle when cancelled plan exists alongside active plan', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [ACTIVE_PLAN, CANCELLED_PLAN] });
+
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    fireEvent.click(screen.getByTestId('plan-card').querySelector('div'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('history-plans-toggle')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('history-plans-toggle').textContent).toMatch(/planes anteriores/i);
+  });
+
+  it('cancelled plan title appears in history list after clicking toggle', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [ACTIVE_PLAN, CANCELLED_PLAN] });
+
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    fireEvent.click(screen.getByTestId('plan-card').querySelector('div'));
+    await waitFor(() => screen.getByTestId('history-plans-toggle'));
+    fireEvent.click(screen.getByTestId('history-plans-toggle'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('history-plans-list')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('history-plans-list').textContent).toContain('Plan cancelado anterior');
+  });
+
+  it('no history-plans-toggle when only one plan exists', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [MOCK_PLAN] });
+
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    fireEvent.click(screen.getByTestId('plan-card').querySelector('div'));
+    await waitFor(() => screen.getByTestId('copy-plan-btn'));
+
+    expect(screen.queryByTestId('history-plans-toggle')).not.toBeInTheDocument();
+  });
+});
+
+// ── Phase 3B.1 — Copiar informe includes plan data ───────────────────────────
+
+describe('Phase 3B.1 — Copiar informe includes plan and security note', () => {
+  async function renderWithPlan() {
+    let capturedText = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(text => { capturedText = text; return Promise.resolve(); }) },
+      writable: true,
+      configurable: true,
+    });
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [MOCK_PLAN] });
+
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+
+    const copyInfoBtn = screen.getAllByRole('button').find(
+      b => b.textContent.trim() === 'Copiar informe',
+    );
+    fireEvent.click(copyInfoBtn);
+    await waitFor(() => expect(capturedText).toBeTruthy());
+    return capturedText;
+  }
+
+  it('report includes security note about no automatic execution', async () => {
+    const text = await renderWithPlan();
+    expect(text).toMatch(/no ejecutó cambios automáticamente/i);
+  });
+
+  it('report includes plan title when plan exists', async () => {
+    const text = await renderWithPlan();
+    expect(text).toContain('Plan de corrección para el cliente');
+  });
+
+  it('report includes "Ejecución permitida: No" for plan', async () => {
+    const text = await renderWithPlan();
+    expect(text).toMatch(/Ejecución permitida:\s*No/i);
+  });
+});
