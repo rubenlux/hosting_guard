@@ -974,6 +974,36 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_action_recs_hash ON action_recommendations(context_hash) WHERE context_hash IS NOT NULL",
     # ── Phase 3A.2: rules versioning ─────────────────────────────────────────
     "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS rules_version TEXT",
+
+    # ── Phase 3B: Execution Plans ─────────────────────────────────────────────
+    # Auditable plan structs for approved actions. execution_allowed is always false.
+    """CREATE TABLE IF NOT EXISTS execution_plans (
+        plan_id                 BIGSERIAL PRIMARY KEY,
+        action_id               BIGINT NOT NULL REFERENCES action_recommendations(action_id) ON DELETE CASCADE,
+        incident_id             BIGINT NOT NULL REFERENCES system_incidents(incident_id) ON DELETE CASCADE,
+        diagnosis_id            BIGINT REFERENCES ai_diagnosis(id) ON DELETE SET NULL,
+        plan_type               TEXT NOT NULL,
+        status                  TEXT NOT NULL DEFAULT 'draft',
+        risk_level              TEXT NOT NULL,
+        execution_allowed       BOOLEAN NOT NULL DEFAULT FALSE,
+        requires_final_approval BOOLEAN NOT NULL DEFAULT TRUE,
+        title                   TEXT NOT NULL,
+        summary                 TEXT,
+        prechecks               JSONB DEFAULT '[]',
+        steps                   JSONB DEFAULT '[]',
+        rollback_steps          JSONB DEFAULT '[]',
+        expected_impact         TEXT,
+        safety_notes            TEXT,
+        blocked_reason          TEXT,
+        planner_version         TEXT,
+        context_hash            TEXT,
+        created_by              TEXT,
+        created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_exec_plans_action ON execution_plans(action_id)",
+    "CREATE INDEX IF NOT EXISTS idx_exec_plans_incident ON execution_plans(incident_id)",
+    "CREATE INDEX IF NOT EXISTS idx_exec_plans_status ON execution_plans(status, created_at DESC)",
 ]
 
 def ensure_monthly_partitions(cursor):

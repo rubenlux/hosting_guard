@@ -24,11 +24,15 @@ vi.mock('../../services/api', () => ({
   generateActions:      vi.fn(),
   approveAction:        vi.fn(),
   rejectAction:         vi.fn(),
+  generateActionPlan:   vi.fn(),
+  getActionPlans:       vi.fn(),
+  cancelPlan:           vi.fn(),
 }));
 
 import {
   getSentinelIncidents, triggerDiagnose, getDiagnosis,
   getIncidentActions, generateActions, approveAction, rejectAction,
+  generateActionPlan, getActionPlans, cancelPlan,
 } from '../../services/api';
 import SentinelPanel from './SentinelPanel';
 
@@ -107,6 +111,31 @@ const MOCK_ACTION_BLOCKED = {
   can_reject:  false,
 };
 
+const MOCK_PLAN = {
+  plan_id:                100,
+  action_id:              2,
+  incident_id:            42,
+  diagnosis_id:           99,
+  plan_type:              'customer_fix',
+  status:                 'draft',
+  risk_level:             'low',
+  execution_allowed:      false,
+  requires_final_approval: true,
+  title:                  'Plan de corrección para el cliente',
+  summary:                'El cliente debe realizar cambios.',
+  prechecks:              [{ order: 1, description: 'Verificar acceso al repositorio' }],
+  steps:                  [{ order: 1, description: 'Notificar al cliente' }],
+  rollback_steps:         [],
+  expected_impact:        'El incidente se resolverá.',
+  safety_notes:           'HostingGuard no modifica nada.',
+  blocked_reason:         '',
+  planner_version:        'planner_v1',
+  context_hash:           'hash123',
+  created_by:             'admin',
+  created_at:             '2026-05-12T10:00:00Z',
+  updated_at:             '2026-05-12T10:00:00Z',
+};
+
 beforeEach(() => {
   getSentinelIncidents.mockResolvedValue({ items: [DEPLOY_INC, SITE_INC] });
   triggerDiagnose.mockResolvedValue({ ok: true });
@@ -123,6 +152,9 @@ beforeEach(() => {
   generateActions.mockResolvedValue({ ok: true });
   approveAction.mockResolvedValue({ ok: true, action_id: 1, status: 'approved' });
   rejectAction.mockResolvedValue({ ok: true, action_id: 1, status: 'rejected' });
+  generateActionPlan.mockResolvedValue({ ok: true, created: true, plan: MOCK_PLAN });
+  getActionPlans.mockResolvedValue({ items: [] });
+  cancelPlan.mockResolvedValue({ ok: true, plan_id: 100, status: 'cancelled' });
 });
 
 afterEach(() => {
@@ -683,5 +715,154 @@ describe('ActionsPanel — Regenerar / Generar button', () => {
 
     fireEvent.click(screen.getByTestId('generate-actions-btn'));
     await waitFor(() => expect(generateActions).toHaveBeenCalledWith(42, true));
+  });
+});
+
+// ── Phase 3B: Execution Plan UI ───────────────────────────────────────────────
+
+async function expandIncidentWithApproved() {
+  getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+  getActionPlans.mockResolvedValue({ items: [] });
+  render(<SentinelPanel />);
+  await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+  fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+  await waitFor(() => screen.getByTestId('approved-notice'));
+}
+
+describe('Phase 3B — plan button visibility', () => {
+  it('pending action does not show generate-plan-btn', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION] });
+    await expandIncident();
+    await waitFor(() => screen.getByTestId('action-card'));
+    expect(screen.queryByTestId('generate-plan-btn')).not.toBeInTheDocument();
+  });
+
+  it('rejected action does not show generate-plan-btn', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_REJECTED] });
+    await expandIncident();
+    await waitFor(() => screen.getByTestId('action-card'));
+    expect(screen.queryByTestId('generate-plan-btn')).not.toBeInTheDocument();
+  });
+
+  it('approved action with no plan shows generate-plan-btn', async () => {
+    getActionPlans.mockResolvedValue({ items: [] });
+    await expandIncidentWithApproved();
+    await waitFor(() =>
+      expect(screen.getByTestId('generate-plan-btn')).toBeInTheDocument(),
+    );
+  });
+
+  it('approved action with existing plan hides generate-plan-btn', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [MOCK_PLAN] });
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    expect(screen.queryByTestId('generate-plan-btn')).not.toBeInTheDocument();
+  });
+});
+
+describe('Phase 3B — plan generation', () => {
+  it('clicking generate-plan-btn calls generateActionPlan with actionId', async () => {
+    getActionPlans.mockResolvedValue({ items: [] });
+    await expandIncidentWithApproved();
+    await waitFor(() => screen.getByTestId('generate-plan-btn'));
+    fireEvent.click(screen.getByTestId('generate-plan-btn'));
+    await waitFor(() => expect(generateActionPlan).toHaveBeenCalledWith(2));
+  });
+
+  it('after generation, PlanCard appears', async () => {
+    getActionPlans.mockResolvedValue({ items: [] });
+    generateActionPlan.mockResolvedValue({ ok: true, created: true, plan: MOCK_PLAN });
+    await expandIncidentWithApproved();
+    await waitFor(() => screen.getByTestId('generate-plan-btn'));
+    fireEvent.click(screen.getByTestId('generate-plan-btn'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    expect(screen.getByTestId('plan-card')).toBeInTheDocument();
+  });
+});
+
+describe('Phase 3B — PlanCard fields', () => {
+  beforeEach(() => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [MOCK_PLAN] });
+  });
+
+  it('plan-card renders plan title', async () => {
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    expect(screen.getByTestId('plan-card').textContent).toContain('Plan de corrección para el cliente');
+  });
+
+  it('plan-card shows status label', async () => {
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-status-label'));
+    expect(screen.getByTestId('plan-status-label').textContent).toBe('Borrador');
+  });
+
+  it('plan-card shows no-execute notice', async () => {
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-no-execute-notice'));
+    expect(screen.getByTestId('plan-no-execute-notice').textContent).toMatch(/no ejecuta comandos/i);
+  });
+
+  it('plan-card does not render an Ejecutar button', async () => {
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    const allButtons = screen.getAllByRole('button');
+    const execBtn = allButtons.find(b => /ejecutar/i.test(b.textContent));
+    expect(execBtn).toBeUndefined();
+  });
+});
+
+describe('Phase 3B — plan cancel', () => {
+  it('plan with non-cancelled status shows cancel-plan-btn', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [MOCK_PLAN] });
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    // Expand the plan card to see cancel button
+    fireEvent.click(screen.getByTestId('plan-card').querySelector('div'));
+    await waitFor(() => screen.getByTestId('cancel-plan-btn'));
+    expect(screen.getByTestId('cancel-plan-btn')).toBeInTheDocument();
+  });
+
+  it('clicking cancel-plan-btn calls cancelPlan', async () => {
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [MOCK_PLAN] });
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    // Expand plan card
+    fireEvent.click(screen.getByTestId('plan-card').querySelector('div'));
+    await waitFor(() => screen.getByTestId('cancel-plan-btn'));
+    fireEvent.click(screen.getByTestId('cancel-plan-btn'));
+    await waitFor(() => expect(cancelPlan).toHaveBeenCalledWith(100));
+  });
+
+  it('blocked plan shows blocked reason', async () => {
+    const blockedPlan = { ...MOCK_PLAN, status: 'blocked_by_policy', blocked_reason: 'Bloqueado por política de seguridad' };
+    getIncidentActions.mockResolvedValue({ items: [MOCK_ACTION_APPROVED] });
+    getActionPlans.mockResolvedValue({ items: [blockedPlan] });
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+    await waitFor(() => screen.getByTestId('plan-card'));
+    // Expand plan card
+    fireEvent.click(screen.getByTestId('plan-card').querySelector('div'));
+    await waitFor(() => screen.getByTestId('plan-blocked-reason'));
+    expect(screen.getByTestId('plan-blocked-reason').textContent).toMatch(/bloqueado/i);
   });
 });

@@ -8,6 +8,7 @@ import {
 import {
   getSentinelIncidents, resolveIncident, getDiagnosis, triggerDiagnose,
   getIncidentActions, generateActions, approveAction, rejectAction,
+  generateActionPlan, getActionPlans, cancelPlan,
 } from '../../services/api';
 
 // ─── stable constants (never recreated) ──────────────────────────────────────
@@ -294,6 +295,153 @@ const DiagnosisPanel = memo(function DiagnosisPanel({
   );
 });
 
+// ─── PlanCard ─────────────────────────────────────────────────────────────────
+
+const PLAN_STATUS_LABEL = {
+  draft:              'Borrador',
+  ready_for_review:   'Listo para revisión',
+  blocked_by_policy:  'Bloqueado por política',
+  superseded:         'Reemplazado',
+  cancelled:          'Cancelado',
+};
+
+const PLAN_STATUS_CLASS = {
+  draft:             'text-amber-400',
+  ready_for_review:  'text-emerald-400',
+  blocked_by_policy: 'text-red-400',
+  superseded:        'text-gray-600',
+  cancelled:         'text-gray-600',
+};
+
+function PlanCard({ plan, onCancel, isCancelling }) {
+  const [expanded, setExpanded] = useState(false);
+  const statusLabel = PLAN_STATUS_LABEL[plan.status] || plan.status;
+  const statusClass = PLAN_STATUS_CLASS[plan.status] || 'text-gray-400';
+  const riskLabel   = RISK_LABEL[plan.risk_level] || plan.risk_level;
+  const riskClass   = RISK_CLASS[plan.risk_level]  || RISK_CLASS.medium;
+
+  const steps        = Array.isArray(plan.steps)         ? plan.steps         : [];
+  const prechecks    = Array.isArray(plan.prechecks)      ? plan.prechecks      : [];
+  const rollback     = Array.isArray(plan.rollback_steps) ? plan.rollback_steps : [];
+
+  return (
+    <div
+      data-testid="plan-card"
+      className="border border-white/6 rounded-lg bg-black/30 overflow-hidden"
+    >
+      {/* Plan header */}
+      <div
+        className="flex items-start justify-between gap-2 px-2.5 py-2 cursor-pointer hover:bg-white/[0.02] transition-colors"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-medium text-white/80 leading-snug">{plan.title}</span>
+            <span className={`text-[10px] ${statusClass}`} data-testid="plan-status-label">
+              {statusLabel}
+            </span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${riskClass}`}>
+              {riskLabel}
+            </span>
+          </div>
+          <p className="text-[10px] text-gray-600 mt-0.5" data-testid="plan-no-execute-notice">
+            Este plan no ejecuta comandos. Solo describe un procedimiento seguro para revisión.
+          </p>
+        </div>
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-gray-600 shrink-0 mt-0.5 transition-transform duration-150 ${
+            expanded ? 'rotate-0' : '-rotate-90'
+          }`}
+        />
+      </div>
+
+      {/* Expandable body */}
+      <div
+        className={`grid transition-[grid-template-rows] duration-150 ease-out ${
+          expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+        }`}
+      >
+        <div className="overflow-hidden min-h-0">
+          <div className="border-t border-white/5 px-2.5 py-2 space-y-2">
+            {plan.summary && (
+              <p className="text-[11px] text-gray-400">{plan.summary}</p>
+            )}
+
+            {plan.blocked_reason && (
+              <p className="text-[10px] text-red-400" data-testid="plan-blocked-reason">
+                {plan.blocked_reason}
+              </p>
+            )}
+
+            {prechecks.length > 0 && (
+              <div>
+                <div className="text-[10px] text-gray-600 uppercase tracking-wide mb-0.5">Verificaciones previas</div>
+                <ol className="space-y-0.5">
+                  {prechecks.map((p, i) => (
+                    <li key={i} className="flex gap-1.5 text-[10px] text-gray-400">
+                      <span className="text-amber-500 shrink-0">{p.order ?? i + 1}.</span>
+                      {p.description}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {steps.length > 0 && (
+              <div>
+                <div className="text-[10px] text-gray-600 uppercase tracking-wide mb-0.5">Pasos</div>
+                <ol className="space-y-0.5">
+                  {steps.map((s, i) => (
+                    <li key={i} className="flex gap-1.5 text-[10px] text-gray-400">
+                      <span className="text-blue-500 shrink-0">{s.order ?? i + 1}.</span>
+                      {s.description}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {rollback.length > 0 && (
+              <div>
+                <div className="text-[10px] text-gray-600 uppercase tracking-wide mb-0.5">Rollback</div>
+                <ol className="space-y-0.5">
+                  {rollback.map((r, i) => (
+                    <li key={i} className="flex gap-1.5 text-[10px] text-gray-400">
+                      <span className="text-red-500 shrink-0">{r.order ?? i + 1}.</span>
+                      {r.description}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {plan.safety_notes && (
+              <p className="text-[10px] text-gray-600">
+                <span className="text-gray-500">Seguridad: </span>{plan.safety_notes}
+              </p>
+            )}
+
+            {/* execution_allowed is ALWAYS false — never show Ejecutar */}
+            <div className="flex items-center gap-2 pt-0.5">
+              {plan.status !== 'cancelled' && (
+                <button
+                  data-testid="cancel-plan-btn"
+                  onClick={() => onCancel(plan.plan_id)}
+                  disabled={isCancelling}
+                  className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-white/5 text-gray-500 border border-white/8 hover:bg-white/8 transition-colors disabled:opacity-40"
+                >
+                  {isCancelling ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}
+                  Cancelar plan
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── ActionsPanel ─────────────────────────────────────────────────────────────
 
 const RISK_CLASS = {
@@ -339,6 +487,9 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
   const [error, setError]             = useState(null);
   const [actingId, setActingId]       = useState(null);
   const [confirmId, setConfirmId]     = useState(null); // action_id pending confirm
+  const [plansMap, setPlansMap]       = useState({});   // action_id → plan | null
+  const [planGenId, setPlanGenId]     = useState(null); // action_id currently generating plan
+  const [planCancelId, setPlanCancelId] = useState(null); // plan_id being cancelled
 
   const load = useCallback(async () => {
     setStatus('loading');
@@ -348,6 +499,21 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
       const items = data.items || [];
       setActions(items);
       onActionsLoaded?.(items);
+      // Load plans for approved actions
+      const approvedIds = items
+        .filter(a => a.status === 'approved')
+        .map(a => a.action_id);
+      if (approvedIds.length > 0) {
+        const results = await Promise.all(
+          approvedIds.map(id => getActionPlans(id).then(d => ({ id, plans: d.items || [] })))
+        );
+        const map = {};
+        results.forEach(({ id, plans }) => {
+          const active = plans.find(p => p.status !== 'cancelled');
+          map[id] = active || null;
+        });
+        setPlansMap(map);
+      }
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al cargar acciones');
     } finally {
@@ -384,10 +550,39 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
           ? { ...a, status: 'approved', can_approve: false, can_reject: true }
           : a,
       ));
+      // Initialize plan slot for this newly approved action
+      setPlansMap(prev => ({ ...prev, [actionId]: prev[actionId] ?? null }));
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al aprobar acción');
     } finally {
       setActingId(null);
+    }
+  }
+
+  async function handleGeneratePlan(actionId) {
+    setPlanGenId(actionId);
+    try {
+      const result = await generateActionPlan(actionId);
+      setPlansMap(prev => ({ ...prev, [actionId]: result.plan || null }));
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Error al generar plan');
+    } finally {
+      setPlanGenId(null);
+    }
+  }
+
+  async function handleCancelPlan(planId, actionId) {
+    setPlanCancelId(planId);
+    try {
+      await cancelPlan(planId);
+      setPlansMap(prev => ({
+        ...prev,
+        [actionId]: prev[actionId] ? { ...prev[actionId], status: 'cancelled' } : null,
+      }));
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Error al cancelar plan');
+    } finally {
+      setPlanCancelId(null);
     }
   }
 
@@ -481,13 +676,16 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
               const riskTip     = RISK_TOOLTIP[action.risk_level] || '';
               const statusLabel = STATUS_LABEL[action.status]    || action.status;
               const statusClass = STATUS_CLASS[action.status]    || 'text-gray-500';
-              const isPending   = action.status === 'pending_approval';
-              const isApproved  = action.status === 'approved';
-              const isBlocked   = action.status === 'blocked_by_policy';
-              const isBusy      = actingId === action.action_id;
-              const isConfirm   = confirmId === action.action_id;
-              const canApprove  = action.can_approve ?? isPending;
-              const canReject   = action.can_reject  ?? isPending;
+              const isPending      = action.status === 'pending_approval';
+              const isApproved     = action.status === 'approved';
+              const isBlocked      = action.status === 'blocked_by_policy';
+              const isBusy         = actingId === action.action_id;
+              const isConfirm      = confirmId === action.action_id;
+              const canApprove     = action.can_approve ?? isPending;
+              const canReject      = action.can_reject  ?? isPending;
+              const existingPlan   = plansMap[action.action_id];
+              const isGenPlan      = planGenId === action.action_id;
+              const hasPlan        = isApproved && existingPlan && existingPlan.status !== 'cancelled';
 
               return (
                 <div
@@ -545,11 +743,31 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
                     </p>
                   )}
 
-                  {/* Approved state notice */}
+                  {/* Approved state notice + plan controls */}
                   {isApproved && (
-                    <p className="text-[10px] text-emerald-600" data-testid="approved-notice">
-                      Esta recomendación fue aprobada, pero todavía no existe ejecución automática en esta fase.
-                    </p>
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] text-emerald-600" data-testid="approved-notice">
+                        Esta recomendación fue aprobada, pero todavía no existe ejecución automática en esta fase.
+                      </p>
+                      {!hasPlan && (
+                        <button
+                          data-testid="generate-plan-btn"
+                          onClick={() => handleGeneratePlan(action.action_id)}
+                          disabled={isGenPlan}
+                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors disabled:opacity-40"
+                        >
+                          {isGenPlan ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}
+                          {isGenPlan ? 'Generando plan…' : 'Generar plan'}
+                        </button>
+                      )}
+                      {hasPlan && (
+                        <PlanCard
+                          plan={existingPlan}
+                          onCancel={planId => handleCancelPlan(planId, action.action_id)}
+                          isCancelling={planCancelId === existingPlan.plan_id}
+                        />
+                      )}
+                    </div>
                   )}
 
                   {/* Blocked state notice */}

@@ -1003,6 +1003,23 @@ export const rejectAction = async (actionId, reason = null) => {
   return response.data;
 };
 
+export const generateActionPlan = async (actionId, force = false) => {
+  const response = await api.post(`/admin/actions/${actionId}/plans/generate`, null, {
+    params: { force },
+  });
+  return response.data;
+};
+
+export const getActionPlans = async (actionId) => {
+  const response = await api.get(`/admin/actions/${actionId}/plans`);
+  return response.data;
+};
+
+export const cancelPlan = async (planId) => {
+  const response = await api.post(`/admin/plans/${planId}/cancel`);
+  return response.data;
+};
+
 export const getAdminDeployEvents = async (params = {}) => {
   const response = await api.get('/admin/deploy-events', { params });
   return response.data;

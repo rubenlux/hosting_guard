@@ -2779,6 +2779,91 @@ def reject_incident_action(
         release_connection(conn)
 
 
+# ── Phase 3B: Execution Plans ─────────────────────────────────────────────────
+
+@router.get("/actions/{action_id}/plans")
+def get_action_plans(
+    action_id: int,
+    _: dict = Depends(require_role("admin")),
+):
+    """Return all execution plans for a given action recommendation."""
+    from app.infra.db import get_connection, release_connection
+    from app.services.ai.execution_planner import get_execution_plans_for_action
+
+    conn = get_connection()
+    try:
+        return {"items": get_execution_plans_for_action(conn, action_id)}
+    finally:
+        release_connection(conn)
+
+
+@router.post("/actions/{action_id}/plans/generate")
+def generate_action_plan(
+    action_id: int,
+    force: bool = False,
+    admin: dict = Depends(require_role("admin")),
+):
+    """
+    Generate an execution plan for an approved action recommendation.
+    execution_allowed is ALWAYS false — this creates a plan for review only.
+    """
+    from app.infra.db import get_connection, release_connection
+    from app.services.ai.execution_planner import create_execution_plan
+
+    conn = get_connection()
+    try:
+        result = create_execution_plan(
+            conn, action_id=action_id, force=force,
+            actor=admin.get("email") or str(admin.get("user_id", "admin")),
+        )
+        return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        release_connection(conn)
+
+
+@router.get("/incidents/{incident_id}/plans")
+def get_incident_plans(
+    incident_id: int,
+    _: dict = Depends(require_role("admin")),
+):
+    """Return all execution plans for a given incident."""
+    from app.infra.db import get_connection, release_connection
+    from app.services.ai.execution_planner import get_execution_plans_for_incident
+
+    conn = get_connection()
+    try:
+        return {"items": get_execution_plans_for_incident(conn, incident_id)}
+    finally:
+        release_connection(conn)
+
+
+@router.post("/plans/{plan_id}/cancel")
+def cancel_plan(
+    plan_id: int,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Cancel an execution plan. Does not execute anything."""
+    from app.infra.db import get_connection, release_connection
+    from app.services.ai.execution_planner import cancel_execution_plan
+
+    conn = get_connection()
+    try:
+        result = cancel_execution_plan(conn, plan_id=plan_id, actor_user_id=admin["user_id"])
+        return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        release_connection(conn)
+
+
 @router.get("/deploy-events")
 def list_admin_deploy_events(
     user_id:  Optional[int] = None,
