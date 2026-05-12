@@ -423,7 +423,7 @@ function PlanCard({ plan, onCancel, isCancelling }) {
 
             {/* execution_allowed is ALWAYS false — never show Ejecutar */}
             <div className="flex items-center gap-2 pt-0.5">
-              {plan.status !== 'cancelled' && (
+              {!['cancelled', 'superseded'].includes(plan.status) && (
                 <button
                   data-testid="cancel-plan-btn"
                   onClick={() => onCancel(plan.plan_id)}
@@ -490,6 +490,27 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
   const [plansMap, setPlansMap]       = useState({});   // action_id → plan | null
   const [planGenId, setPlanGenId]     = useState(null); // action_id currently generating plan
   const [planCancelId, setPlanCancelId] = useState(null); // plan_id being cancelled
+  const [showHistorical, setShowHistorical] = useState(false);
+
+  const INACTIVE_PLAN_STATUSES = ['cancelled', 'superseded'];
+
+  const { currentActions, historicalActions } = useMemo(() => {
+    const sorted = [...actions].sort(
+      (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
+    );
+    const seen = new Set();
+    const current = [];
+    const historical = [];
+    sorted.forEach(a => {
+      if (!seen.has(a.action_type)) {
+        seen.add(a.action_type);
+        current.push(a);
+      } else {
+        historical.push(a);
+      }
+    });
+    return { currentActions: current, historicalActions: historical };
+  }, [actions]);
 
   const load = useCallback(async () => {
     setStatus('loading');
@@ -509,7 +530,7 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
         );
         const map = {};
         results.forEach(({ id, plans }) => {
-          const active = plans.find(p => p.status !== 'cancelled');
+          const active = (plans || []).find(p => !INACTIVE_PLAN_STATUSES.includes(p.status));
           map[id] = active || null;
         });
         setPlansMap(map);
@@ -559,11 +580,14 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
     }
   }
 
-  async function handleGeneratePlan(actionId) {
+  async function handleGeneratePlan(actionId, force = false) {
     setPlanGenId(actionId);
     try {
-      const result = await generateActionPlan(actionId);
-      setPlansMap(prev => ({ ...prev, [actionId]: result.plan || null }));
+      await generateActionPlan(actionId, force);
+      const fresh = await getActionPlans(actionId);
+      const freshPlans = fresh.items || [];
+      const active = freshPlans.find(p => !INACTIVE_PLAN_STATUSES.includes(p.status));
+      setPlansMap(prev => ({ ...prev, [actionId]: active || null }));
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al generar plan');
     } finally {
@@ -575,10 +599,10 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
     setPlanCancelId(planId);
     try {
       await cancelPlan(planId);
-      setPlansMap(prev => ({
-        ...prev,
-        [actionId]: prev[actionId] ? { ...prev[actionId], status: 'cancelled' } : null,
-      }));
+      const fresh = await getActionPlans(actionId);
+      const freshPlans = fresh.items || [];
+      const active = freshPlans.find(p => !INACTIVE_PLAN_STATUSES.includes(p.status));
+      setPlansMap(prev => ({ ...prev, [actionId]: active || null }));
     } catch (e) {
       setError(e?.response?.data?.detail || 'Error al cancelar plan');
     } finally {
@@ -670,7 +694,7 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
 
         {actions.length > 0 && (
           <div className="space-y-2">
-            {actions.map(action => {
+            {currentActions.map(action => {
               const riskClass   = RISK_CLASS[action.risk_level] || RISK_CLASS.medium;
               const riskLabel   = RISK_LABEL[action.risk_level]  || action.risk_level;
               const riskTip     = RISK_TOOLTIP[action.risk_level] || '';
@@ -685,7 +709,7 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
               const canReject      = action.can_reject  ?? isPending;
               const existingPlan   = plansMap[action.action_id];
               const isGenPlan      = planGenId === action.action_id;
-              const hasPlan        = isApproved && existingPlan && existingPlan.status !== 'cancelled';
+              const hasPlan        = !!(isApproved && existingPlan && !INACTIVE_PLAN_STATUSES.includes(existingPlan.status));
 
               return (
                 <div
@@ -749,17 +773,15 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
                       <p className="text-[10px] text-emerald-600" data-testid="approved-notice">
                         Esta recomendación fue aprobada, pero todavía no existe ejecución automática en esta fase.
                       </p>
-                      {!hasPlan && (
-                        <button
-                          data-testid="generate-plan-btn"
-                          onClick={() => handleGeneratePlan(action.action_id)}
-                          disabled={isGenPlan}
-                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors disabled:opacity-40"
-                        >
-                          {isGenPlan ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}
-                          {isGenPlan ? 'Generando plan…' : 'Generar plan'}
-                        </button>
-                      )}
+                      <button
+                        data-testid="generate-plan-btn"
+                        onClick={() => handleGeneratePlan(action.action_id, hasPlan)}
+                        disabled={isGenPlan}
+                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors disabled:opacity-40"
+                      >
+                        {isGenPlan ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}
+                        {isGenPlan ? 'Generando plan…' : hasPlan ? 'Regenerar plan' : 'Generar plan'}
+                      </button>
                       {hasPlan && (
                         <PlanCard
                           plan={existingPlan}
@@ -830,6 +852,33 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
                 </div>
               );
             })}
+            {historicalActions.length > 0 && (
+              <div className="mt-1">
+                <button
+                  data-testid="historical-toggle"
+                  onClick={() => setShowHistorical(v => !v)}
+                  className="flex items-center gap-1 text-[10px] text-gray-600 hover:text-gray-400 transition-colors"
+                >
+                  <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${showHistorical ? '' : '-rotate-90'}`} />
+                  Versiones anteriores ({historicalActions.length})
+                </button>
+                {showHistorical && (
+                  <div className="mt-1.5 space-y-1 opacity-50">
+                    {historicalActions.map(a => (
+                      <div
+                        key={a.action_id}
+                        className="border border-white/5 rounded px-2 py-1.5 bg-black/10 flex items-start justify-between gap-2"
+                      >
+                        <span className="text-[10px] text-gray-600 leading-snug">{a.title}</span>
+                        <span className={`text-[10px] shrink-0 ${STATUS_CLASS[a.status] || 'text-gray-600'}`}>
+                          {STATUS_LABEL[a.status] || a.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

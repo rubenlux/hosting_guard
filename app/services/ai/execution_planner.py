@@ -448,9 +448,15 @@ def _plan_idempotency_hash(
     diagnosis_id: Optional[int],
     action_type: str,
     action_context_hash: str,
+    incident_type: str = "",
     planner_version: str = PLANNER_VERSION,
 ) -> str:
-    key = f"{action_id}:{incident_id}:{diagnosis_id}:{action_type}:{action_context_hash}:{planner_version}"
+    # incident_type is included so switching from generic → specific template
+    # produces a different hash and triggers automatic supersede + re-create.
+    key = (
+        f"{action_id}:{incident_id}:{diagnosis_id}:{action_type}:"
+        f"{action_context_hash}:{incident_type}:{planner_version}"
+    )
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
@@ -474,7 +480,12 @@ def _fetch_action(conn, action_id: int) -> Optional[dict]:
 def _existing_plan_hash(conn, action_id: int) -> Optional[str]:
     cur = conn.cursor()
     cur.execute(
-        "SELECT context_hash FROM execution_plans WHERE action_id = %s AND status != 'cancelled' LIMIT 1",
+        """
+        SELECT context_hash FROM execution_plans
+         WHERE action_id = %s
+           AND status NOT IN ('cancelled', 'superseded')
+         LIMIT 1
+        """,
         (action_id,),
     )
     row = cur.fetchone()
@@ -612,32 +623,41 @@ def create_execution_plan(
         diagnosis_id=action.get("diagnosis_id"),
         action_type=action["action_type"],
         action_context_hash=action.get("context_hash") or "",
+        incident_type=action.get("incident_type") or "",
     )
 
     existing_hash = _existing_plan_hash(conn, action_id)
 
     if existing_hash == plan_hash and not force:
-        # Exact match — return the existing plan
+        # Exact hash match, no force → idempotent return of existing plan
         cur = conn.cursor()
         cur.execute(
-            "SELECT * FROM execution_plans WHERE action_id = %s AND context_hash = %s AND status != 'cancelled' LIMIT 1",
+            """
+            SELECT * FROM execution_plans
+             WHERE action_id = %s AND context_hash = %s
+               AND status NOT IN ('cancelled', 'superseded')
+             LIMIT 1
+            """,
             (action_id, plan_hash),
         )
         row = cur.fetchone()
         if row:
             return {"created": False, "plan": dict(row)}
 
-    if existing_hash and force:
-        # Cancel stale plan before creating a new one
+    # End any active plan before creating a new one.
+    # Hash mismatch (template upgrade) → superseded automatically.
+    # Explicit force=True → cancelled by user.
+    if existing_hash:
         cur = conn.cursor()
         now = datetime.now(timezone.utc)
+        end_status = "cancelled" if force else "superseded"
         cur.execute(
             """
             UPDATE execution_plans
-               SET status = 'cancelled', updated_at = %s
-             WHERE action_id = %s AND status NOT IN ('cancelled')
+               SET status = %s, updated_at = %s
+             WHERE action_id = %s AND status NOT IN ('cancelled', 'superseded')
             """,
-            (now, action_id),
+            (end_status, now, action_id),
         )
 
     plan = _insert_plan(conn, action=action, template=template, safety=safety,
