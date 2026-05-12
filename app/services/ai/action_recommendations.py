@@ -27,32 +27,37 @@ from app.services.ai.action_safety_classifier import classify_action
 
 logger = logging.getLogger(__name__)
 
+# Bump this string whenever rule copy or action_type mapping changes.
+# Including it in the idempotency hash causes existing pending rows to be
+# superseded and new rows (with updated copy) to be created automatically.
+RULES_VERSION = "actions_v2"
+
 # ── Owner / responsibility map ─────────────────────────────────────────────────
 # Communicates who must act. Never implies HostingGuard will act automatically.
 
 _OWNER_MAP: dict[str, str] = {
-    "customer_fix":                  "cliente",
-    "dependency_fix":                "cliente",
-    "branch_correction":             "cliente",
-    "manual_check":                  "admin",
-    "admin_review":                  "admin",
-    "monitor":                       "admin",
-    "site_recovery_monitor":         "admin",
-    "security_review":               "seguridad",
-    "enable_protection_mode_monitor":"admin",
-    "enable_protection_mode_protect":"admin",
-    "block_ip_candidate":            "seguridad",
-    "redeploy_candidate":            "admin",
-    "restart_container_suggestion":  "admin",
-    "notify_customer":               "admin",
-    "check_credentials":             "cliente",
-    "escalate_to_admin":             "admin",
+    "customer_fix":                   "cliente",
+    "dependency_fix":                 "cliente",
+    "branch_correction":              "cliente",
+    "manual_check":                   "admin",
+    "admin_review":                   "admin",
+    "monitor":                        "admin",
+    "site_recovery_monitor":          "admin",
+    "security_review":                "seguridad",
+    "enable_protection_mode_monitor": "admin",
+    "enable_protection_mode_protect": "admin",
+    "block_ip_candidate":             "seguridad",
+    "redeploy_candidate":             "admin",
+    "restart_container_suggestion":   "admin",
+    "notify_customer":                "admin",
+    "check_credentials":              "cliente",
+    "escalate_to_admin":              "admin",
 }
 
 _OWNER_LABEL: dict[str, str] = {
-    "cliente":    "Cliente",
-    "admin":      "Admin",
-    "seguridad":  "Seguridad / Admin",
+    "cliente":   "Cliente",
+    "admin":     "Admin",
+    "seguridad": "Seguridad / Admin",
 }
 
 
@@ -277,9 +282,52 @@ _DEFAULT_RULE: list[dict] = [
 ]
 
 
-def _idempotency_hash(incident_id: int, diagnosis_id: int, action_type: str, context_hash: str) -> str:
-    key = f"{incident_id}:{diagnosis_id}:{action_type}:{context_hash}"
+def _idempotency_hash(
+    incident_id: int,
+    diagnosis_id: int,
+    action_type: str,
+    context_hash: str,
+    rules_version: str = RULES_VERSION,
+) -> str:
+    key = f"{incident_id}:{diagnosis_id}:{action_type}:{context_hash}:{rules_version}"
     return hashlib.sha256(key.encode()).hexdigest()[:32]
+
+
+def _supersede_stale_pending(
+    conn, incident_id: int, action_type: str, new_hash: str
+) -> int:
+    """
+    Mark pending_approval rows with a different context_hash as superseded.
+    Approved and rejected rows are never touched.
+    Returns the number of rows updated.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE action_recommendations
+           SET status = 'superseded', updated_at = %s
+         WHERE incident_id = %s
+           AND action_type = %s
+           AND status = 'pending_approval'
+           AND context_hash != %s
+        """,
+        (datetime.now(timezone.utc), incident_id, action_type, new_hash),
+    )
+    return cur.rowcount
+
+
+def _has_approved(conn, incident_id: int, action_type: str) -> bool:
+    """True if any approved row exists for this incident+action_type."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT 1 FROM action_recommendations
+         WHERE incident_id = %s AND action_type = %s AND status = 'approved'
+         LIMIT 1
+        """,
+        (incident_id, action_type),
+    )
+    return cur.fetchone() is not None
 
 
 def _fetch_diagnosable_incidents(conn, limit: int) -> list[dict]:
@@ -336,14 +384,14 @@ def _insert_recommendation(conn, *, incident: dict, action: dict, safety: dict, 
              recommendation_source, confidence, reason,
              expected_impact, rollback_notes, safety_notes,
              risk_level, requires_approval, status,
-             payload, context_hash, created_at, updated_at)
+             payload, context_hash, rules_version, created_at, updated_at)
         VALUES
             (%s, %s, %s, %s, %s,
              %s, %s,
              'rule_based', %s, %s,
              %s, %s, %s,
              %s, %s, 'pending_approval',
-             '{}'::jsonb, %s, %s, %s)
+             '{}'::jsonb, %s, %s, %s, %s)
         """,
         (
             incident["incident_id"],
@@ -361,6 +409,7 @@ def _insert_recommendation(conn, *, incident: dict, action: dict, safety: dict, 
             safety["risk_level"],
             True,
             idem_hash,
+            RULES_VERSION,
             now, now,
         ),
     )
@@ -375,11 +424,90 @@ def _enrich(row: dict) -> dict:
         **row,
         "owner": owner,
         "owner_label": _OWNER_LABEL.get(owner, owner.capitalize()),
-        "can_approve": status == "pending_approval",
-        "can_reject":  status in ("pending_approval", "approved"),
-        "can_execute": False,   # ALWAYS false in Phase 3A
+        "can_approve":      status == "pending_approval",
+        "can_reject":       status in ("pending_approval", "approved"),
+        "can_execute":      False,   # ALWAYS false in Phase 3A
         "execution_allowed": False,
     }
+
+
+def _run_generation_loop(conn, incidents: list[dict], force: bool) -> dict:
+    """
+    Shared generation loop used by both generate_action_recommendations and
+    generate_for_incident.
+    Returns {created, skipped, blocked, failed}.
+    """
+    stats = {"created": 0, "skipped": 0, "blocked": 0, "failed": 0}
+
+    for incident in incidents:
+        incident_type = incident.get("incident_type") or ""
+        actions = _RULES.get(incident_type, _DEFAULT_RULE)
+        existing_hashes = _existing_rec_hashes(conn, incident["incident_id"])
+        context_hash = incident.get("context_hash") or ""
+
+        for action in actions:
+            action_type = action["action_type"]
+            safety = classify_action(action_type)
+
+            if safety["blocked_by_policy"]:
+                stats["blocked"] += 1
+                logger.info(
+                    "action blocked by policy: incident=%s action=%s",
+                    incident["incident_id"], action_type,
+                )
+                continue
+
+            idem_hash = _idempotency_hash(
+                incident["incident_id"],
+                incident["diagnosis_id"],
+                action_type,
+                context_hash,
+            )
+
+            # Exact hash already exists → this version's copy was already generated.
+            if not force and idem_hash in existing_hashes:
+                stats["skipped"] += 1
+                continue
+
+            try:
+                # Supersede any stale pending rows (different hash, same incident+action_type).
+                # Approved and rejected rows are not touched.
+                superseded = _supersede_stale_pending(
+                    conn, incident["incident_id"], action_type, idem_hash
+                )
+
+                # If an approved row exists (from any version), preserve the admin's
+                # decision and skip creating a new row — unless force=True.
+                if not force and _has_approved(conn, incident["incident_id"], action_type):
+                    conn.commit()  # commit supersede cleanup
+                    stats["skipped"] += 1
+                    continue
+
+                _insert_recommendation(
+                    conn, incident=incident, action=action,
+                    safety=safety, idem_hash=idem_hash,
+                )
+                conn.commit()  # commits supersede + insert atomically
+                stats["created"] += 1
+                if superseded:
+                    logger.info(
+                        "superseded %d stale pending → new rec: incident=%s action=%s",
+                        superseded, incident["incident_id"], action_type,
+                    )
+                else:
+                    logger.info(
+                        "created recommendation: incident=%s action=%s risk=%s",
+                        incident["incident_id"], action_type, safety["risk_level"],
+                    )
+            except Exception as exc:
+                conn.rollback()
+                stats["failed"] += 1
+                logger.warning(
+                    "failed to create recommendation: incident=%s action=%s err=%s",
+                    incident["incident_id"], action_type, exc,
+                )
+
+    return stats
 
 
 def generate_action_recommendations(conn=None, limit: int = 10, force: bool = False) -> dict:
@@ -387,6 +515,10 @@ def generate_action_recommendations(conn=None, limit: int = 10, force: bool = Fa
     Generate rule-based action recommendations for open incidents with an
     active ai_diagnosis. Idempotent: skips incident+action_type combos whose
     idem_hash already exists in action_recommendations.
+
+    When RULES_VERSION changes, existing pending rows are superseded and new
+    rows with updated copy are created. Approved rows are never overwritten
+    unless force=True.
 
     Returns {processed, created, skipped, blocked, failed}.
     """
@@ -401,52 +533,9 @@ def generate_action_recommendations(conn=None, limit: int = 10, force: bool = Fa
     try:
         incidents = _fetch_diagnosable_incidents(conn, limit)
         stats["processed"] = len(incidents)
-
-        for incident in incidents:
-            incident_type = incident.get("incident_type") or ""
-            actions = _RULES.get(incident_type, _DEFAULT_RULE)
-            existing_hashes = _existing_rec_hashes(conn, incident["incident_id"])
-            context_hash = incident.get("context_hash") or ""
-
-            for action in actions:
-                action_type = action["action_type"]
-                safety = classify_action(action_type)
-
-                if safety["blocked_by_policy"]:
-                    stats["blocked"] += 1
-                    logger.info(
-                        "action blocked by policy: incident=%s action=%s",
-                        incident["incident_id"], action_type,
-                    )
-                    continue
-
-                idem_hash = _idempotency_hash(
-                    incident["incident_id"],
-                    incident["diagnosis_id"],
-                    action_type,
-                    context_hash,
-                )
-
-                if not force and idem_hash in existing_hashes:
-                    stats["skipped"] += 1
-                    continue
-
-                try:
-                    _insert_recommendation(conn, incident=incident, action=action, safety=safety, idem_hash=idem_hash)
-                    conn.commit()
-                    stats["created"] += 1
-                    logger.info(
-                        "created recommendation: incident=%s action=%s risk=%s",
-                        incident["incident_id"], action_type, safety["risk_level"],
-                    )
-                except Exception as exc:
-                    conn.rollback()
-                    stats["failed"] += 1
-                    logger.warning(
-                        "failed to create recommendation: incident=%s action=%s err=%s",
-                        incident["incident_id"], action_type, exc,
-                    )
-
+        loop_stats = _run_generation_loop(conn, incidents, force)
+        for k in ("created", "skipped", "blocked", "failed"):
+            stats[k] += loop_stats[k]
     except Exception as exc:
         logger.error("generate_action_recommendations error: %s", exc)
         stats["failed"] += 1
@@ -490,44 +579,7 @@ def generate_for_incident(conn, incident_id: int, force: bool = False) -> dict:
         logger.warning("generate_for_incident: no active diagnosis for incident %s", incident_id)
         return stats
 
-    incident = rows[0]
-    incident_type = incident.get("incident_type") or ""
-    actions = _RULES.get(incident_type, _DEFAULT_RULE)
-    existing_hashes = _existing_rec_hashes(conn, incident_id)
-    context_hash = incident.get("context_hash") or ""
-
-    for action in actions:
-        action_type = action["action_type"]
-        safety = classify_action(action_type)
-
-        if safety["blocked_by_policy"]:
-            stats["blocked"] += 1
-            continue
-
-        idem_hash = _idempotency_hash(
-            incident["incident_id"],
-            incident["diagnosis_id"],
-            action_type,
-            context_hash,
-        )
-
-        if not force and idem_hash in existing_hashes:
-            stats["skipped"] += 1
-            continue
-
-        try:
-            _insert_recommendation(conn, incident=incident, action=action, safety=safety, idem_hash=idem_hash)
-            conn.commit()
-            stats["created"] += 1
-        except Exception as exc:
-            conn.rollback()
-            stats["failed"] += 1
-            logger.warning(
-                "generate_for_incident insert failed: incident=%s action=%s err=%s",
-                incident_id, action_type, exc,
-            )
-
-    return stats
+    return _run_generation_loop(conn, rows, force)
 
 
 def get_actions_for_incident(conn, incident_id: int) -> list[dict]:
@@ -537,7 +589,7 @@ def get_actions_for_incident(conn, incident_id: int) -> list[dict]:
         SELECT action_id, incident_id, diagnosis_id, action_type, title, description,
                source_type, incident_type, recommendation_source, confidence, reason,
                expected_impact, rollback_notes, safety_notes,
-               risk_level, requires_approval, status,
+               risk_level, requires_approval, status, rules_version,
                approved_by, approved_at, executed_at, payload, context_hash,
                created_at, updated_at
           FROM action_recommendations
@@ -613,9 +665,7 @@ def reject_action(conn, action_id: int, admin_user_id: int, reason: Optional[str
     cur = conn.cursor()
     now = datetime.now(timezone.utc)
     cur.execute(
-        """
-        SELECT status FROM action_recommendations WHERE action_id = %s
-        """,
+        "SELECT status FROM action_recommendations WHERE action_id = %s",
         (action_id,),
     )
     prev_row = cur.fetchone()

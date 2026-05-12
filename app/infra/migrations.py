@@ -972,6 +972,8 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_action_recs_diagnosis ON action_recommendations(diagnosis_id) WHERE diagnosis_id IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_action_recs_risk ON action_recommendations(risk_level, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_action_recs_hash ON action_recommendations(context_hash) WHERE context_hash IS NOT NULL",
+    # ── Phase 3A.2: rules versioning ─────────────────────────────────────────
+    "ALTER TABLE action_recommendations ADD COLUMN IF NOT EXISTS rules_version TEXT",
 ]
 
 def ensure_monthly_partitions(cursor):
