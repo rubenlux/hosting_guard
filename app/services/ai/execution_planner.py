@@ -369,6 +369,76 @@ _DEFAULT_TEMPLATE: dict = {
     "safety_notes": "Acción manual. Verificar el impacto antes de proceder.",
 }
 
+# ── Specific templates keyed by (action_type, incident_type) ──────────────────
+# These override the generic _TEMPLATES entry and set status='ready_for_review'
+# because the content is complete and actionable without further review.
+# Generic fallbacks (_TEMPLATES) use status='draft'.
+
+_SPECIFIC_TEMPLATES: dict[tuple[str, str], dict] = {
+    ("customer_fix", "github_private_repo_unauthorized"): {
+        "plan_type": "github_access_review",
+        "title": "Plan para verificar acceso al repositorio GitHub",
+        "summary": (
+            "El deploy no pudo clonar el repositorio. El plan guía al admin/cliente para "
+            "verificar URL, existencia, visibilidad y permisos de lectura."
+        ),
+        "prechecks": [
+            {"order": 1, "description": "Confirmar que la URL del repositorio esté bien escrita"},
+            {"order": 2, "description": "Confirmar que el repositorio existe en GitHub"},
+            {"order": 3, "description": "Confirmar si el repositorio es público o privado"},
+            {"order": 4, "description": "Confirmar si el usuario conectó credenciales o token con permisos de lectura"},
+            {"order": 5, "description": "Confirmar que el incidente sigue abierto antes de reintentar el deploy"},
+        ],
+        "steps": [
+            {"order": 1, "description": "Solicitar al cliente verificar la URL del repositorio"},
+            {"order": 2, "description": "Si el repositorio no existe, pedir la URL correcta"},
+            {"order": 3, "description": "Si el repositorio es privado, solicitar permisos de lectura o conexión GitHub válida"},
+            {"order": 4, "description": "Confirmar que HostingGuard puede acceder al repositorio"},
+            {"order": 5, "description": "Reintentar el deploy después de corregir el acceso"},
+        ],
+        "rollback_steps": [
+            {"order": 1, "description": "No aplica rollback porque HostingGuard no modifica infraestructura ni repositorios en esta fase"},
+            {"order": 2, "description": "Si el cliente cambia permisos incorrectamente, revertir la visibilidad o token desde GitHub"},
+        ],
+        "expected_impact": "Una vez corregido el acceso, HostingGuard podrá intentar clonar el repositorio nuevamente.",
+        "safety_notes": (
+            "Este plan no ejecuta comandos, no modifica infraestructura y no cambia permisos automáticamente. "
+            "Es una guía para revisión humana."
+        ),
+    },
+    ("dependency_fix", "node_sass_incompatible"): {
+        "plan_type": "node_sass_migration",
+        "title": "Plan para migrar node-sass a sass",
+        "summary": (
+            "El proyecto usa node-sass, incompatible con versiones modernas de Node. "
+            "El plan guía al cliente para reemplazarlo por el paquete 'sass' en su repositorio."
+        ),
+        "prechecks": [
+            {"order": 1, "description": "Confirmar que el error de build menciona node-sass explícitamente"},
+            {"order": 2, "description": "Verificar la versión de Node en uso (node-sass no es compatible con Node 17+)"},
+            {"order": 3, "description": "Confirmar que el cliente tiene acceso al repositorio para hacer el cambio"},
+            {"order": 4, "description": "Revisar si el proyecto usa yarn o npm para saber qué comando usar"},
+        ],
+        "steps": [
+            {"order": 1, "description": "Notificar al cliente que debe reemplazar node-sass por sass en package.json"},
+            {"order": 2, "description": "El cliente abre package.json y reemplaza 'node-sass' por 'sass' en dependencies/devDependencies"},
+            {"order": 3, "description": "El cliente ejecuta npm install (o yarn install) en el repositorio"},
+            {"order": 4, "description": "El cliente verifica que el build local compile sin errores"},
+            {"order": 5, "description": "El cliente hace commit y push del package.json y lockfile actualizados"},
+            {"order": 6, "description": "Reintentar el deploy para confirmar que el build se completa correctamente"},
+        ],
+        "rollback_steps": [
+            {"order": 1, "description": "Si el build falla con sass, revisar si hay importaciones que usan sintaxis node-sass específica y actualizarlas"},
+            {"order": 2, "description": "Revertir a la rama anterior del repositorio si el cambio genera más errores"},
+        ],
+        "expected_impact": "El build debería completarse sin errores de dependencias una vez reemplazado node-sass por sass.",
+        "safety_notes": (
+            "HostingGuard no modifica el repositorio ni ejecuta npm install. "
+            "El cliente realiza todos los cambios en su entorno."
+        ),
+    },
+}
+
 
 # ── Idempotency ────────────────────────────────────────────────────────────────
 
@@ -391,7 +461,7 @@ def _fetch_action(conn, action_id: int) -> Optional[dict]:
     cur.execute(
         """
         SELECT action_id, incident_id, diagnosis_id, action_type, status,
-               context_hash, risk_level, title AS action_title
+               context_hash, risk_level, incident_type, title AS action_title
           FROM action_recommendations
          WHERE action_id = %s
         """,
@@ -411,7 +481,11 @@ def _existing_plan_hash(conn, action_id: int) -> Optional[str]:
     return dict(row)["context_hash"] if row else None
 
 
-def _insert_plan(conn, *, action: dict, template: dict, safety: dict, plan_hash: str, actor: str) -> dict:
+def _insert_plan(
+    conn, *, action: dict, template: dict, safety: dict,
+    plan_hash: str, actor: str,
+    plan_type: str, status: str,
+) -> dict:
     cur = conn.cursor()
     now = datetime.now(timezone.utc)
     import json
@@ -427,7 +501,7 @@ def _insert_plan(conn, *, action: dict, template: dict, safety: dict, plan_hash:
              blocked_reason, planner_version, context_hash,
              created_by, created_at, updated_at)
         VALUES
-            (%s, %s, %s, %s, 'draft',
+            (%s, %s, %s, %s, %s,
              %s, FALSE, TRUE,
              %s, %s,
              %s::jsonb, %s::jsonb, %s::jsonb,
@@ -444,7 +518,8 @@ def _insert_plan(conn, *, action: dict, template: dict, safety: dict, plan_hash:
             action["action_id"],
             action["incident_id"],
             action.get("diagnosis_id"),
-            action["action_type"],
+            plan_type,
+            status,
             safety["risk_level"],
             template["title"],
             template["summary"],
@@ -519,7 +594,17 @@ def create_execution_plan(
     if safety["blocked"]:
         raise ValueError(safety["blocked_reason"])
 
-    template = _TEMPLATES.get(action["action_type"], _DEFAULT_TEMPLATE)
+    # Prefer specific (action_type, incident_type) template; fall back to generic.
+    specific_key = (action["action_type"], action.get("incident_type") or "")
+    specific = _SPECIFIC_TEMPLATES.get(specific_key)
+    if specific:
+        template    = specific
+        plan_type   = specific["plan_type"]
+        plan_status = "ready_for_review"
+    else:
+        template    = _TEMPLATES.get(action["action_type"], _DEFAULT_TEMPLATE)
+        plan_type   = action["action_type"]
+        plan_status = "draft"
 
     plan_hash = _plan_idempotency_hash(
         action_id=action["action_id"],
@@ -556,7 +641,8 @@ def create_execution_plan(
         )
 
     plan = _insert_plan(conn, action=action, template=template, safety=safety,
-                        plan_hash=plan_hash, actor=actor)
+                        plan_hash=plan_hash, actor=actor,
+                        plan_type=plan_type, status=plan_status)
     conn.commit()
 
     _log_plan_audit(
