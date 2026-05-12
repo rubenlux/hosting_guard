@@ -16,16 +16,24 @@ Flags:
     --force       Re-create even containers that already have the middleware
                   label (use to recover containers that lost bind mounts).
 
-Safety checklist (enforced automatically):
-    1. Reads full container config via `docker inspect` before any change.
-    2. Backs up inspect JSON to /tmp/container-backups/<name>-<ts>.json.
-    3. Pre-validates bind mounts: if any Bind maps to an nginx html dir,
-       the index.html must exist on the host or the container is skipped.
-    4. Merges the middleware label — never clobbers existing middleware values.
-    5. Skips non-tenant containers (api.*, hosting_guard, traefik, redis, …).
-    6. Post-validates after re-create: fetches / and checks for nginx default
-       page regression. Marks container failed if regression detected.
-    7. Dry-run prints full mount list, middleware before/after, validation.
+Safety checklist (enforced before ANY destructive action):
+    1. For nginx containers, a safe html source MUST be identified before
+       docker stop/rm/run is called. Three strategies in order:
+         A) Existing bind to /usr/share/nginx/html whose index.html exists
+            on the host and is not the nginx default page.
+         B) Known host artifact at /opt/clients/<container>/dist or build
+            with a valid index.html.
+         C) docker cp /usr/share/nginx/html from the running container to
+            /opt/clients/<container>/recovered_html (live mode only).
+       If none succeed → ABORT, container is not modified.
+    2. Mounts=0 on an nginx container is never silently OK.
+    3. Dry-run shows "[ABORT]" for containers with no safe html source —
+       never shows a fake "[DRY-RUN] would run" command for them.
+    4. --force cannot bypass the html source safety check.
+    5. Backs up inspect JSON before any operation.
+    6. Merges the middleware label — never clobbers existing values.
+    7. Skips infrastructure containers (traefik, redis, hosting_guard, …).
+    8. Post-validates after re-create as a second line of defense.
 
 Requires:
     - Python 3.10+, docker CLI in PATH.
@@ -36,20 +44,25 @@ import argparse
 import datetime
 import json
 import os
-import re
 import subprocess
 import sys
 import time
 import urllib.request
 import urllib.error
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 MIDDLEWARE_LABEL_KEY   = "traefik.http.routers.{name}.middlewares"
 MIDDLEWARE_LABEL_VALUE = "hg-forwardauth"
+
+CLIENTS_BASE          = Path("/opt/clients")
+_HTML_SUBDIRS         = ("dist", "build")       # public excluded (CRA template)
+_NGINX_DEFAULT_MARKER = b"Welcome to nginx"
+_DOCKER_CP_SENTINEL   = "__docker_cp__"         # signal: need docker cp
+_SAFETY_ABORT         = "safety_abort"          # return sentinel for pre-validation failure
 
 # Containers that are part of HostingGuard infrastructure, never tenant sites.
 _INFRA_NAMES = frozenset({
@@ -59,16 +72,12 @@ _INFRA_NAMES = frozenset({
     "docker_socket_proxy",
 })
 
-# Prefixes that identify infrastructure containers by name pattern.
 _INFRA_PREFIXES = ("hg_", "docker_")
 
 BACKUP_DIR = Path("/tmp/container-backups")
 
-# Marker text served by an unconfigured nginx container.
-_NGINX_DEFAULT_MARKER = b"Welcome to nginx"
 
-
-# ── helpers ──────────────────────────────────────────────────────────────────
+# ── low-level helpers ────────────────────────────────────────────────────────
 
 def _run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, check=check)
@@ -124,64 +133,168 @@ def _has_middleware(labels: dict, name: str) -> bool:
     return MIDDLEWARE_LABEL_VALUE in _get_current_middlewares(labels, name)
 
 
-def _validate_binds(binds: list[str]) -> tuple[bool, str]:
-    """
-    Check that every nginx html bind mount has an index.html on the host.
+# ── html source detection ─────────────────────────────────────────────────────
 
-    Bind entries from docker inspect are in the form:
-        /host/path:/container/path[:options]
+def _is_nginx_content(path: Path) -> bool:
+    """Return True if the file looks like the nginx default welcome page."""
+    try:
+        return _NGINX_DEFAULT_MARKER in path.read_bytes()[:4096]
+    except OSError:
+        return False
+
+
+def _find_html_source_from_binds(binds: list[str]) -> tuple[Optional[str], str]:
+    """
+    Find an existing bind to /usr/share/nginx/html and validate its source.
+
+    Returns (host_path, "") if a valid bind is found.
+    Returns (None, err)      if a bind is found but invalid, or not found.
     """
     for bind in binds:
         parts = bind.split(":")
         if len(parts) < 2:
             continue
         host_path, container_path = parts[0], parts[1]
-        if "nginx/html" in container_path or "/usr/share/nginx/html" in container_path:
-            host_index = Path(host_path) / "index.html"
-            if not host_index.exists():
-                return False, (
-                    f"nginx html mount {host_path} → {container_path} "
-                    f"exists but {host_index} not found on host. "
-                    "Refusing to recreate — site would serve nginx default."
-                )
+        if "/usr/share/nginx/html" not in container_path and "nginx/html" not in container_path:
+            continue
+        idx = Path(host_path) / "index.html"
+        if not idx.exists():
+            return None, (
+                f"nginx html mount {host_path} → {container_path} "
+                f"has no index.html on host. Refusing to recreate — site would serve nginx default."
+            )
+        if _is_nginx_content(idx):
+            return None, (
+                f"nginx html mount {host_path} → {container_path} "
+                f"index.html contains nginx default page content."
+            )
+        return host_path, ""
+    return None, "no bind to /usr/share/nginx/html"
+
+
+def _validate_binds(binds: list[str]) -> tuple[bool, str]:
+    """
+    Backward-compat wrapper around _find_html_source_from_binds.
+    Only fails when a nginx/html bind IS present but invalid.
+    No nginx/html bind → passes (caller decides if that's safe).
+    """
+    src, err = _find_html_source_from_binds(binds)
+    if src is not None:
+        return True, ""
+    if err == "no bind to /usr/share/nginx/html":
+        return True, ""
+    return False, err
+
+
+def _find_html_source_from_host(container: str) -> tuple[Optional[str], str]:
+    """
+    Check for a known build artifact at /opt/clients/<container>/dist or build.
+    Returns (dir_path, "") if found and not nginx default.
+    """
+    for subdir in _HTML_SUBDIRS:
+        d   = CLIENTS_BASE / container / subdir
+        idx = d / "index.html"
+        if idx.exists() and not _is_nginx_content(idx):
+            return str(d), ""
+    return None, f"no valid artifact in {CLIENTS_BASE / container}/{{dist,build}}"
+
+
+def _docker_cp_html(container: str, dest: Path) -> tuple[bool, str]:
+    """
+    Copy /usr/share/nginx/html from a running container to dest on the host.
+    Must be called BEFORE docker stop/rm.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    r = _run(
+        ["docker", "cp", f"{container}:/usr/share/nginx/html/.", str(dest)],
+        check=False,
+    )
+    if r.returncode != 0:
+        return False, f"docker cp failed: {r.stderr.strip()}"
+    idx = dest / "index.html"
+    if not idx.exists():
+        return False, f"docker cp succeeded but {idx} not found"
+    if _is_nginx_content(idx):
+        return False, f"copied content at {idx} is nginx default page"
     return True, ""
 
 
-def _is_nginx_default(url: str, timeout: int = 5) -> bool:
-    """Return True if the URL responds with the nginx default welcome page."""
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
-            body = resp.read(4096)
-            return _NGINX_DEFAULT_MARKER in body
-    except Exception:
-        return False
+def _select_html_source(
+    container: str,
+    binds: list[str],
+    image: str,
+    dry_run: bool,
+) -> tuple[Optional[str], str]:
+    """
+    For nginx containers, determine the safe html source BEFORE any destructive
+    action. Three fallback strategies (A → B → C).
+
+    Returns:
+      ("", "")                   → not an nginx container, no check needed
+      (host_path, "")            → use as -v host_path:/usr/share/nginx/html:ro
+      (_DOCKER_CP_SENTINEL, "")  → need to docker cp from container (live mode only)
+      (None, err)                → cannot proceed safely → caller must ABORT
+    """
+    if "nginx" not in image.lower():
+        return "", ""
+
+    # A) existing valid bind
+    src, err = _find_html_source_from_binds(binds)
+    if src is not None:
+        return src, ""
+    bind_err = err
+
+    # B) known host artifact
+    src, err = _find_html_source_from_host(container)
+    if src is not None:
+        return src, ""
+    host_err = err
+
+    # C) docker cp — only possible in live mode (container still running)
+    if not dry_run:
+        return _DOCKER_CP_SENTINEL, ""
+
+    return None, (
+        f"bind check: {bind_err}; "
+        f"host artifact: {host_err}; "
+        f"docker cp: not available in dry-run mode"
+    )
 
 
-# ── container re-creation ────────────────────────────────────────────────────
+# ── container re-creation ─────────────────────────────────────────────────────
 
 def _build_docker_run_cmd(
     info: dict,
     container: str,
     name: str,
     merged_middleware: str,
+    html_source_override: Optional[str] = None,
 ) -> list[str]:
-    """Build the full `docker run` command to re-create the container."""
+    """
+    Build the full `docker run` command to re-create the container.
+
+    If html_source_override is set, any existing /usr/share/nginx/html bind is
+    replaced with the override, ensuring the correct content is served.
+    """
     cfg    = info.get("Config", {})
     hc_cfg = info.get("HostConfig", {})
 
     image   = cfg.get("Image", "")
     labels  = dict(cfg.get("Labels") or {})
     env     = cfg.get("Env") or []
-    binds   = hc_cfg.get("Binds") or []
+    binds   = list(hc_cfg.get("Binds") or [])
 
     networks = list((info.get("NetworkSettings", {}).get("Networks") or {}).keys())
     network  = networks[0] if networks else "deploy_hosting_network"
+    restart  = hc_cfg.get("RestartPolicy", {}).get("Name", "unless-stopped")
+    cpus     = str(hc_cfg.get("NanoCpus", 0) / 1e9) if hc_cfg.get("NanoCpus") else ""
+    memory   = str(hc_cfg.get("Memory", 0)) if hc_cfg.get("Memory") else ""
 
-    restart = hc_cfg.get("RestartPolicy", {}).get("Name", "unless-stopped")
-    cpus    = str(hc_cfg.get("NanoCpus", 0) / 1e9) if hc_cfg.get("NanoCpus") else ""
-    memory  = str(hc_cfg.get("Memory", 0)) if hc_cfg.get("Memory") else ""
+    # Inject html source: remove any existing nginx html bind, add the selected one.
+    if html_source_override:
+        binds = [b for b in binds if "/usr/share/nginx/html" not in b]
+        binds.append(f"{html_source_override}:/usr/share/nginx/html:ro")
 
-    # Merge the middleware label in place.
     mw_key = MIDDLEWARE_LABEL_KEY.format(name=name)
     labels[mw_key] = merged_middleware
 
@@ -193,8 +306,8 @@ def _build_docker_run_cmd(
     if memory and memory not in ("0",):
         cmd += ["--memory", memory]
 
-    for bind in binds:
-        cmd += ["-v", bind]
+    for b in binds:
+        cmd += ["-v", b]
 
     for k, v in labels.items():
         cmd += ["-l", f"{k}={v}"]
@@ -213,23 +326,51 @@ def _relabel_container(
     subdomain: str,
     dry_run: bool,
     force: bool = False,
-) -> bool:
+) -> Union[bool, str]:
     """
     Re-create the container with the forwardauth middleware label merged in.
 
-    Returns True on success (or dry-run), False on failure.
-    Skips (returns True) if middleware already present and --force not set.
+    Returns:
+      True           → success or skip (already labeled, no force)
+      False          → docker failure or post-validation failure
+      _SAFETY_ABORT  → aborted pre-validation; container was NOT modified
     """
     cfg    = info.get("Config", {})
     hc_cfg = info.get("HostConfig", {})
     labels = dict(cfg.get("Labels") or {})
     binds  = hc_cfg.get("Binds") or []
+    image  = cfg.get("Image", "")
 
     existing_mw = _get_current_middlewares(labels, name)
     merged_mw   = _merge_middleware(existing_mw, MIDDLEWARE_LABEL_VALUE)
     mw_key      = MIDDLEWARE_LABEL_KEY.format(name=name)
 
-    # ── dry-run ──────────────────────────────────────────────────────────────
+    # ── Pre-validation: determine html source BEFORE any destructive action ───
+    # This must happen first, even before dry-run output, so dry-run accurately
+    # reflects what would happen.
+    html_src, src_err = _select_html_source(container, binds, image, dry_run)
+
+    if html_src is None:
+        # No safe source found → ABORT regardless of --force
+        if dry_run:
+            print(f"  Mounts ({len(binds)}):")
+            for b in binds:
+                print(f"    {b}")
+            if not binds:
+                print("    (none)")
+            print(f"  [ABORT] no safe html source found.")
+            print(f"  [ABORT] {src_err}")
+            print(f"  [ABORT] No destructive action would be taken.")
+        else:
+            print(
+                f"  ABORTED — no html mount detected and no safe host artifact found. "
+                f"Container was not modified.",
+                file=sys.stderr,
+            )
+            print(f"  Detail: {src_err}", file=sys.stderr)
+        return _SAFETY_ABORT
+
+    # ── Dry-run output ────────────────────────────────────────────────────────
     if dry_run:
         print(f"  Mounts ({len(binds)}):")
         for b in binds:
@@ -239,36 +380,54 @@ def _relabel_container(
         print(f"  Middleware before: {existing_mw or '(none)'}")
         print(f"  Middleware after:  {merged_mw}")
 
-        valid, err = _validate_binds(binds)
-        if not valid:
-            print(f"  [DRY-RUN] WOULD SKIP — pre-validation failed: {err}")
-            return False
+        if html_src and html_src not in ("", _DOCKER_CP_SENTINEL):
+            print(f"  HTML source: {html_src} → /usr/share/nginx/html:ro")
+        elif html_src == _DOCKER_CP_SENTINEL:
+            print(f"  HTML source: (would docker cp from container before recreate)")
+
         if _has_middleware(labels, name) and not force:
             print(f"  [DRY-RUN] WOULD SKIP — already has forwardauth label")
             return True
 
-        cmd = _build_docker_run_cmd(info, container, name, merged_mw)
+        # Build preview command; for docker cp case, show the expected recovered path.
+        src_for_cmd = html_src if html_src not in ("", _DOCKER_CP_SENTINEL) else None
+        if html_src == _DOCKER_CP_SENTINEL:
+            src_for_cmd = str(CLIENTS_BASE / container / "recovered_html")
+        cmd = _build_docker_run_cmd(info, container, name, merged_mw, src_for_cmd)
         print(f"  [DRY-RUN] would run: {' '.join(cmd)}")
         return True
 
-    # ── skip if already labeled (unless --force) ─────────────────────────────
+    # ── Skip if already labeled (unless --force) ─────────────────────────────
     if _has_middleware(labels, name) and not force:
         print(f"  SKIP — already has forwardauth label.")
         return True
 
-    # ── pre-validate bind mounts ──────────────────────────────────────────────
-    valid, err = _validate_binds(binds)
-    if not valid:
-        print(f"  SKIP (safety) — pre-validation failed: {err}", file=sys.stderr)
-        return False
+    # ── Handle docker cp BEFORE stop/rm ──────────────────────────────────────
+    # html_src is either a real path (options A/B) or _DOCKER_CP_SENTINEL (option C).
+    # In all cases, final_html_src must be a real path by the time we call stop/rm.
+    final_html_src: Optional[str] = html_src if html_src != "" else None
 
-    # ── backup inspect JSON ───────────────────────────────────────────────────
+    if html_src == _DOCKER_CP_SENTINEL:
+        recovered = CLIENTS_BASE / container / "recovered_html"
+        print(f"  No bind mount found. Copying html from container before stop...")
+        ok, err = _docker_cp_html(container, recovered)
+        if not ok:
+            print(
+                f"  ABORTED — docker cp failed: {err}. Container was not modified.",
+                file=sys.stderr,
+            )
+            return _SAFETY_ABORT
+        final_html_src = str(recovered)
+        print(f"  Copied html to {recovered}")
+
+    # ── Backup ────────────────────────────────────────────────────────────────
     backup_path = _backup(container, info)
     print(f"  Backup saved: {backup_path}")
 
-    # ── build and run ─────────────────────────────────────────────────────────
-    cmd = _build_docker_run_cmd(info, container, name, merged_mw)
+    # ── Build command ─────────────────────────────────────────────────────────
+    cmd = _build_docker_run_cmd(info, container, name, merged_mw, final_html_src)
 
+    # ── Stop / rm / run ───────────────────────────────────────────────────────
     print(f"  Stopping {container}...")
     _run(["docker", "stop", container], check=False)
     print(f"  Removing {container}...")
@@ -280,13 +439,11 @@ def _relabel_container(
         print(f"  Inspect backup is at: {backup_path}", file=sys.stderr)
         return False
 
-    # ── post-validate: check for nginx default regression ────────────────────
+    # ── Post-validate (second line of defense) ────────────────────────────────
     time.sleep(2)
-    test_url = f"http://{container}/"
-    if _is_nginx_default(test_url):
+    if _is_nginx_default(f"http://{container}/"):
         print(
-            f"  [!] POST-VALIDATE FAILED — {test_url} shows nginx default page. "
-            f"Bind mounts may not have been applied correctly.",
+            f"  [!] POST-VALIDATE FAILED — http://{container}/ shows nginx default page.",
             file=sys.stderr,
         )
         return False
@@ -295,7 +452,17 @@ def _relabel_container(
     return True
 
 
-# ── database ─────────────────────────────────────────────────────────────────
+def _is_nginx_default(url: str, timeout: int = 5) -> bool:
+    """Return True if the URL responds with the nginx default welcome page."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            body = resp.read(4096)
+            return _NGINX_DEFAULT_MARKER in body
+    except Exception:
+        return False
+
+
+# ── database ──────────────────────────────────────────────────────────────────
 
 def _get_hostings() -> list[dict]:
     import psycopg2
@@ -313,7 +480,7 @@ def _get_hostings() -> list[dict]:
         conn.close()
 
 
-# ── main ─────────────────────────────────────────────────────────────────────
+# ── main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -338,7 +505,7 @@ def main() -> None:
         return
 
     print(f"Processing {len(hostings)} hosting(s) — dry_run={args.dry_run} force={args.force}\n")
-    skipped = done = failed = 0
+    done = skipped = failed = safety_aborted = 0
 
     for h in hostings:
         container = h["container_name"]
@@ -361,13 +528,15 @@ def main() -> None:
             skipped += 1
             continue
 
-        ok = _relabel_container(
+        result = _relabel_container(
             info, container, container, subdomain,
             dry_run=args.dry_run,
             force=args.force,
         )
-        if ok:
-            # _relabel_container returns True for already-labeled + no-force (skip)
+
+        if result == _SAFETY_ABORT:
+            safety_aborted += 1
+        elif result is True:
             labels = (info.get("Config") or {}).get("Labels") or {}
             if _has_middleware(labels, container) and not args.force and not args.dry_run:
                 skipped += 1
@@ -376,8 +545,11 @@ def main() -> None:
         else:
             failed += 1
 
-    print(f"\nDone. relabeled={done}  skipped={skipped}  failed={failed}")
-    if failed:
+    print(
+        f"\nDone. relabeled={done}  skipped={skipped}  "
+        f"safety_aborted={safety_aborted}  failed={failed}"
+    )
+    if failed or safety_aborted:
         sys.exit(1)
 
 

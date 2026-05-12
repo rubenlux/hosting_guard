@@ -753,3 +753,118 @@ Tests async para `check_site_once` y `wait_for_site_online`:
 - result tiene todos los campos esperados
 
 **Total:** 82 → 94 tests, todos verdes.
+
+---
+
+## 2026-05-11 — Protection Mode: ForwardAuth, IP blocklist, backfill de contenedores
+
+### BLOQUE 1 — SecurityPolicyResolver (`app/services/security/security_policy_resolver.py`)
+
+- Lee el campo `protection_mode JSONB` de la tabla `hostings` y lo cachea en Redis por 60s (`hg:policy:{hosting_id}`).
+- `_derive_mode(pm)`: `enabled=false` → `"off"`; `enabled=true` + cualquier flag de bloqueo → `"protect"`; `enabled=true` sin flags → `"monitor"`.
+- `get_policy(hosting_id, conn=None)` → nunca lanza; en fallo de Redis o DB retorna `{"mode": "off"}`.
+- `invalidate_policy(hosting_id)` → evicta la clave de Redis; llamado desde `set_protection_mode` en `admin.py`.
+
+### BLOQUE 2 — IP Blocklist (`app/services/security/ip_blocklist.py`)
+
+Redis-backed blocklist con TTL por regla:
+- `block_ip(ip, hosting_id, reason, rule_id, ttl_seconds)` → clave `hg:blocklist:{hosting_id}:{ip}`; JSON con reason/rule_id/blocked_at/ttl.
+- `is_blocked(ip, hosting_id)` → retorna el JSON o `None`; `None` si Redis no disponible.
+- `clear_ip(ip, hosting_id)` → borra la clave.
+- Todas las funciones son non-blocking: retornan `False`/`None` si Redis no disponible — sitios nunca caen por fallo de Redis.
+
+### BLOQUE 3 — ForwardAuth endpoint (`app/api/routes/internal.py`)
+
+Traefik llama `GET /internal/forwardauth` en cada request a subdominios de tenant. 200 = permitir, 403 = bloquear.
+
+Flujo:
+- Extrae `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Uri`.
+- Cachea resolución subdominio → hosting_id en Redis por 300s (`hg:subdomain:{subdomain}`).
+- `mode=off` → 200.
+- `mode=protect`: check blocklist → 403; xmlrpc.php → 403; scanner paths (`.env`, `wp-config.php`, etc.) → 403.
+- `mode=monitor`: loguea lo que habría bloqueado → 200.
+
+Registrado en `app/api/main.py` como `internal_router`.
+
+### BLOQUE 4 — aggregate_wp_attacks enforcement (`app/services/aggregate_wp_attacks.py`)
+
+Añadida `_maybe_block(ip, hosting_id, rule_id, rule_flag, ttl)`:
+- Llama `get_policy()` y `block_ip()` cuando `mode=protect` y el flag correspondiente está activo.
+- Cuando `mode=monitor`: loguea IP/rule sin bloquear.
+- Llamada desde 3 reglas: `_rule_wp_login` (ttl=3600), `_rule_xmlrpc` (ttl=14400), `_rule_wp_login_rate_limit` (ttl=1800).
+
+### BLOQUE 5 — Traefik wiring
+
+**`app/services/deploy/build_runner.py`** — `_traefik_labels()` añade:
+```
+"-l", "traefik.http.routers.{name}.middlewares=hg-forwardauth"
+```
+
+**`app/api/routes/hosting.py`** — los dos bloques de labels inline (nginx estático línea ~355, WordPress línea ~787) añaden el mismo label de middleware.
+
+**`app/services/domain_checker.py`** — `write_traefik_config()`: router HTTPS file-provider incluye `"middlewares": ["hg-forwardauth@docker"]` (calificador `@docker` requerido porque el archivo YAML es un provider distinto al Docker provider).
+
+**`docker-compose.yml`**:
+- Traefik: `--providers.file.directory=/opt/traefik-dynamic` + `--providers.file.watch=true` + volumen `/opt/traefik-dynamic:/opt/traefik-dynamic:ro`.
+- App labels: declaración del middleware ForwardAuth:
+  ```
+  traefik.http.middlewares.hg-forwardauth.forwardauth.address=http://hosting_guard:8000/internal/forwardauth
+  traefik.http.middlewares.hg-forwardauth.forwardauth.trustForwardHeader=true
+  ```
+
+**Producción** — el `docker-compose.yml` de `/opt/deploy/` se parchó manualmente con `sudo sed` (indentación de 4→6 espacios corregida tras bug del script de parche Python).
+
+### BLOQUE 6 — Tests protection mode (`tests/test_protection_mode.py`)
+
+25 tests: `TestSecurityPolicyResolver` (7), `TestIpBlocklist` (5), `TestForwardAuth` (8), `TestAggregateProtectionEnforcement` (5). Todos verdes.
+
+**Bug de patching resuelto:** `get_redis` se importa localmente dentro de cada función body, no a nivel de módulo. El patch correcto es `app.infra.redis_client.get_redis`, no `app.services.security.security_policy_resolver.get_redis`.
+
+### BLOQUE 7 — Bug crítico: backfill_forwardauth.py perdía bind mounts
+
+**Problema:** `_relabel_container()` nunca leía `HostConfig.Binds`. Al re-crear contenedores sin `-v` flags, nginx servía su página por defecto en lugar del artifact del usuario. Dos contenedores afectados en producción: `user_1_git_matrix-vite-ok_547dd4` y `user_1_git_mi-test_0d3874`.
+
+**`scripts/backfill_forwardauth.py`** — reescrito completamente:
+
+- `_build_docker_run_cmd()`: lee `hc_cfg.get("Binds")` y emite un `-v` por cada bind mount.
+- `_validate_binds(binds)`: si algún bind apunta a un nginx html dir, verifica que `index.html` exista en el host; aborta si no.
+- `_backup(container, info)`: escribe el JSON completo de `docker inspect` en `/tmp/container-backups/<name>-<ts>.json` antes de cualquier operación destructiva.
+- `_merge_middleware(existing, value)`: añade `hg-forwardauth` sin pisar middlewares existentes ni duplicar.
+- `_is_tenant_container(name)`: detecta y salta contenedores de infraestructura (`hosting_guard`, `traefik`, `redis`, prefijos `hg_`, `docker_`, etc.).
+- `_is_nginx_default(url)`: post-validación tras recrear — detecta regresión a nginx default page.
+- Flag `--force`: re-crea incluso contenedores que ya tienen el label (para recovery de bind mounts perdidos).
+
+**`scripts/recover_nginx_mounts.py`** — script dedicado para los dos contenedores rotos:
+- Detecta si la imagen es nginx y si le falta el bind `:/usr/share/nginx/html`.
+- Verifica `index.html` en `/opt/clients/<container>/dist/` antes de actuar.
+- Mismo patrón: backup → stop → rm → run con bind re-añadido → post-validate.
+- `KNOWN_BROKEN` lista hardcodeada con los dos containers afectados; también acepta `--container NAME`.
+
+**`tests/test_backfill_forwardauth.py`** — 35 tests, todos verdes:
+
+| Clase | Tests | Cubre |
+|---|---|---|
+| `TestMountPreservation` | 2 | binds en cmd, sin binds → sin `-v` |
+| `TestAbortOnMissingIndexHtml` | 3 | index faltante, index presente, non-html pass |
+| `TestAbortOnMissingHostPath` | 1 | host path inexistente falla |
+| `TestMiddlewareMerge` | 4 | append, no-duplicate, empty, múltiples |
+| `TestDryRun` | 1 | no llama docker, muestra mounts |
+| `TestRecreateCommandHasVolume` | 1 | `-v` en cmd |
+| `TestNginxRegressionDetection` | 3 | detecta default, no false positive, network error |
+| `TestHostingIdFilter` | 1 | filtra por hosting_id |
+| `TestNonTenantSkip` | 13 | 10 infra names, 3 tenant names |
+| `TestApiAndFrontendSkip` | 3 | hosting_guard, frontend, hg_ prefix |
+| `TestSkipAlreadyLabeled` | 2 | skip sin --force, recreate con --force |
+| `TestFullRelabelFlow` | 1 | flujo completo: backup + stop + rm + run con bind y middleware |
+
+**Procedimiento de recovery en producción:**
+```bash
+# Dentro del app container:
+python scripts/recover_nginx_mounts.py --dry-run   # verificar primero
+python scripts/recover_nginx_mounts.py             # aplicar
+curl -s https://matrix-vite-ok.hostingguard.lat | head -5  # no debe decir "Welcome to nginx"
+
+# Luego backfill al resto:
+python scripts/backfill_forwardauth.py --dry-run
+python scripts/backfill_forwardauth.py
+```
