@@ -333,7 +333,7 @@ const STATUS_CLASS = {
   blocked_by_policy: 'text-red-500',
 };
 
-const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onActionsLoaded }) {
+const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onActionsLoaded, incidentStatus = 'open' }) {
   const [actions, setActions]         = useState([]);
   const [status, setStatus]           = useState('idle'); // idle | loading | generating
   const [error, setError]             = useState(null);
@@ -405,6 +405,7 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
 
   const isLoading    = status === 'loading';
   const isGenerating = status === 'generating';
+  const isResolved   = incidentStatus === 'resolved';
 
   return (
     <div className="border border-white/8 rounded-lg overflow-hidden">
@@ -419,26 +420,34 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
             </span>
           )}
         </div>
-        <button
-          data-testid="generate-actions-btn"
-          onClick={handleGenerate}
-          disabled={isLoading || isGenerating || !hasDiagnosis}
-          title={!hasDiagnosis ? 'Genera un diagnóstico primero' : undefined}
-          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors disabled:opacity-40"
-        >
-          {isGenerating
-            ? <Loader2 className="w-3 h-3 animate-spin" />
-            : <Zap className="w-3 h-3" />}
-          {isGenerating ? 'Generando…' : 'Generar recomendaciones'}
-        </button>
+        {!isResolved && (
+          <button
+            data-testid="generate-actions-btn"
+            onClick={handleGenerate}
+            disabled={isLoading || isGenerating || !hasDiagnosis}
+            title={!hasDiagnosis ? 'Genera un diagnóstico primero' : undefined}
+            className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors disabled:opacity-40"
+          >
+            {isGenerating
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <Zap className="w-3 h-3" />}
+            {isGenerating ? 'Generando…' : 'Generar recomendaciones'}
+          </button>
+        )}
       </div>
 
-      {/* Persistent phase notice */}
-      <div className="px-3 pt-2 pb-0">
-        <p className="text-[10px] text-gray-600 leading-snug" data-testid="phase-notice">
-          En esta fase, aprobar una recomendación solo registra la decisión. No ejecuta comandos,
-          no reinicia servicios y no modifica infraestructura.
-        </p>
+      {/* Persistent notices */}
+      <div className="px-3 pt-2 pb-0 space-y-1">
+        {isResolved ? (
+          <p className="text-[10px] text-gray-500 leading-snug" data-testid="resolved-notice">
+            Este incidente ya está resuelto. No se generan nuevas acciones recomendadas.
+          </p>
+        ) : (
+          <p className="text-[10px] text-gray-600 leading-snug" data-testid="phase-notice">
+            En esta fase, aprobar una recomendación solo registra la decisión. No ejecuta comandos,
+            no reinicia servicios y no modifica infraestructura.
+          </p>
+        )}
       </div>
 
       {/* Body */}
@@ -452,7 +461,7 @@ const ActionsPanel = memo(function ActionsPanel({ incidentId, hasDiagnosis, onAc
           </div>
         )}
 
-        {!isLoading && actions.length === 0 && (
+        {!isLoading && actions.length === 0 && !isResolved && (
           <p className="text-xs text-gray-600 py-1">
             {hasDiagnosis
               ? 'Sin recomendaciones todavía. Haz clic en "Generar recomendaciones".'
@@ -737,14 +746,13 @@ const IncidentRow = memo(function IncidentRow({ inc, expanded, onToggle, onResol
               onDiagReady={setCurrentDiag}
             />
 
-            {/* ActionsPanel — only for open incidents */}
-            {isOpen && (
-              <ActionsPanel
-                incidentId={inc.incident_id}
-                hasDiagnosis={!!(currentDiag || inc.diagnosis_summary)}
-                onActionsLoaded={setCurrentActions}
-              />
-            )}
+            {/* ActionsPanel — always rendered; generate button hidden for resolved */}
+            <ActionsPanel
+              incidentId={inc.incident_id}
+              hasDiagnosis={!!(currentDiag || inc.diagnosis_summary)}
+              onActionsLoaded={setCurrentActions}
+              incidentStatus={inc.status}
+            />
 
             {/* Raw evidence */}
             <details className="text-xs">

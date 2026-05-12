@@ -536,6 +536,24 @@ describe('ActionsPanel', () => {
     await waitFor(() => expect(generateActions).toHaveBeenCalledWith(42, false));
   });
 
+  it('open incident without actions shows Generar button when diagnosis exists', async () => {
+    const incWithDiag = makeInc({
+      diagnosis_summary:    'Has diag',
+      diagnosis_updated_at: '2026-05-11T10:00:00Z',
+    });
+    getSentinelIncidents.mockResolvedValue({ items: [incWithDiag] });
+    getIncidentActions.mockResolvedValue({ items: [] });
+
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('generate-actions-btn')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('generate-actions-btn')).not.toBeDisabled();
+  });
+
   it('github_private_repo description does not mention only token', async () => {
     const githubAction = {
       ...MOCK_ACTION,
@@ -553,5 +571,40 @@ describe('ActionsPanel', () => {
     expect(desc).toBeInTheDocument();
     // Description must not say ONLY token
     expect(desc.textContent).not.toMatch(/^Revisar permisos del token/);
+  });
+});
+
+// ── ActionsPanel — resolved incident ─────────────────────────────────────────
+
+describe('ActionsPanel — resolved incident', () => {
+  async function expandResolved() {
+    const resolvedInc = makeInc({ status: 'resolved', incident_id: 42, source_type: 'deploy' });
+    getSentinelIncidents.mockResolvedValue({ items: [resolvedInc] });
+    render(<SentinelPanel />);
+    await waitFor(() => screen.getByText('Deploy failed: myrepo'));
+    fireEvent.click(screen.getByText('Deploy failed: myrepo'));
+  }
+
+  it('does not show Generar recomendaciones button for resolved incident', async () => {
+    getIncidentActions.mockResolvedValue({ items: [] });
+    await expandResolved();
+    await waitFor(() => expect(getIncidentActions).toHaveBeenCalled());
+    expect(screen.queryByTestId('generate-actions-btn')).not.toBeInTheDocument();
+  });
+
+  it('shows resolved-notice for resolved incident', async () => {
+    getIncidentActions.mockResolvedValue({ items: [] });
+    await expandResolved();
+    await waitFor(() =>
+      expect(screen.getByTestId('resolved-notice')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('resolved-notice').textContent).toMatch(/ya está resuelto/i);
+  });
+
+  it('does not show phase-notice for resolved incident', async () => {
+    getIncidentActions.mockResolvedValue({ items: [] });
+    await expandResolved();
+    await waitFor(() => expect(getIncidentActions).toHaveBeenCalled());
+    expect(screen.queryByTestId('phase-notice')).not.toBeInTheDocument();
   });
 });
