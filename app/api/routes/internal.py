@@ -12,20 +12,24 @@ Response:
   403 — blocked (IP on blocklist, or path blocked by rule)
   429 — rate-limited
 
-This endpoint is network-restricted to the internal Docker network;
-no auth token is required.
-
 Fail-open contract:
-  - Errors resolving hosting (DB down, unknown subdomain) → 200
-  - Errors reading policy (DB/Redis) → 200
-  - Errors reading blocklist (Redis down) → 200
+  - Unknown subdomain → 200
+  - DB error / hosting not found → 200
+  - Redis error → 200
   Never block legitimate traffic due to an infrastructure error.
+
+Host resolution:
+  The hostings.subdomain column stores the FULL FQDN
+  (e.g. "mysite.hostingguard.lat"), NOT just the subdomain part.
+  _normalize_forwarded_host strips port / trailing-dot / whitespace / case
+  so the DB query matches reliably.
+  _subdomain_from_host is still used as a security gate (only
+  *.hostingguard.lat hosts are evaluated; everything else gets 200).
 
 Logging contract:
   Every request emits exactly ONE structured log line:
-    event=forwardauth_decision hosting_id=<id> ip=<ip> mode=<mode>
-    blocklist_hit=<bool> decision=<allow|block|would_block|rate_limit>
-    reason=<reason>
+    event=forwardauth_decision host=... host_normalized=... hosting_id=...
+    ip=... uri=... mode=... blocklist_hit=... decision=... reason=...
   The try/finally block guarantees this even on early returns.
 """
 import logging
@@ -53,9 +57,11 @@ _SCANNER_PATHS = frozenset({
     "/wp-admin/install.php",
 })
 
-_SUBDOMAIN_CACHE_TTL = 300
-_SUBDOMAIN_KEY_FMT   = "hg:subdomain:{subdomain}"
+_HOST_CACHE_TTL = 300
+_HOST_CACHE_KEY_FMT = "hg:host:{host}"
 
+
+# ── helper: IP extraction ─────────────────────────────────────────────────────
 
 def _extract_valid_ip(forwarded_for: str) -> str:
     """Return the first non-empty, non-'unknown' token from X-Forwarded-For."""
@@ -68,17 +74,46 @@ def _extract_valid_ip(forwarded_for: str) -> str:
     return ""
 
 
-def _subdomain_from_host(host: str) -> Optional[str]:
+# ── helper: host normalization ────────────────────────────────────────────────
+
+def _normalize_forwarded_host(host: str) -> str:
+    """Normalize the X-Forwarded-Host header value.
+
+    Handles: None/empty, surrounding whitespace, comma-separated list,
+    uppercase, port suffix (:443), trailing dot.
+    Returns a lowercase, clean FQDN (no port, no trailing dot).
+    """
     if not host:
+        return ""
+    # Comma-separated: take first entry (rare but real proxy configs send this)
+    host = host.split(",")[0].strip().lower()
+    # Remove port: "host.lat:443" → "host.lat"
+    # Guard against IPv6 bracket notation — irrelevant for .hostingguard.lat
+    if not host.startswith("[") and ":" in host:
+        host = host.rsplit(":", 1)[0]
+    # Remove trailing dot: "host.lat." → "host.lat"
+    host = host.rstrip(".")
+    return host
+
+
+def _subdomain_from_host(host_normalized: str) -> Optional[str]:
+    """Return the subdomain label if host is *.hostingguard.lat, else None."""
+    if not host_normalized:
         return None
-    m = _SUBDOMAIN_RE.match(host.lower())
+    m = _SUBDOMAIN_RE.match(host_normalized)
     return m.group(1) if m else None
 
 
-def _resolve_hosting_id(subdomain: str) -> Optional[int]:
-    """Lookup hosting_id for subdomain, with Redis caching."""
+# ── helper: hosting resolution ────────────────────────────────────────────────
+
+def _resolve_hosting_id(host_normalized: str) -> Optional[int]:
+    """Lookup hosting_id for a normalized FQDN, with Redis caching.
+
+    Uses the full FQDN as both cache key and DB lookup value because
+    hostings.subdomain stores the full FQDN, not just the subdomain label.
+    """
     from app.infra.redis_client import get_redis
-    cache_key = _SUBDOMAIN_KEY_FMT.format(subdomain=subdomain)
+    cache_key = _HOST_CACHE_KEY_FMT.format(host=host_normalized)
     r = get_redis()
 
     if r:
@@ -89,42 +124,56 @@ def _resolve_hosting_id(subdomain: str) -> Optional[int]:
         except Exception:
             pass
 
-    hosting_id = _db_hosting_id(subdomain)
+    hosting_id = _db_hosting_id(host_normalized)
 
     if r and hosting_id is not None:
         try:
-            r.setex(cache_key, _SUBDOMAIN_CACHE_TTL, str(hosting_id))
+            r.setex(cache_key, _HOST_CACHE_TTL, str(hosting_id))
         except Exception:
             pass
 
     return hosting_id
 
 
-def _db_hosting_id(subdomain: str) -> Optional[int]:
+def _db_hosting_id(host_normalized: str) -> Optional[int]:
+    """DB lookup: return hosting_id for a normalized FQDN or None.
+
+    Query matches against the full subdomain value stored in the DB
+    (e.g. 'mysite.hostingguard.lat') and requires status='active'.
+    Supports both RealDictRow (dict-like) and plain tuple cursors.
+    """
     from app.infra.db import get_connection, release_connection
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(
             "SELECT hosting_id FROM hostings "
-            "WHERE subdomain = %s AND status NOT IN ('deleted', 'expired')",
-            (subdomain,),
+            "WHERE lower(subdomain) = lower(%s) AND status = 'active' "
+            "LIMIT 1",
+            (host_normalized,),
         )
         row = cur.fetchone()
         if not row:
+            logger.warning(
+                "forwardauth: hosting not found host_normalized=%s status=active",
+                host_normalized,
+            )
             return None
         return row["hosting_id"] if hasattr(row, "keys") else row[0]
     except Exception as exc:
-        logger.warning("forwardauth: subdomain lookup failed for %s: %s", subdomain, exc)
+        logger.warning("forwardauth: db lookup failed host=%s: %s", host_normalized, exc)
         return None
     finally:
         release_connection(conn)
 
 
+# ── helper: structured decision logging ──────────────────────────────────────
+
 def _log_decision(
     *,
     event: str,
     host: str,
+    host_normalized: str,
     hosting_id: Optional[int],
     ip: str,
     uri: str,
@@ -135,12 +184,14 @@ def _log_decision(
     reason: str,
 ) -> None:
     logger.info(
-        "forwardauth event=%s host=%s hosting_id=%s ip=%s uri=%s mode=%s "
-        "blocklist_hit=%s rule_id=%s decision=%s reason=%s",
-        event, host, hosting_id, ip, uri, protection_mode,
+        "forwardauth event=%s host=%s host_normalized=%s hosting_id=%s ip=%s uri=%s "
+        "mode=%s blocklist_hit=%s rule_id=%s decision=%s reason=%s",
+        event, host, host_normalized, hosting_id, ip, uri, protection_mode,
         blocklist_hit, rule_id, decision, reason,
     )
 
+
+# ── ForwardAuth handler ───────────────────────────────────────────────────────
 
 @router.get("/forwardauth")
 def forwardauth(request: Request):
@@ -149,18 +200,21 @@ def forwardauth(request: Request):
     fwd_host = request.headers.get("x-forwarded-host", "")
     fwd_uri  = request.headers.get("x-forwarded-uri",  "/")
 
-    client_ip = _extract_valid_ip(fwd_for)
-    subdomain  = _subdomain_from_host(fwd_host)
+    client_ip       = _extract_valid_ip(fwd_for)
+    host_normalized = _normalize_forwarded_host(fwd_host)
 
-    # Decision context — updated along every code path; logged unconditionally
-    # in the finally block so that every request produces exactly one log line.
+    # Security gate: only evaluate *.hostingguard.lat hosts
+    subdomain = _subdomain_from_host(host_normalized)
+
+    # Decision context — mutated along every code path; logged in finally so
+    # every request produces exactly one forwardauth_decision log line.
     _ctx: dict = {
         "hosting_id":   None,
         "mode":         "unknown",
         "blocklist_hit": False,
         "rule_id":      "",
         "decision":     "allow",
-        "reason":       None,   # None → not decided yet; set "pass" at final return
+        "reason":       None,   # None → set to "pass" at final allow
     }
 
     try:
@@ -169,9 +223,11 @@ def forwardauth(request: Request):
             return Response(status_code=200)
 
         try:
-            hosting_id = _resolve_hosting_id(subdomain)
+            hosting_id = _resolve_hosting_id(host_normalized)
         except Exception as exc:
-            logger.warning("forwardauth: hosting resolution error subdomain=%s: %s", subdomain, exc)
+            logger.warning(
+                "forwardauth: hosting resolution error host=%s: %s", host_normalized, exc,
+            )
             _ctx["reason"] = "hosting_lookup_error"
             return Response(status_code=200)
 
@@ -203,7 +259,7 @@ def forwardauth(request: Request):
             return Response(status_code=200)
 
         # IP blocklist check — runs in BOTH protect and monitor modes.
-        # Monitor: logs would_block but never returns 403.
+        # Monitor: records would_block but never enforces.
         block_record = None
         if client_ip:
             try:
@@ -272,7 +328,6 @@ def forwardauth(request: Request):
                 })
                 return JSONResponse(status_code=403, content={"detail": "Ruta bloqueada"})
 
-        # Final allow — only set reason if nothing else did
         if _ctx["reason"] is None:
             _ctx["reason"] = "pass"
         return Response(status_code=200)
@@ -281,6 +336,7 @@ def forwardauth(request: Request):
         _log_decision(
             event="forwardauth_decision",
             host=fwd_host,
+            host_normalized=host_normalized,
             hosting_id=_ctx["hosting_id"],
             ip=client_ip,
             uri=fwd_uri,
