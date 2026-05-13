@@ -43,8 +43,9 @@ def revoke_token(jti: str, expires_at: datetime) -> None:
     now = datetime.now(timezone.utc)
     ttl_seconds = max(1, int((expires_at - now).total_seconds()))
 
-    if _redis is not None:
-        _redis.setex(f"revoked:{jti}", ttl_seconds, "1")
+    r = _get_redis()
+    if r is not None:
+        r.setex(f"revoked:{jti}", ttl_seconds, "1")
     else:
         # Fallback in-memory: purgar expirados antes de insertar
         _now_ts = now.timestamp()
@@ -55,8 +56,9 @@ def revoke_token(jti: str, expires_at: datetime) -> None:
 
 
 def _is_revoked(jti: str) -> bool:
-    if _redis is not None:
-        return bool(_redis.exists(f"revoked:{jti}"))
+    r = _get_redis()
+    if r is not None:
+        return bool(r.exists(f"revoked:{jti}"))
     return jti in _revoked_tokens
 
 
@@ -135,17 +137,33 @@ def _decode_and_validate(token: str) -> dict:
     if _is_revoked(jti):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revocado")
 
-    # Check revoke-all: if user called /auth/revoke-sessions, tokens issued before that moment are invalid
+    # Check revoke-all: tokens issued at or before the revoke timestamp are invalid
     user_id = payload.get("user_id")
     iat = payload.get("iat")
-    if user_id and iat and _redis is not None:
-        revoked_all_ts = _redis.get(f"revoked_all:{user_id}")
-        if revoked_all_ts:
-            try:
-                if iat < float(revoked_all_ts):
-                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesión revocada")
-            except (ValueError, TypeError):
-                pass
+    if user_id and iat:
+        _r = _get_redis()
+        if _r is None:
+            logger.warning(
+                "auth: Redis unavailable — revoke_all check skipped user_id=%s; "
+                "revoked sessions may remain active",
+                user_id,
+            )
+        else:
+            revoked_all_ts = _r.get(f"revoked_all:{user_id}")
+            if revoked_all_ts:
+                try:
+                    if iat <= float(revoked_all_ts):
+                        logger.info(
+                            "event=auth_token_revoked_all user_id=%s token_iat=%s revoked_at=%s decision=reject",
+                            user_id, iat, revoked_all_ts,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesión revocada"
+                        )
+                except HTTPException:
+                    raise
+                except (ValueError, TypeError):
+                    pass
 
     return payload
 

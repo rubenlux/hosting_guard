@@ -501,15 +501,25 @@ def disable_2fa(request: Request, body: TotpDisableRequest, user: dict = Depends
 @limiter.limit("5/minute")
 def verify_2fa_login(request: Request, response: Response, body: TotpVerifyRequest):
     """Second step of login when 2FA is enabled. Exchanges pending_2fa cookie for real session."""
+    ip = request.client.host if request.client else "unknown"
+
+    from jose import jwt as _jwt, JWTError as _JWTError
+    from app.infra.db import get_connection, release_connection
+
     pending = request.cookies.get("pending_2fa")
     if not pending:
         raise HTTPException(status_code=400, detail="No hay verificación 2FA pendiente")
     try:
-        payload = jwt.decode(pending, SECRET, algorithms=[ALGO])
-    except JWTError:
+        payload = _jwt.decode(pending, SECRET, algorithms=[ALGO])
+    except _JWTError:
         raise HTTPException(status_code=401, detail="Sesión 2FA expirada, iniciá sesión de nuevo")
     if payload.get("type") != "2fa_pending":
         raise HTTPException(status_code=401, detail="Token inválido")
+
+    # Single-use: reject if this challenge token was already consumed
+    pending_jti = payload.get("jti")
+    if pending_jti and _is_revoked(pending_jti):
+        raise HTTPException(status_code=401, detail="Sesión 2FA ya usada, iniciá sesión de nuevo")
 
     user_id = payload["user_id"]
     conn = get_connection()
@@ -531,27 +541,42 @@ def verify_2fa_login(request: Request, response: Response, body: TotpVerifyReque
     totp = pyotp.TOTP(row["totp_secret"])
     valid = totp.verify(body.token, valid_window=1)
     if not valid:
-        # Try backup codes
-        backup_codes = (row.get("totp_backup_codes") or "").split(",")
+        # Try backup codes — stored as JSON list
+        raw = row.get("totp_backup_codes") or ""
+        try:
+            backup_codes = json.loads(raw) if raw else []
+        except (json.JSONDecodeError, ValueError):
+            backup_codes = [c.strip() for c in raw.split(",") if c.strip()]
         if body.token in backup_codes:
             remaining = [c for c in backup_codes if c != body.token]
             conn2 = get_connection()
             try:
                 conn2.cursor().execute(
                     "UPDATE users SET totp_backup_codes=%s WHERE user_id=%s",
-                    (",".join(remaining), user_id)
+                    (json.dumps(remaining), user_id)
                 )
                 conn2.commit()
             finally:
                 release_connection(conn2)
             valid = True
+
     if not valid:
+        logger.info(
+            "event=login_failed_2fa user_id=%s ip=%s reason=invalid_otp",
+            user_id, ip,
+        )
         raise HTTPException(status_code=401, detail="Código incorrecto")
+
+    # Mark challenge as consumed (single-use)
+    if pending_jti:
+        pending_exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        revoke_token(pending_jti, pending_exp)
 
     # Clear pending cookie, issue real session
     response.delete_cookie("pending_2fa", path="/")
     claims = {"user_id": payload["user_id"], "email": payload["email"], "role": payload.get("role", "user")}
     _set_auth_cookies(response, create_token(claims), create_refresh_token(claims))
+    logger.info("event=login_success_2fa user_id=%s ip=%s", user_id, ip)
     return {"status": "ok", "account_type": "user"}
 
 
@@ -604,15 +629,18 @@ def login(request: Request, response: Response, body: LoginRequest):
                 pass
             # 2FA gate: if enabled, issue a short-lived pending token instead of full session
             if user.get("totp_enabled"):
+                import uuid as _uuid
+                from datetime import timedelta as _td
+                from jose import jwt as _jwt2
                 _pending_payload = {
                     "user_id": user["user_id"],
                     "email":   user["email"],
                     "role":    user.get("role", "user"),
-                    "jti":     str(uuid.uuid4()),
-                    "exp":     datetime.now(timezone.utc) + timedelta(minutes=3),
+                    "jti":     str(_uuid.uuid4()),
+                    "exp":     datetime.now(timezone.utc) + _td(minutes=3),
                     "type":    "2fa_pending",
                 }
-                _pending_token = jwt.encode(_pending_payload, SECRET, algorithm=ALGO)
+                _pending_token = _jwt2.encode(_pending_payload, SECRET, algorithm=ALGO)
                 _secure = APP_ENV == "production"
                 response.set_cookie(
                     key="pending_2fa", value=_pending_token,
