@@ -123,7 +123,10 @@ def forwardauth(request: Request):
         return Response(status_code=200)
 
     from app.services.security.security_policy_resolver import get_policy
-    from app.services.security.ip_blocklist import is_blocked
+    from app.services.security.ip_blocklist import (
+        is_ip_blocked_for_hosting,
+        is_route_blocked_for_hosting,
+    )
 
     try:
         policy = get_policy(hosting_id)
@@ -138,9 +141,9 @@ def forwardauth(request: Request):
     path = fwd_uri.split("?")[0].rstrip("/") or "/"
 
     if mode == "protect":
-        # IP blocklist check
+        # IP blocklist check (policy rule or auto-remediation block)
         if client_ip:
-            block_record = is_blocked(client_ip, hosting_id)
+            block_record = is_ip_blocked_for_hosting(client_ip, hosting_id)
             if block_record:
                 rule_id = block_record.get("rule_id", "unknown")
                 logger.info(
@@ -152,11 +155,27 @@ def forwardauth(request: Request):
                     content={"detail": "Acceso bloqueado por política de seguridad", "rule": rule_id},
                 )
 
-        # Path-based rules
-        if policy.get("block_xmlrpc") and path == "/xmlrpc.php":
-            logger.info("forwardauth: BLOCK xmlrpc ip=%s hosting_id=%d", client_ip, hosting_id)
-            return JSONResponse(status_code=403, content={"detail": "xmlrpc.php deshabilitado"})
+        # Rate-limit block (auto-remediation temporary_rate_limit)
+        if client_ip:
+            rate_block = is_route_blocked_for_hosting(f"rate_limit:{client_ip}", hosting_id)
+            if rate_block:
+                logger.info(
+                    "forwardauth: RATE_LIMITED ip=%s hosting_id=%d uri=%s",
+                    client_ip, hosting_id, fwd_uri,
+                )
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit temporal activo", "rule": rate_block.get("rule_id", "rate_limit")},
+                )
 
+        # xmlrpc check: policy setting OR auto-remediation route block
+        if path == "/xmlrpc.php":
+            xmlrpc_blocked = policy.get("block_xmlrpc") or is_route_blocked_for_hosting("xmlrpc", hosting_id)
+            if xmlrpc_blocked:
+                logger.info("forwardauth: BLOCK xmlrpc ip=%s hosting_id=%d", client_ip, hosting_id)
+                return JSONResponse(status_code=403, content={"detail": "xmlrpc.php deshabilitado"})
+
+        # Scanner paths check: policy setting OR IP blocked for scanning
         if policy.get("block_scanner_paths") and path in _SCANNER_PATHS:
             logger.info(
                 "forwardauth: BLOCK scanner path=%s ip=%s hosting_id=%d",
@@ -165,7 +184,7 @@ def forwardauth(request: Request):
             return JSONResponse(status_code=403, content={"detail": "Ruta bloqueada"})
 
     if mode == "monitor" and client_ip:
-        block_record = is_blocked(client_ip, hosting_id)
+        block_record = is_ip_blocked_for_hosting(client_ip, hosting_id)
         if block_record:
             logger.info(
                 "forwardauth: MONITOR (would block) ip=%s hosting_id=%d rule=%s uri=%s",

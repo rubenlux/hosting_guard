@@ -2948,3 +2948,141 @@ def list_admin_deploy_events(
         return {"items": [dict(r) for r in cur.fetchall()], "limit": limit, "offset": offset}
     finally:
         release_connection(conn)
+
+
+# ── Phase 4A: Auto-remediation endpoints ─────────────────────────────────────
+
+_REMEDIATION_STATUS_LABEL = {
+    "applied":            "Aplicado",
+    "skipped":            "Omitido",
+    "blocked_by_policy":  "Bloqueado por política",
+    "expired":            "Expirado (TTL)",
+    "rollback_completed": "Rollback completado",
+    "failed":             "Fallido",
+}
+
+_REMEDIATION_TYPE_LABEL = {
+    "temporary_ip_block":     "Bloqueo IP temporal",
+    "temporary_xmlrpc_block": "Bloqueo xmlrpc temporal",
+    "temporary_scanner_block":"Bloqueo scanner temporal",
+    "temporary_rate_limit":   "Rate-limit temporal",
+}
+
+
+def _enrich_remediation(r: dict) -> dict:
+    status = r.get("status", "")
+    rtype  = r.get("remediation_type", "")
+    return {
+        **r,
+        "status_label":     _REMEDIATION_STATUS_LABEL.get(status, status),
+        "type_label":       _REMEDIATION_TYPE_LABEL.get(rtype, rtype),
+        "can_rollback":     status == "applied",
+        "is_active":        status == "applied",
+    }
+
+
+@router.get("/remediations")
+def list_remediations(
+    hosting_id:        Optional[int] = None,
+    incident_id:       Optional[int] = None,
+    security_event_id: Optional[int] = None,
+    status:            Optional[str] = None,
+    remediation_type:  Optional[str] = None,
+    limit:             int = 100,
+    offset:            int = 0,
+    admin: dict = Depends(require_role("admin")),
+):
+    """List remediation executions with optional filters."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        where: list[str] = []
+        params: list = []
+        if hosting_id:
+            where.append("hosting_id = %s"); params.append(hosting_id)
+        if incident_id:
+            where.append("incident_id = %s"); params.append(incident_id)
+        if security_event_id:
+            where.append("security_event_id = %s"); params.append(security_event_id)
+        if status:
+            where.append("status = %s"); params.append(status)
+        if remediation_type:
+            where.append("remediation_type = %s"); params.append(remediation_type)
+        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        params += [min(limit, 500), offset]
+        cur = conn.cursor()
+        cur.execute(
+            f"""SELECT remediation_id, hosting_id, user_id, incident_id,
+                       security_event_id, action_id, plan_id,
+                       remediation_type, rule_id, target_type, target_value,
+                       status, risk_level, reversible, automatic,
+                       ttl_seconds, expires_at, reason, evidence, decision,
+                       rollback_status, rollback_at, blocked_by_policy_reason,
+                       created_by, created_at, updated_at
+                  FROM remediation_executions {clause}
+                 ORDER BY created_at DESC LIMIT %s OFFSET %s""",
+            params,
+        )
+        items = [_enrich_remediation(dict(r)) for r in cur.fetchall()]
+        return {"items": items, "limit": limit, "offset": offset}
+    finally:
+        release_connection(conn)
+
+
+@router.get("/remediations/{remediation_id}")
+def get_remediation(
+    remediation_id: int,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Get a single remediation execution by id."""
+    from app.infra.db import get_connection, release_connection
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT remediation_id, hosting_id, user_id, incident_id,
+                      security_event_id, action_id, plan_id,
+                      remediation_type, rule_id, target_type, target_value,
+                      status, risk_level, reversible, automatic,
+                      ttl_seconds, expires_at, reason, evidence, decision,
+                      rollback_status, rollback_at, blocked_by_policy_reason,
+                      created_by, created_at, updated_at
+               FROM remediation_executions
+               WHERE remediation_id = %s""",
+            (remediation_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Remediation not found")
+        return _enrich_remediation(dict(row))
+    finally:
+        release_connection(conn)
+
+
+@router.post("/remediations/{remediation_id}/rollback")
+def rollback_remediation_endpoint(
+    remediation_id: int,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Manually roll back an active remediation (clear the Redis block)."""
+    from app.infra.db import get_connection, release_connection
+    from app.services.security.remediation_engine import rollback_remediation
+
+    conn = get_connection()
+    try:
+        result = rollback_remediation(conn=conn, remediation_id=remediation_id)
+        if "error" in result:
+            if result["error"] == "not_found":
+                raise HTTPException(status_code=404, detail="Remediation not found")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot rollback: status is '{result.get('status')}'",
+            )
+        return {"ok": True, **result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        release_connection(conn)

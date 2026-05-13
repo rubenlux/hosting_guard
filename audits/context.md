@@ -1074,3 +1074,216 @@ SELECT * FROM action_recommendations WHERE executed_at IS NOT NULL;
 -- Título debe ser "Verificar acceso al repositorio GitHub"
 -- No debe aparecer "Revisar permisos del token GitHub"
 ```
+
+---
+
+## 2026-05-12 — Fase 3B: Execution Planner + Fix 2 + Fase 3B.1
+
+### Restricciones permanentes (siguen en vigor)
+
+`execution_allowed` SIEMPRE false. Sin endpoint `/execute`. Sin botón Ejecutar.  
+No se ejecuta nada. No se toca Docker, Traefik, DNS, contenedores, ni infraestructura.  
+Solo INSERT/UPDATE en `execution_plans` y `action_audit_log`.
+
+---
+
+### Fase 3B — Execution Planner (base)
+
+#### `app/infra/migrations.py`
+
+Tabla `execution_plans`:
+```sql
+plan_id BIGSERIAL PRIMARY KEY
+action_id BIGINT NOT NULL REFERENCES action_recommendations(action_id)
+incident_id BIGINT, diagnosis_id BIGINT
+plan_type TEXT NOT NULL
+status TEXT NOT NULL DEFAULT 'draft'  -- draft | ready_for_review | blocked_by_policy | superseded | cancelled
+risk_level TEXT NOT NULL DEFAULT 'low'
+execution_allowed BOOLEAN NOT NULL DEFAULT FALSE   -- SIEMPRE false
+requires_final_approval BOOLEAN NOT NULL DEFAULT TRUE
+title TEXT, summary TEXT
+prechecks JSONB DEFAULT '[]', steps JSONB DEFAULT '[]', rollback_steps JSONB DEFAULT '[]'
+expected_impact TEXT, safety_notes TEXT, blocked_reason TEXT
+planner_version TEXT, context_hash TEXT
+created_by TEXT DEFAULT 'admin', created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+```
+
+Tabla `execution_plan_audit_log`:
+```sql
+log_id BIGSERIAL PRIMARY KEY
+plan_id BIGINT, action_id BIGINT, incident_id BIGINT, diagnosis_id BIGINT
+actor TEXT, event TEXT NOT NULL  -- created | cancelled | superseded
+details JSONB DEFAULT '{}'
+created_at TIMESTAMPTZ DEFAULT NOW()
+```
+
+#### `app/services/ai/execution_plan_safety.py` (nuevo)
+
+Clasificador puro de riesgo por `action_type` para planes de ejecución. Mismos 4 niveles que el clasificador de acciones. `execution_allowed` SIEMPRE false. `requires_final_approval` SIEMPRE true.
+
+#### `app/services/ai/execution_planner.py` (nuevo, ~300 líneas)
+
+**17 templates genéricos** (uno por `action_type`) + **2 templates específicos** (`(action_type, incident_type)`):
+- `("customer_fix", "github_private_repo_unauthorized")` → `github_access_review` (status `ready_for_review`)
+- `("dependency_fix", "node_sass_incompatible")` → `node_sass_migration` (status `ready_for_review`)
+
+Cada template tiene: `title`, `summary`, `prechecks[]`, `steps[]`, `rollback_steps[]`, `safety_notes`, `plan_type`.
+
+**`_plan_idempotency_hash(action_id, incident_id, diagnosis_id, action_type, action_context_hash, planner_version, incident_type)`** — SHA-256 de todos los campos concatenados con `:`. `incident_type` incluido desde el inicio para que templates específicos no colisionen con genéricos.
+
+**`_existing_plan_hash(conn, action_id)`** — busca plan activo (excluye `cancelled` y `superseded`) y retorna su `context_hash`.
+
+**`create_execution_plan(conn, action_id, force=False, actor="admin")`**:
+1. Verifica acción `approved`
+2. Clasifica riesgo (`blocked` → ValueError)
+3. Selecciona template específico o genérico
+4. Calcula hash del plan
+5. Si hash igual y no force → retorno idempotente del plan existente
+6. Si hash distinto O force → supersede/cancela plan activo:
+   - Hash mismatch → `status=superseded` (automático, template mejorado)
+   - `force=True` → `status=cancelled` (usuario explícito)
+   - Captura `plan_id` via `RETURNING plan_id` para audit
+7. Inserta nuevo plan con `execution_allowed=False`
+8. Emite audit `created`; si supersedió emite audit `superseded` (no si canceló por force)
+
+#### `app/api/routes/admin.py` — 4 endpoints nuevos
+
+```
+POST /actions/{action_id}/plan            — genera plan (force: bool = False)
+GET  /actions/{action_id}/plans           — lista todos los planes de una acción
+DELETE /plans/{plan_id}                   — cancela plan activo
+GET  /incidents/{incident_id}/plans       — lista planes de todos los actions de un incidente
+```
+
+#### Frontend `SentinelPanel.jsx` (base 3B)
+
+- `PlanCard` component: título, estado, riesgo, `plan-no-execute-notice`, prechecks/steps/rollback colapsables, `cancel-plan-btn` (solo si no cancelled/superseded), no hay botón Ejecutar
+- `handleGeneratePlan(actionId, force)` — llama `generateActionPlan` + GET refresh desde DB
+- `handleCancelPlan(planId, actionId)` — llama `cancelPlan` + GET refresh
+- `hasPlan = !!(isApproved && existingPlan && !INACTIVE.includes(existingPlan.status))`
+- Generate button: "Generar plan" (no plan) o "Regenerar plan" (hasPlan), onClick pasa `hasPlan` como force
+
+#### Tests base 3B
+
+- **Backend**: 50 tests en `tests/test_execution_planner.py` — safety classifier (13), create plan (12), idempotencia, templates genéricos/específicos, no subprocess/docker, audit logging
+- **Frontend**: 67 tests en `SentinelPanel.test.jsx` — plan button visibility, generation, PlanCard fields, cancel, refresh from DB, current/historical grouping
+
+---
+
+### Fase 3B Fix 2 — Persistencia de planes y agrupación current/historical
+
+**Problema 1 — Plan específico no persiste:**  
+`_plan_idempotency_hash` no incluía `incident_type`. Plan específico (`github_private_repo`) calculaba el mismo hash que el genérico previo → retorno idempotente del plan genérico stale.  
+**Fix:** `incident_type` ya estaba en la firma pero no se incluía en el string SHA-256. Añadido.
+
+**Problema 2 — Plan se generaba en action_id incorrecto (v1 en lugar de v2):**  
+Con dos acciones del mismo `action_type`, la v1 (stale) aparecía como current action. El usuario veía su plan cargado en la v1.  
+**Fix:** Actions agrupadas como current/historical — sorted `created_at DESC`, primera por `action_type` = current (tarjeta visible), resto = historical (sección colapsable "Versiones anteriores").
+
+**Cambios en `execution_planner.py`:**
+- `create_execution_plan`: separación cancel/supersede. Hash mismatch → `superseded` siempre (independiente de `force`); `force=True` → `cancelled`. Ambos usan `RETURNING plan_id` para audit.
+
+**Cambios en `SentinelPanel.jsx`:**
+- `currentActions` / `historicalActions` via `useMemo`: sort DESC + Set de `action_type` vistos
+- `hasPlan` envuelto en `!!()` → garantiza booleano (evita `generateActionPlan(id, null)`)
+- `handleGeneratePlan`: GET refresh después de generate (nunca confía en estado local)
+- `handleCancelPlan`: GET refresh después de cancel
+- `cancel-plan-btn`: oculto para `cancelled` y `superseded`
+
+**Tests nuevos:**
+- Backend: `test_incident_type_changes_hash`, `test_hash_mismatch_auto_supersedes_without_force`, `TestExistingPlanHash` (2 tests), mocks corregidos (`cancel_cur.fetchone.return_value = {"plan_id": 99}`)
+- Frontend: 4 tests current/historical, 3 tests plan refresh from DB, fix mock ordering
+
+---
+
+### Fase 3B.1 — Auditoría, enriquecimiento API, copiar plan, planes anteriores
+
+#### Backend — `execution_planner.py`
+
+- `create_execution_plan`: cuando supersede por hash mismatch, emite `execution_plan_superseded` via `_log_plan_audit` para el plan antiguo (adicional al `created` del nuevo). `force=True` no emite `superseded` (es cancelación explícita del usuario).
+
+#### Backend — `admin.py`
+
+Constantes nuevas:
+```python
+_PLAN_STATUS_LABEL = { "draft": "Borrador", "ready_for_review": "Listo para revisión", "blocked_by_policy": "Bloqueado por política", "superseded": "Reemplazado", "cancelled": "Cancelado" }
+_PLAN_RISK_LABEL   = { "low": "Bajo", "medium": "Medio", "high": "Alto", "critical": "Crítico" }
+_PLAN_CAN_CANCEL_STATUSES = {"draft", "ready_for_review"}
+_PLAN_INACTIVE_STATUSES   = {"cancelled", "superseded"}
+```
+
+`_enrich_plan(plan, *, is_current: bool) → dict`:
+- Añade: `status_label`, `risk_label`, `execution_allowed_label` ("No permitido en esta fase"), `requires_final_approval_label`, `can_cancel` (bool), `can_copy` (siempre True), `is_current`, `is_historical`
+
+`_enrich_plans(plans) → list[dict]`:
+- Itera en `created_at DESC`. Primer plan no-inactivo → `is_current=True`, resto → `is_historical=True`.
+- Aplicado a: `GET /actions/{id}/plans`, `GET /incidents/{id}/plans`, `POST /actions/{id}/plan`.
+
+#### Backend — tests (`test_execution_planner.py`)
+
+`TestEnrichPlan` (16 tests): `status_label` por cada estado, `risk_label`, `can_cancel=True` para draft/ready_for_review, `can_cancel=False` para cancelled/superseded, `is_current`/`is_historical`, `execution_allowed_label`, `can_copy`, campos originales preservados.
+
+`TestEnrichPlans` (4 tests): primer no-inactivo = current, todos inactivos = todos historical, solo el primero activo = current, lista vacía.
+
+`TestAuditSuperseded` (3 tests): `superseded` audit event en hash mismatch, `force=True` NO emite `superseded`, audit failure no crashea create.
+
+**Total backend: 72 tests (era 50).**
+
+#### Frontend — `SentinelPanel.jsx`
+
+**`buildPlanReport(plan, { incidentTitle, actionTitle, incidentType })`** — función pura, texto humano legible:
+- Sin JSON, sin objetos raw
+- Secciones: incidente, acción aprobada, título/estado/riesgo, permitido ejecutar = No, resumen, prechecks, pasos, rollback, notas de seguridad
+- Siempre termina con: "Aprobar o generar este plan no ejecuta cambios sobre HostingGuard, Docker, Traefik, DNS ni el repositorio del cliente."
+
+**`buildReport(inc, diag, actions, activePlansMap)`** — 4to param añadido:
+- Por cada acción aprobada con plan activo: título del plan, estado, "Ejecución permitida: No", prechecks, pasos
+- Nota de seguridad al final: "HostingGuard no ejecutó cambios automáticamente."
+
+**`plansMap`** ahora almacena `allPlans[]` por `action_id` (antes `activePlan|null`).  
+Al renderizar: `existingPlan = allPlans.find(active)`, `historyPlans = allPlans.filter(inactive)`.
+
+**`handleGeneratePlan`**: guarda array completo + llama `onPlansLoaded({ [actionId]: active })` para actualización parcial de `currentPlansMap` en IncidentRow.
+
+**`handleCancelPlan`**: guarda array completo + `setCancelSuccessActionId(actionId)` con auto-clear 4s + llama `onPlansLoaded({ [actionId]: active | undefined })`.
+
+**Cancel success message**: `<p data-testid="cancel-success-msg">Plan cancelado. No se ejecutó ninguna acción.</p>` por acción.
+
+**`PlanCard`** — nuevas props: `historyPlans`, `actionTitle`, `incidentTitle`, `incidentType`.
+- "Copiar plan" button (`data-testid="copy-plan-btn"`): llama `buildPlanReport`, escribe a clipboard, feedback "Copiado" 2s
+- Cancel button: usa `plan.can_cancel ?? !['cancelled','superseded'].includes(plan.status)`
+- "Planes anteriores" collapsible (`data-testid="history-plans-toggle"`, `history-plans-list`): lista planes cancelados/superseded con título, `status_label`, fecha formateada
+
+**`IncidentRow`**:
+- `currentPlansMap` state (vacío hasta que `onPlansLoaded` sea llamado desde ActionsPanel)
+- `onPlansLoaded={updates => setCurrentPlansMap(prev => ({...prev, ...updates}))}` → merge parcial
+- Pasa `incidentTitle={inc.title}`, `incidentType={inc.incident_type}` a ActionsPanel
+- `handleCopy` pasa `currentPlansMap` como 4to arg a `buildReport`
+
+**`ActionsPanel`** nuevas props: `incidentTitle`, `incidentType` (pasadas a PlanCard).
+
+#### Frontend — tests nuevos (`SentinelPanel.test.jsx`)
+
+Phase 3B.1 — PlanCard copy plan (4): botón visible, llama clipboard, texto incluye disclaimer, texto sin JSON raw.  
+Phase 3B.1 — PlanCard can_cancel (2): `can_cancel=false` oculta botón, `can_cancel=true` lo muestra.  
+Phase 3B.1 — cancel success message (1): mensaje "Plan cancelado. No se ejecutó ninguna acción." tras cancelar.  
+Phase 3B.1 — history plans in PlanCard (3): toggle visible con historial, plan cancelado en lista tras click, no toggle cuando solo un plan.  
+Phase 3B.1 — Copiar informe includes plan (3): nota de seguridad, título del plan en informe, "Ejecución permitida: No".
+
+**Total frontend: 80 tests (era 67).**
+
+#### Verificación en producción (pendiente)
+
+```sql
+-- Confirmar plan activo para incident_id=38 / action_id=3
+SELECT plan_id, status, plan_type, title, created_at
+FROM execution_plans WHERE action_id = 3 ORDER BY created_at DESC;
+
+-- Confirmar audit events
+SELECT event, plan_id, created_at FROM execution_plan_audit_log
+WHERE action_id = 3 ORDER BY created_at DESC;
+
+-- execution_allowed siempre false
+SELECT COUNT(*) FROM execution_plans WHERE execution_allowed = TRUE;
+-- Esperado: 0
+```

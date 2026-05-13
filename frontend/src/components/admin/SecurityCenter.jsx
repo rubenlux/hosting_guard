@@ -3,11 +3,12 @@ import {
   ShieldAlert, ShieldCheck, ShieldOff, AlertTriangle,
   RefreshCw, Filter, ChevronDown, CheckCircle2, XCircle,
   Globe, Upload, Webhook, Users, Lock, Zap, BarChart3,
-  Eye, Bot, X, Loader2,
+  Eye, Bot, X, Loader2, RotateCcw, Shield,
 } from 'lucide-react';
 import {
   getSecuritySummary, getSecurityEvents,
   resolveSecurityEvent, getSecurityEventAISummary,
+  getRemediations, rollbackRemediation,
 } from '../../services/api';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -287,6 +288,151 @@ function Detail({ label, val }) {
   );
 }
 
+// ─── Remediations section ─────────────────────────────────────────────────────
+
+const REM_STATUS_COLOR = {
+  applied:            'text-emerald-400 bg-emerald-500/10 border-emerald-500/25',
+  blocked_by_policy:  'text-amber-400 bg-amber-500/10 border-amber-500/20',
+  failed:             'text-red-400 bg-red-500/10 border-red-500/20',
+  rollback_completed: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
+  expired:            'text-gray-500 bg-white/5 border-white/8',
+  skipped:            'text-gray-500 bg-white/5 border-white/8',
+};
+
+function RemediationsSection() {
+  const [items, setItems]       = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState(null);
+  const [rollingBack, setRollingBack] = useState(null);
+  const [filterStatus, setFilterStatus] = useState('applied');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = { limit: 50 };
+      if (filterStatus) params.status = filterStatus;
+      const r = await getRemediations(params);
+      setItems(r.items || []);
+    } catch {
+      setError('Error cargando remediaciones');
+    } finally {
+      setLoading(false);
+    }
+  }, [filterStatus]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleRollback(remediationId) {
+    setRollingBack(remediationId);
+    try {
+      await rollbackRemediation(remediationId);
+      load();
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Error al hacer rollback');
+    } finally {
+      setRollingBack(null);
+    }
+  }
+
+  return (
+    <div className="bg-[#111] rounded-xl border border-white/8 overflow-hidden" data-testid="remediations-section">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+        <div className="flex items-center gap-2">
+          <Shield className="w-4 h-4 text-[#00ff88]" />
+          <span className="text-[11px] font-semibold text-white">Remediaciones automáticas</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            value={filterStatus}
+            onChange={e => setFilterStatus(e.target.value)}
+            className="bg-[#0d0d0f] border border-white/8 text-[10px] text-gray-300 rounded px-2 py-1 outline-none focus:border-white/20"
+            data-testid="rem-status-filter"
+          >
+            <option value="">Todos</option>
+            <option value="applied">Activas</option>
+            <option value="rollback_completed">Rollback</option>
+            <option value="blocked_by_policy">Bloqueadas</option>
+            <option value="failed">Fallidas</option>
+          </select>
+          <button onClick={load} disabled={loading} className="p-1.5 rounded hover:bg-white/5 transition-colors">
+            <RefreshCw className={`w-3.5 h-3.5 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="px-4 py-2 text-[10px] text-red-400 flex items-center gap-1.5">
+          <AlertTriangle className="w-3 h-3" /> {error}
+        </div>
+      )}
+
+      {loading && items.length === 0 && (
+        <div className="flex items-center justify-center py-10 gap-2 text-[11px] text-gray-600">
+          <Loader2 className="w-4 h-4 animate-spin" /> Cargando...
+        </div>
+      )}
+
+      {!loading && items.length === 0 && !error && (
+        <div className="py-10 text-center text-[11px] text-gray-600">
+          No hay remediaciones registradas.
+        </div>
+      )}
+
+      {items.length > 0 && (
+        <div className="max-h-[400px] overflow-y-auto divide-y divide-white/[0.04]">
+          {items.map(r => (
+            <div key={r.remediation_id} className="px-4 py-3 flex items-start gap-3 hover:bg-white/[0.02] transition-colors" data-testid="remediation-row">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${REM_STATUS_COLOR[r.status] || 'text-gray-400 bg-white/5 border-white/8'}`} data-testid="rem-status-badge">
+                    {r.status_label || r.status}
+                  </span>
+                  <span className="text-[10px] text-white font-medium">{r.type_label || r.remediation_type}</span>
+                  {r.rule_id && (
+                    <span className="text-[9px] text-gray-500 font-mono">[{r.rule_id}]</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 mt-1 flex-wrap">
+                  {r.target_value && (
+                    <span className="text-[9px] text-gray-400 font-mono">
+                      {r.target_type}: <span className="text-gray-300">{r.target_value}</span>
+                    </span>
+                  )}
+                  {r.hosting_id && (
+                    <span className="text-[9px] text-gray-500">hosting #{r.hosting_id}</span>
+                  )}
+                  {r.expires_at && r.status === 'applied' && (
+                    <span className="text-[9px] text-amber-500/70">expira {fmtDate(r.expires_at)}</span>
+                  )}
+                </div>
+                {r.reason && (
+                  <div className="text-[9px] text-gray-600 mt-0.5 truncate">{r.reason}</div>
+                )}
+              </div>
+              <div className="shrink-0 text-[9px] text-gray-600 text-right">
+                <div>{fmtDate(r.created_at)}</div>
+                {r.can_rollback && (
+                  <button
+                    onClick={() => handleRollback(r.remediation_id)}
+                    disabled={rollingBack === r.remediation_id}
+                    className="mt-1 flex items-center gap-1 text-blue-400 hover:text-blue-300 disabled:opacity-50 transition-colors ml-auto"
+                    data-testid="rollback-btn"
+                  >
+                    {rollingBack === r.remediation_id
+                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : <RotateCcw className="w-3 h-3" />}
+                    Rollback
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function SecurityCenter() {
@@ -517,6 +663,9 @@ export default function SecurityCenter() {
           </div>
         )}
       </div>
+
+      {/* ── Auto-remediations ── */}
+      <RemediationsSection />
 
       {/* ── Category breakdown ── */}
       {summary?.category_counts && Object.keys(summary.category_counts).length > 0 && (

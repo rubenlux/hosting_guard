@@ -1029,3 +1029,20 @@ export const getMyDeployEvents = async (limit = 20) => {
   const response = await api.get('/deploy-events/me', { params: { limit } });
   return response.data;
 };
+
+// ── Remediations (Phase 4A) ───────────────────────────────────────────────────
+
+export const getRemediations = async (params = {}) => {
+  const response = await api.get('/admin/remediations', { params });
+  return response.data;
+};
+
+export const getRemediation = async (remediationId) => {
+  const response = await api.get(`/admin/remediations/${remediationId}`);
+  return response.data;
+};
+
+export const rollbackRemediation = async (remediationId) => {
+  const response = await api.post(`/admin/remediations/${remediationId}/rollback`);
+  return response.data;
+};
