@@ -3,9 +3,11 @@ Remediation engine — applies safe, reversible auto-remediations.
 
 Contract:
 - Only types in ALLOWED_AUTO_REMEDIATIONS may be applied.
-- Policy gate runs before any action; if rejected, row is written with
-  status='blocked_by_policy'.
-- Every execution (applied OR blocked) writes a row to remediation_executions.
+- protection_mode semantics:
+    protect  → full policy gate + Redis block applied
+    monitor  → allowlist check only; writes status='skipped', decision.would_block=True, no Redis
+    off/other→ full policy gate rejects; writes status='blocked_by_policy'
+- Every execution writes a row to remediation_executions regardless of outcome.
 - Cooldown is set in Redis after a successful apply.
 - Fallback allow if Redis is unavailable (never blocks legitimate traffic).
 - No container restarts, no Docker changes, no client data touched.
@@ -66,6 +68,24 @@ def apply_safe_remediation(
             target_value=target_value,
             reason=f"remediation_type '{remediation_type}' not in allowlist",
             evidence=evidence,
+            incident_id=incident_id,
+            security_event_id=security_event_id,
+            user_id=user_id,
+        )
+
+    # Monitor mode: log the would-be action but do not enforce.
+    # Only reaches here when the type is allowlisted (spec != None).
+    if protection_mode == "monitor":
+        return _write_skipped(
+            conn,
+            hosting_id=hosting_id,
+            remediation_type=remediation_type,
+            rule_id=rule_id,
+            target_type=target_type,
+            target_value=target_value,
+            reason="monitor_mode",
+            evidence=evidence,
+            spec=spec,
             incident_id=incident_id,
             security_event_id=security_event_id,
             user_id=user_id,
@@ -178,7 +198,12 @@ def rollback_remediation(*, conn, remediation_id: int) -> dict:
     if not row:
         return {"error": "not_found"}
 
-    row = dict(row)
+    if hasattr(row, "keys"):
+        row = dict(row)
+    else:
+        cols = ["remediation_id", "remediation_type", "hosting_id", "target_type",
+                "target_value", "rule_id", "status"]
+        row = dict(zip(cols, row))
     if row["status"] not in ("applied",):
         return {"error": "not_rollbackable", "status": row["status"]}
 
@@ -238,6 +263,63 @@ def _clear_block(*, remediation_type: str, hosting_id: int, target_value: str) -
         clear_route_for_hosting("xmlrpc", hosting_id)
     elif remediation_type == "temporary_rate_limit":
         clear_route_for_hosting(f"rate_limit:{target_value}", hosting_id)
+
+
+def _write_skipped(
+    conn,
+    *,
+    hosting_id: int,
+    remediation_type: str,
+    rule_id: str,
+    target_type: str,
+    target_value: str,
+    reason: str,
+    evidence: dict,
+    spec: dict,
+    incident_id: Optional[int],
+    security_event_id: Optional[int],
+    user_id: Optional[int],
+) -> dict:
+    """Write a skipped (monitor-mode) row — would-block but not enforced."""
+    remediation_id = _write_row(
+        conn,
+        hosting_id=hosting_id,
+        user_id=user_id,
+        incident_id=incident_id,
+        security_event_id=security_event_id,
+        action_id=None,
+        plan_id=None,
+        remediation_type=remediation_type,
+        rule_id=rule_id,
+        target_type=target_type,
+        target_value=target_value,
+        status="skipped",
+        risk_level=spec.get("risk_level"),
+        reversible=spec.get("reversible", True),
+        automatic=True,
+        ttl_seconds=spec.get("ttl_seconds"),
+        expires_at=None,
+        reason=reason,
+        evidence=evidence,
+        decision={
+            "would_block": True,
+            "protection_mode": "monitor",
+            "enforced": False,
+        },
+        blocked_by_policy_reason=None,
+        created_by="system",
+    )
+    logger.info(
+        "remediation_engine: skipped (monitor) type=%s hosting=%s target=%s",
+        remediation_type, hosting_id, target_value,
+    )
+    return {
+        "remediation_id": remediation_id,
+        "status": "skipped",
+        "reason": reason,
+        "remediation_type": remediation_type,
+        "would_block": True,
+    }
 
 
 def _write_blocked(
@@ -339,4 +421,6 @@ def _write_row(
     )
     row = cur.fetchone()
     conn.commit()
-    return dict(row)["remediation_id"] if row else None
+    if not row:
+        return None
+    return row["remediation_id"] if hasattr(row, "keys") else row[0]

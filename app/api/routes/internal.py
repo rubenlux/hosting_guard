@@ -14,6 +14,9 @@ Response:
 
 This endpoint is network-restricted to the internal Docker network;
 no auth token is required.
+
+Fail-open contract: any uncaught error (Redis unavailable, DB unreachable,
+unexpected exception) must return 200 — never block legitimate traffic.
 """
 import logging
 import re
@@ -40,13 +43,19 @@ _SCANNER_PATHS = frozenset({
     "/wp-admin/install.php",
 })
 
-# Redis cache for subdomain → hosting_id (5 min TTL)
 _SUBDOMAIN_CACHE_TTL = 300
 _SUBDOMAIN_KEY_FMT   = "hg:subdomain:{subdomain}"
 
 
-def _extract_ip(forwarded_for: str) -> str:
-    return forwarded_for.split(",")[0].strip() if forwarded_for else ""
+def _extract_valid_ip(forwarded_for: str) -> str:
+    """Return the first non-empty, non-'unknown' token from X-Forwarded-For."""
+    if not forwarded_for:
+        return ""
+    for token in forwarded_for.split(","):
+        ip = token.strip()
+        if ip and ip.lower() != "unknown":
+            return ip
+    return ""
 
 
 def _subdomain_from_host(host: str) -> Optional[str]:
@@ -92,12 +101,35 @@ def _db_hosting_id(subdomain: str) -> Optional[int]:
             (subdomain,),
         )
         row = cur.fetchone()
-        return row["hosting_id"] if row else None
+        if not row:
+            return None
+        return row["hosting_id"] if hasattr(row, "keys") else row[0]
     except Exception as exc:
         logger.warning("forwardauth: subdomain lookup failed for %s: %s", subdomain, exc)
         return None
     finally:
         release_connection(conn)
+
+
+def _log_decision(
+    *,
+    event: str,
+    host: str,
+    hosting_id: Optional[int],
+    ip: str,
+    uri: str,
+    protection_mode: str,
+    blocklist_hit: bool,
+    rule_id: str,
+    decision: str,
+    reason: str,
+) -> None:
+    logger.info(
+        "forwardauth event=%s host=%s hosting_id=%s ip=%s uri=%s mode=%s "
+        "blocklist_hit=%s rule_id=%s decision=%s reason=%s",
+        event, host, hosting_id, ip, uri, protection_mode,
+        blocklist_hit, rule_id, decision, reason,
+    )
 
 
 @router.get("/forwardauth")
@@ -107,7 +139,7 @@ def forwardauth(request: Request):
     fwd_host = request.headers.get("x-forwarded-host", "")
     fwd_uri  = request.headers.get("x-forwarded-uri",  "/")
 
-    client_ip = _extract_ip(fwd_for)
+    client_ip = _extract_valid_ip(fwd_for)
     subdomain  = _subdomain_from_host(fwd_host)
 
     if not subdomain:
@@ -117,6 +149,11 @@ def forwardauth(request: Request):
         hosting_id = _resolve_hosting_id(subdomain)
     except Exception as exc:
         logger.warning("forwardauth: hosting resolution error subdomain=%s: %s", subdomain, exc)
+        _log_decision(
+            event="forwardauth", host=fwd_host, hosting_id=None, ip=client_ip,
+            uri=fwd_uri, protection_mode="unknown", blocklist_hit=False,
+            rule_id="", decision="allow", reason="hosting_lookup_error",
+        )
         return Response(status_code=200)
 
     if not hosting_id:
@@ -132,63 +169,111 @@ def forwardauth(request: Request):
         policy = get_policy(hosting_id)
     except Exception as exc:
         logger.warning("forwardauth: policy error hosting_id=%s: %s", hosting_id, exc)
+        _log_decision(
+            event="forwardauth", host=fwd_host, hosting_id=hosting_id, ip=client_ip,
+            uri=fwd_uri, protection_mode="unknown", blocklist_hit=False,
+            rule_id="", decision="allow", reason="policy_error",
+        )
         return Response(status_code=200)
 
     mode = policy.get("mode", "off")
-    if mode == "off":
-        return Response(status_code=200)
-
     path = fwd_uri.split("?")[0].rstrip("/") or "/"
 
-    if mode == "protect":
-        # IP blocklist check (policy rule or auto-remediation block)
-        if client_ip:
+    if mode == "off":
+        _log_decision(
+            event="forwardauth", host=fwd_host, hosting_id=hosting_id, ip=client_ip,
+            uri=fwd_uri, protection_mode="off", blocklist_hit=False,
+            rule_id="", decision="allow", reason="protection_off",
+        )
+        return Response(status_code=200)
+
+    # IP blocklist check — runs in both protect and monitor modes.
+    # In monitor mode: logs would_block but never returns 403.
+    if client_ip:
+        try:
             block_record = is_ip_blocked_for_hosting(client_ip, hosting_id)
-            if block_record:
-                rule_id = block_record.get("rule_id", "unknown")
-                logger.info(
-                    "forwardauth: BLOCKED ip=%s hosting_id=%d rule=%s uri=%s",
-                    client_ip, hosting_id, rule_id, fwd_uri,
+        except Exception as exc:
+            logger.warning(
+                "forwardauth: ip_blocklist check failed ip=%s hosting_id=%s: %s",
+                client_ip, hosting_id, exc,
+            )
+            block_record = None  # fail-open
+
+        if block_record:
+            rule_id = block_record.get("rule_id", "unknown")
+            if mode == "protect":
+                _log_decision(
+                    event="forwardauth", host=fwd_host, hosting_id=hosting_id,
+                    ip=client_ip, uri=fwd_uri, protection_mode=mode,
+                    blocklist_hit=True, rule_id=rule_id, decision="block",
+                    reason="ip_blocked",
                 )
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "Acceso bloqueado por política de seguridad", "rule": rule_id},
                 )
+            # monitor mode
+            _log_decision(
+                event="forwardauth", host=fwd_host, hosting_id=hosting_id,
+                ip=client_ip, uri=fwd_uri, protection_mode=mode,
+                blocklist_hit=True, rule_id=rule_id, decision="would_block",
+                reason="ip_blocked_monitor",
+            )
 
+    if mode == "protect":
         # Rate-limit block (auto-remediation temporary_rate_limit)
         if client_ip:
-            rate_block = is_route_blocked_for_hosting(f"rate_limit:{client_ip}", hosting_id)
+            try:
+                rate_block = is_route_blocked_for_hosting(f"rate_limit:{client_ip}", hosting_id)
+            except Exception as exc:
+                logger.warning(
+                    "forwardauth: rate_limit check failed ip=%s hosting_id=%s: %s",
+                    client_ip, hosting_id, exc,
+                )
+                rate_block = None  # fail-open
+
             if rate_block:
-                logger.info(
-                    "forwardauth: RATE_LIMITED ip=%s hosting_id=%d uri=%s",
-                    client_ip, hosting_id, fwd_uri,
+                rule_id = rate_block.get("rule_id", "rate_limit")
+                _log_decision(
+                    event="forwardauth", host=fwd_host, hosting_id=hosting_id,
+                    ip=client_ip, uri=fwd_uri, protection_mode=mode,
+                    blocklist_hit=True, rule_id=rule_id, decision="rate_limit",
+                    reason="rate_limit_block",
                 )
                 return JSONResponse(
                     status_code=429,
-                    content={"detail": "Rate limit temporal activo", "rule": rate_block.get("rule_id", "rate_limit")},
+                    content={"detail": "Rate limit temporal activo", "rule": rule_id},
                 )
 
         # xmlrpc check: policy setting OR auto-remediation route block
         if path == "/xmlrpc.php":
-            xmlrpc_blocked = policy.get("block_xmlrpc") or is_route_blocked_for_hosting("xmlrpc", hosting_id)
-            if xmlrpc_blocked:
-                logger.info("forwardauth: BLOCK xmlrpc ip=%s hosting_id=%d", client_ip, hosting_id)
+            try:
+                xmlrpc_route_blocked = is_route_blocked_for_hosting("xmlrpc", hosting_id)
+            except Exception:
+                xmlrpc_route_blocked = None  # fail-open
+
+            if policy.get("block_xmlrpc") or xmlrpc_route_blocked:
+                _log_decision(
+                    event="forwardauth", host=fwd_host, hosting_id=hosting_id,
+                    ip=client_ip, uri=fwd_uri, protection_mode=mode,
+                    blocklist_hit=True, rule_id="xmlrpc_block", decision="block",
+                    reason="xmlrpc_disabled",
+                )
                 return JSONResponse(status_code=403, content={"detail": "xmlrpc.php deshabilitado"})
 
-        # Scanner paths check: policy setting OR IP blocked for scanning
+        # Scanner paths check
         if policy.get("block_scanner_paths") and path in _SCANNER_PATHS:
-            logger.info(
-                "forwardauth: BLOCK scanner path=%s ip=%s hosting_id=%d",
-                path, client_ip, hosting_id,
+            _log_decision(
+                event="forwardauth", host=fwd_host, hosting_id=hosting_id,
+                ip=client_ip, uri=fwd_uri, protection_mode=mode,
+                blocklist_hit=True, rule_id="scanner_path", decision="block",
+                reason="scanner_path_blocked",
             )
             return JSONResponse(status_code=403, content={"detail": "Ruta bloqueada"})
 
-    if mode == "monitor" and client_ip:
-        block_record = is_ip_blocked_for_hosting(client_ip, hosting_id)
-        if block_record:
-            logger.info(
-                "forwardauth: MONITOR (would block) ip=%s hosting_id=%d rule=%s uri=%s",
-                client_ip, hosting_id, block_record.get("rule_id", "unknown"), fwd_uri,
-            )
-
+    _log_decision(
+        event="forwardauth", host=fwd_host, hosting_id=hosting_id,
+        ip=client_ip, uri=fwd_uri, protection_mode=mode,
+        blocklist_hit=False, rule_id="", decision="allow", reason="pass",
+    )
     return Response(status_code=200)
