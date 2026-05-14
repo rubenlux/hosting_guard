@@ -1287,3 +1287,290 @@ WHERE action_id = 3 ORDER BY created_at DESC;
 SELECT COUNT(*) FROM execution_plans WHERE execution_allowed = TRUE;
 -- Esperado: 0
 ```
+
+---
+
+## 2026-05-14 — NPM Supply-Chain Guard (TanStack) + Package Manager Detection + Build Secret Isolation
+
+### Contexto
+
+El 2026-05-11 se reveló un compromiso de cadena de suministro npm que afectó 10 paquetes `@tanstack/*`. Se implementó un guard preventivo en el preflight del deploy que escanea lockfiles antes de ejecutar `npm install`, bloqueando cualquier proyecto que referencie versiones comprometidas. En paralelo, se extendió el deploy service para soportar pnpm y yarn nativamente vía corepack, se reforzó el guard de package manager (lockfile requerido, múltiples lockfiles detectados), y se aisló la ejecución de builds de secretos de producción.
+
+---
+
+### BLOQUE 1 — Supply-chain guard: TanStack
+
+**Archivo**: `app/services/deploy/dependency_preflight.py`
+
+`_TANSTACK_AFFECTED` — dict con las 10 versiones comprometidas:
+```python
+_TANSTACK_AFFECTED = {
+    "@tanstack/react-query":        {"5.75.0", "5.75.1"},
+    "@tanstack/query-core":         {"5.75.0", "5.75.1"},
+    "@tanstack/react-table":        {"8.21.0"},
+    "@tanstack/table-core":         {"8.21.0"},
+    "@tanstack/react-virtual":      {"3.13.0"},
+    "@tanstack/virtual-core":       {"3.13.0"},
+    "@tanstack/react-router":       {"1.114.0"},
+    "@tanstack/router-core":        {"1.114.0"},
+    "@tanstack/start":              {"1.114.0"},
+    "@tanstack/react-form":         {"1.0.0"},
+}
+```
+
+**Scanners de lockfile** (todos retornan `dict[pkg_name, version]` de los `@tanstack/*` encontrados):
+
+- `_scan_npm_lockfile_format(path)` — helper compartido para package-lock.json y npm-shrinkwrap.json. Soporta formato v1 (`dependencies`), v2/v3 (`packages`, con paths anidados tipo `node_modules/@scope/pkg`). Extrae el nombre real del paquete con `split("node_modules/")[-1]`.
+- `_scan_package_lock(work_dir)` → llama `_scan_npm_lockfile_format` con `package-lock.json`
+- `_scan_shrinkwrap(work_dir)` → llama `_scan_npm_lockfile_format` con `npm-shrinkwrap.json`
+- `_scan_pnpm_lock(work_dir)` → regex `r"""['"/ ](@tanstack/[\w-]+)@([\d]+\.[\d]+\.[\d]+[\w.-]*)['"/ ]?\s*:"""` sobre el YAML como texto plano
+- `_scan_yarn_lock(work_dir)` → parser línea a línea; soporta yarn classic v1 (sección `"@pkg@ver":`) y berry (`"@pkg@npm:ver":`)
+
+`_tanstack_supply_chain_check(work_dir, pkg)`:
+1. Recopila versiones afectadas escaneando los 4 lockfiles (package-lock, shrinkwrap, pnpm, yarn)
+2. Si `affected_packages` no vacío → retorna `DeployError` con code `npm_supply_chain_tanstack_compromise`, `evidence.affected_packages`
+3. Si no hay lockfile pero `@tanstack/*` en `pkg.dependencies/devDependencies` → retorna `npm_lockfile_required_for_supply_chain_safety`
+4. `has_lock`: considera `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`
+
+**Prioridad en `run_dependency_preflight`**:
+1. node-sass check
+2. TanStack supply-chain check ← nuevo (antes del PM check)
+3. Package manager check
+4. Node version check
+5. Next.js SSR check
+
+---
+
+### BLOQUE 2 — Build container secret isolation
+
+**Archivo**: `app/services/deploy/build_runner.py`
+
+`_BLOCKED_BUILD_ENV_RE` — regex compilado `re.IGNORECASE`:
+```python
+_BLOCKED_BUILD_ENV_RE = re.compile(
+    r"DATABASE_URL$|DB_PASS|DB_PASSWORD|SECRET_KEY|JWT_SECRET"
+    r"|NPM_TOKEN|NODE_AUTH_TOKEN|GITHUB_TOKEN|GH_TOKEN"
+    r"|SSH_PRIVATE_KEY|SSH_KEY(?:$|_)|PRIVATE_KEY|API_SECRET",
+    re.IGNORECASE,
+)
+```
+
+`_safe_build_env_flags(env_vars: dict) -> list[str]`:
+- Filtra `env_vars` eliminando toda key que coincida con `_BLOCKED_BUILD_ENV_RE`
+- Llama `_docker_env_flags` con el dict filtrado
+- Retorna `[]` si `env_vars` vacío
+
+Variables bloqueadas: `DATABASE_URL`, `DB_PASS`, `DB_PASSWORD`, `SECRET_KEY`, `JWT_SECRET`, `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `SSH_PRIVATE_KEY`, `SSH_KEY*`, `PRIVATE_KEY`, `MY_PRIVATE_KEY`, `API_SECRET`.
+
+Variables seguras (pasan): `NODE_ENV`, `VITE_*`, `REACT_APP_*`, `PUBLIC_URL`.
+
+En `github_deploy_service.py`: `_env_flags = _safe_build_env_flags(data.env_vars)` reemplaza llamada directa a `_docker_env_flags`.
+
+---
+
+### BLOQUE 3 — Package manager detection + lockfile guard
+
+**Archivo**: `app/services/deploy/dependency_preflight.py`
+
+Reescritura de `_package_manager_check(work_dir)`:
+```python
+has_npm  = (os.path.exists(".../package-lock.json")
+            or os.path.exists(".../npm-shrinkwrap.json"))
+has_pnpm = os.path.exists(".../pnpm-lock.yaml")
+has_yarn = os.path.exists(".../yarn.lock")
+lockfile_count = sum([has_npm, has_pnpm, has_yarn])
+
+if lockfile_count > 1:
+    → multiple_lockfiles_detected
+      evidence: {"lockfiles": [...], "install_skipped": True}
+
+if lockfile_count == 0:
+    → lockfile_required
+      evidence: {"install_skipped": True}
+
+return None  # single lockfile = pass
+```
+
+Nueva función `_extract_pm_version(pm_field, pm_name)`:
+- Parsea `"pnpm@8.15.4"` o `"yarn@4.1.0+sha256.abc"` → extrae solo `X.Y.Z`
+- Si el campo pertenece a otro PM → retorna `None`
+
+Nueva función `detect_package_manager(work_dir, pkg) -> dict`:
+- Prioridad: pnpm-lock.yaml > yarn.lock > package-lock.json > npm-shrinkwrap.json
+- Lee `pkg.get("packageManager", "")` para versión pinneada (corepack)
+- Retorna `{"package_manager": str, "lockfile": str, "version": str|None}`
+
+`_package_manager_check` ya **no bloquea** pnpm ni yarn (son PMs válidos). Solo bloquea múltiples lockfiles o ausencia de lockfile.
+
+---
+
+### BLOQUE 4 — Build orchestration: pnpm/yarn/npm via corepack
+
+**Archivo**: `app/services/deploy/github_deploy_service.py`
+
+Flujo en `has_package_json` block:
+1. Detección de framework y `out_dir` (sin install_cmd/build_cmd aún)
+2. `run_dependency_preflight(work_dir, pkg)` → `raise DeployError` si falla
+3. `_pm_info = detect_package_manager(work_dir, pkg)` → `_pm = _pm_info["package_manager"]`
+4. Asignación de comandos según `_pm`:
+
+```python
+if _pm == "pnpm":
+    ver = _pm_info["version"]
+    corepack_prepare = f"corepack prepare pnpm@{ver} --activate" if ver else "corepack prepare pnpm --activate"
+    install_cmd = f"corepack enable && {corepack_prepare} && pnpm install --frozen-lockfile"
+    build_cmd   = f"pnpm run build"
+elif _pm == "yarn":
+    install_cmd = "corepack enable && yarn install --immutable"
+    build_cmd   = "yarn build"
+else:  # npm
+    install_cmd = "npm ci"
+    build_cmd   = "npm run build"
+```
+
+5. `deploy_log["stages"]["build_info"]["package_manager"] = _pm`
+
+**ERESOLVE retry**: guard `if _pm == "npm" and "ERESOLVE" in _iout:` — evita retry incorrecto en pnpm/yarn.
+
+**PM-specific failure codes**: si `classify_npm_failure` retorna `npm_install_failed`, se mapea a:
+```python
+_icode = {"pnpm": "pnpm_install_failed", "yarn": "yarn_install_failed"}.get(_pm, "npm_ci_failed")
+```
+
+---
+
+### BLOQUE 5 — Diagnostics matrix + Frontend
+
+**Archivo**: `app/services/deploy/diagnostics_matrix.py`
+
+Códigos nuevos agregados:
+
+| Código | Stage | Severity | Retryable |
+|--------|-------|----------|-----------|
+| `multiple_lockfiles_detected` | dependency_preflight | error | False |
+| `lockfile_required` | dependency_preflight | warning | False |
+| `npm_supply_chain_tanstack_compromise` | dependency_preflight | critical | False |
+| `npm_lockfile_required_for_supply_chain_safety` | dependency_preflight | critical | False |
+| `npm_supply_chain_risk` | dependency_preflight | critical | False |
+| `npm_ci_failed` | dependency_install | warning | True |
+| `pnpm_install_failed` | dependency_install | warning | True |
+| `yarn_install_failed` | dependency_install | warning | True |
+
+`package_manager_pnpm_detected` y `package_manager_yarn_detected` — mantenidos con descripción "(legacy)" para compatibilidad histórica; `retryable: True`.
+
+**Archivo**: `frontend/src/components/deploy/DeployDiagnosticCard.jsx`
+
+- 8 nuevos `CODE_LABELS` (supply-chain, lockfile, PM-specific)
+- `SUPPLY_CHAIN_CODES = new Set(["npm_supply_chain_tanstack_compromise", "npm_lockfile_required_for_supply_chain_safety", "npm_supply_chain_risk"])`
+- Banner rojo de seguridad para `isSupplyChain`: `ShieldAlert` + texto explicativo del compromiso TanStack
+- Panel de paquetes comprometidos: `evidence.affected_packages` → lista `pkg@version` en rojo/naranja
+- Banner ámbar de `install_skipped` sin cambios
+
+---
+
+### BLOQUE 6 — Tests
+
+**`tests/test_tanstack_supply_chain.py`** (nuevo, 23 tests):
+- Detección en package-lock.json v2/v3 (nested `node_modules/` path)
+- Detección en package-lock.json v1 (`dependencies` field)
+- Detección en npm-shrinkwrap.json
+- Detección en pnpm-lock.yaml
+- Detección en yarn.lock v1 y berry
+- Versión no comprometida → `None`
+- Paquete @tanstack sin lockfile → `npm_lockfile_required_for_supply_chain_safety`
+- `@tanstack/*` sin lockfile pero fuera de deps → no bloquea
+- Supply-chain tiene prioridad sobre node-sass y node version
+- Múltiples paquetes comprometidos detectados simultáneamente
+
+**`tests/test_package_manager_detection.py`** (nuevo, 37 tests):
+- `detect_package_manager`: pnpm/npm/yarn/shrinkwrap, version extraction desde `packageManager` field, version `None` si field pertenece a otro PM
+- `_package_manager_check`: single lockfile pasa (pnpm/npm/yarn/shrinkwrap), múltiples lockfiles bloquea (todas combinaciones), sin lockfile bloquea
+- `run_dependency_preflight` integración: pnpm lockfile pasa, npm pasa, múltiples bloquea, sin lockfile bloquea
+- Supply-chain tiene prioridad sobre `lockfile_required` (pnpm-lock.yaml con @tanstack comprometido → supply-chain code, no lockfile_required)
+- `_scan_shrinkwrap`: missing → `{}`, compromised → `{"@tanstack/react-query": "5.75.0"}`
+- `_safe_build_env_flags`: strips DATABASE_URL, NPM_TOKEN, GITHUB_TOKEN, GH_TOKEN, SSH_PRIVATE_KEY, SSH_KEY, JWT_SECRET, DB_PASSWORD, DB_PASS, PRIVATE_KEY, NODE_AUTH_TOKEN, API_SECRET; safe vars (NODE_ENV, VITE_*, REACT_APP_*) pasan; input vacío → `[]`
+
+**`tests/test_diagnostics_matrix.py`** — actualizaciones:
+- `test_yarn_lock_detected`: ahora `assert result is None` (yarn soportado)
+- `test_pnpm_lock_detected`: ahora `assert result is None` (pnpm soportado)
+- `test_yarn_lock_with_package_lock_not_blocked`: ahora `assert result["code"] == "multiple_lockfiles_detected"`
+- `test_engines_node_upper_bound_incompatible`, `test_engines_node_open_upper_bound_ok`: temp dir incluye `package-lock.json` para no triggear `lockfile_required` antes del check de node version
+
+**Fixtures actualizadas** — agregado `package-lock.json` mínimo (`{"lockfileVersion": 3, "packages": {}}`) a:
+- `tests/fixtures/github_repos/node_version_nvmrc/`
+- `tests/fixtures/github_repos/vite_clean/`
+- `tests/fixtures/github_repos/next_ssr/`
+- `tests/fixtures/github_repos/next_static_export/`
+
+**Total tests**: 977 pasando (0 failed).
+
+---
+
+## 2026-05-14 — Fix Crítico: Routing Traefik para api.hostingguard.lat + Persistencia via Dynamic Files
+
+### Contexto
+
+Después de los últimos deploys, `api.hostingguard.lat/health` devolvía 404. El frontend cargaba correctamente (SPA fallback vía Nginx) pero todas las llamadas de API fallaban, haciendo el dashboard inutilizable. Diagnóstico: Traefik no tenía router activo para `api.hostingguard.lat` — la request no llegaba al contenedor `app`. App respondía internamente en `http://127.0.0.1:8000/health` sin problemas.
+
+Causa raíz: el `docker-compose.yml` en `/opt/deploy/` (editado manualmente, nunca sincronizado con git) tenía labels de Traefik para el router `hg` que no estaban siendo aplicadas correctamente — probablemente divergencia entre el repo y producción. Solución inmediata: dynamic files en `/opt/traefik-dynamic/` que Traefik recarga automáticamente sin reiniciar contenedores.
+
+---
+
+### BLOQUE 1 — Fix inmediato (ya aplicado en producción)
+
+Archivos creados manualmente en el servidor:
+
+**`/opt/traefik-dynamic/platform-frontend.yml`**:
+- Router `platform-frontend`, rule `Host(\`hostingguard.lat\`) || Host(\`www.hostingguard.lat\`)`
+- Service URL: `http://frontend:80`
+- TLS certResolver `le`
+- Sin ForwardAuth
+
+**`/opt/traefik-dynamic/platform-api.yml`**:
+- Router `platform-api`, rule `Host(\`api.hostingguard.lat\`)`
+- Service URL: `http://hosting_guard:8000`, flushInterval 100ms
+- TLS certResolver `le`
+- Sin ForwardAuth (FastAPI maneja JWT internamente — agregar ForwardAuth causaría loop infinito)
+
+Validación post-fix:
+- `https://hostingguard.lat` → 200
+- `https://hostingguard.lat/login` → 200
+- `https://hostingguard.lat/dashboard` → 200
+- `https://api.hostingguard.lat/health` → 200
+
+---
+
+### BLOQUE 2 — Persistencia: script idempotente
+
+**Archivo**: `scripts/ensure_platform_traefik_routes.sh`
+
+Script bash idempotente que:
+1. Crea `/opt/traefik-dynamic/` si no existe
+2. Escribe `platform-frontend.yml` y `platform-api.yml` con contenido canónico (siempre sobreescribe para garantizar consistencia)
+3. Verifica que los contenedores `traefik`, `hosting_guard`, `frontend` estén corriendo
+4. Chequea internamente que `http://127.0.0.1:8000/health` responda 200 dentro del contenedor app
+5. Corre 4 checks públicos: `api.hostingguard.lat/health`, `hostingguard.lat/`, `/login`, `/dashboard`
+6. Imprime `ALL OK — N checks passed` o `FAIL — N check(s) failed` con instrucciones de troubleshooting
+7. Sale con `exit 1` si hay algún fallo (compatible con CI/deploy pipeline)
+8. Acepta `--check-only` para verificar sin escribir archivos
+
+Ambos routers tienen `priority: 100` — garantiza que los file provider routers ganen sobre cualquier label Docker con la misma regla (evita undefined behavior si hay duplicados).
+
+---
+
+### BLOQUE 3 — Runbook en ARCHITECTURE.md
+
+Sección nueva agregada: **"Traefik Routing Runbook (updated 2026-05-14)"**
+
+Documenta:
+- Modelo de providers: Docker (middleware hg-forwardauth + service hg) vs File (platform routes + tenant routes)
+- Por qué los platform routes viven en file provider (no en labels Docker): los labels se pierden si el contenedor se recrea antes de estar healthy
+- Qué labels Docker del servicio `app` deben mantenerse (middleware + service, NO el router)
+- Tabla de ForwardAuth scope: qué rutas lo necesitan y cuáles no (con el porqué)
+- Runbook "API devuelve 404": 4 comandos de diagnóstico + restore con el script
+- Runbook "deploy checklist": correr el script después de cualquier deploy que toque app/frontend/traefik
+- Runbook "editar dynamic files de forma segura": backup → editar → validar YAML → Traefik auto-recarga
+
+### Invariante de seguridad documentada
+
+**NUNCA agregar `hg-forwardauth` a `api.hostingguard.lat`**: el endpoint `/internal/forwardauth` del app es el que valida las requests — si se le agrega ForwardAuth, cada request a la API llama a `/internal/forwardauth`, que también pasa por Traefik, que llama de nuevo a `/internal/forwardauth` → loop infinito. Esto está documentado en el runbook y en comentarios dentro de los YAML.
