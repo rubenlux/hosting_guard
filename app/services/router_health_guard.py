@@ -222,35 +222,42 @@ def _context_hash(host: str, hosting_id: Optional[int], incident_type: str, cont
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
 
 
+_NGINX_DEFAULT_MARKERS = (b"Welcome to nginx!", b"nginx default page")
+
+
+def _is_nginx_default_page(body: bytes) -> bool:
+    return any(marker in body for marker in _NGINX_DEFAULT_MARKERS)
+
+
 def _http_check(url: str, timeout: int = _HTTP_TIMEOUT) -> tuple:
     """
-    Returns (status_code, content_type, body_size).
+    Returns (status_code, content_type, body_bytes).
     Special codes: -1 = timeout, -2 = SSL/TLS error, 0 = connection refused/DNS error.
     """
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     ctx = ssl.create_default_context()
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-            body = resp.read(256)
-            return resp.status, resp.headers.get("content-type", ""), len(body)
+            body = resp.read(512)
+            return resp.status, resp.headers.get("content-type", ""), body
     except urllib.error.HTTPError as e:
         body = e.read(256)
         ct = e.headers.get("content-type", "") if e.headers else ""
-        return e.code, ct, len(body)
+        return e.code, ct, body
     except urllib.error.URLError as e:
         reason = str(e.reason) if hasattr(e, "reason") else str(e)
         if "SSL" in reason or "certificate" in reason.lower():
-            return -2, "", 0
+            return -2, "", b""
         if "timed out" in reason.lower():
-            return -1, "", 0
-        return 0, "", 0
+            return -1, "", b""
+        return 0, "", b""
     except TimeoutError:
-        return -1, "", 0
+        return -1, "", b""
     except OSError:
-        return 0, "", 0
+        return 0, "", b""
 
 
-def _classify_failure(status_code: int, content_type: str, body_size: int) -> str:
+def _classify_failure(status_code: int, content_type: str) -> str:
     if status_code == -2:
         return "tls_or_certificate_issue"
     if status_code in (-1, 0):
@@ -274,6 +281,37 @@ def _container_status(container_name: str) -> Optional[bool]:
         return out.strip() == "running"
     except Exception:
         return None
+
+
+def _container_image(container_name: str) -> str:
+    """Returns the container's image name, or '' on error."""
+    try:
+        from app.infra.docker_client import run_docker_command
+        rc, out, _ = run_docker_command(
+            ["inspect", "--format", "{{.Config.Image}}", container_name], timeout=5
+        )
+        return out.strip() if rc == 0 else ""
+    except Exception:
+        return ""
+
+
+def _get_container_mounts(container_name: str) -> list:
+    """Returns list of mount dicts from docker inspect, or [] on error."""
+    try:
+        from app.infra.docker_client import run_docker_command
+        rc, out, _ = run_docker_command(
+            ["inspect", "--format", "{{json .Mounts}}", container_name], timeout=5
+        )
+        if rc != 0:
+            return []
+        return json.loads(out.strip()) or []
+    except Exception:
+        return []
+
+
+def _has_html_mount(mounts: list) -> bool:
+    """True if any mount targets /usr/share/nginx/html."""
+    return any(m.get("Destination") == "/usr/share/nginx/html" for m in mounts)
 
 
 def _router_source_for_platform(route_cfg: dict) -> str:
@@ -337,9 +375,9 @@ def check_single_host(host: str, expected_service: Optional[str] = None) -> "Rou
         scope = "tenant"
 
     for path in paths:
-        status_code, content_type, body_size = _http_check(f"https://{host}{path}")
+        status_code, content_type, body = _http_check(f"https://{host}{path}")
         if status_code not in expected_statuses:
-            incident_type = _classify_failure(status_code, content_type, body_size)
+            incident_type = _classify_failure(status_code, content_type)
             return RouterHealthResult(
                 host=host,
                 scope=scope,
@@ -350,7 +388,7 @@ def check_single_host(host: str, expected_service: Optional[str] = None) -> "Rou
                 incident_type=incident_type,
                 summary=f"{host}{path} → HTTP {status_code} ({incident_type})",
                 evidence={"host": host, "path": path, "status_code": status_code,
-                          "content_type": content_type, "body_size": body_size,
+                          "content_type": content_type, "body_size": len(body),
                           "expected_service": expected_service or route_cfg and route_cfg.get("service")},
                 checked_at=_now_iso(),
             )
@@ -390,15 +428,15 @@ def check_platform_routes() -> list:
         last_ct = ""
 
         for path in paths:
-            status_code, content_type, body_size = _http_check(f"https://{host}{path}")
+            status_code, content_type, body = _http_check(f"https://{host}{path}")
             last_status = status_code
             last_ct = content_type
             if status_code not in expected_statuses:
                 failing_path = path
                 failing_status = status_code
                 failing_ct = content_type
-                failing_body = body_size
-                incident_type = _classify_failure(status_code, content_type, body_size)
+                failing_body = len(body)
+                incident_type = _classify_failure(status_code, content_type)
                 break
 
         if incident_type is None:
@@ -528,13 +566,17 @@ def _check_tenant_hosting(h: dict) -> "RouterHealthResult":
     else:
         # ForwardAuth returns 401/302 for unauthenticated users — all are valid signs the route works
         expected_statuses = [200, 301, 302, 401, 403]
-        status_code, content_type, body_size = _http_check(f"https://{host}/")
+        status_code, content_type, body = _http_check(f"https://{host}/")
         evidence["status_code"] = status_code
         evidence["content_type"] = content_type
+        evidence["body_size"] = len(body)
 
         if status_code not in expected_statuses:
-            incident_type = _classify_failure(status_code, content_type, body_size)
+            incident_type = _classify_failure(status_code, content_type)
             summary = f"{host} → HTTP {status_code} ({incident_type})"
+        elif status_code == 200 and _is_nginx_default_page(body):
+            incident_type = "misconfigured_site_content"
+            summary = f"{host} → HTTP 200 pero sirve página nginx por defecto (sin contenido)"
         else:
             summary = f"{host} → HTTP {status_code} OK"
 
@@ -1042,6 +1084,235 @@ def _emit_docker_provider_incident(unhealthy_count: int, total_tenants: int, api
             release_connection(conn)
 
 
+# ─── Static container mount health + safe remediation ────────────────────────
+
+_PLAN_RESOURCES: dict = {
+    "free":     {"cpu": "0.5", "memory": "512m"},
+    "personal": {"cpu": "1.0", "memory": "1g"},
+    "negocio":  {"cpu": "2.0", "memory": "2g"},
+    "agencia":  {"cpu": "4.0", "memory": "4g"},
+    "basic":    {"cpu": "0.5", "memory": "512m"},
+    "pro":      {"cpu": "1.0", "memory": "1g"},
+    "business": {"cpu": "2.0", "memory": "2g"},
+}
+
+
+def check_static_container_mounts() -> list:
+    """
+    Detects active nginx (static) hostings whose container has no bind mount on
+    /usr/share/nginx/html but whose client files exist on the host.
+
+    Emits invalid_container_mount incidents. Never modifies containers.
+    """
+    from app.infra.db import get_connection, release_connection
+
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT hosting_id, user_id, subdomain, container_name
+            FROM hostings
+            WHERE status = 'active'
+              AND (db_container_name IS NULL OR db_container_name = '')
+            ORDER BY hosting_id
+            """,
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.error("check_static_container_mounts: DB error: %s", exc)
+        return []
+    finally:
+        if conn:
+            release_connection(conn)
+
+    results = []
+    for h in rows:
+        container_name = (h.get("container_name") or "").strip()
+        if not container_name:
+            continue
+
+        image = _container_image(container_name)
+        if "nginx" not in image.lower():
+            continue
+
+        client_index = f"/opt/clients/{container_name}/index.html"
+        if not os.path.exists(client_index):
+            continue
+
+        mounts = _get_container_mounts(container_name)
+        if _has_html_mount(mounts):
+            continue
+
+        host = normalize_tenant_public_host(h.get("subdomain", ""))
+        result = RouterHealthResult(
+            host=host,
+            hosting_id=h["hosting_id"],
+            container_name=container_name,
+            scope="tenant",
+            container_running=_container_status(container_name) is True,
+            router_source="unknown",
+            healthy=False,
+            incident_type="invalid_container_mount",
+            summary=(
+                f"{host} — contenedor sin mount en /usr/share/nginx/html "
+                f"(archivos del cliente presentes en host, contenido no servido)"
+            ),
+            evidence={
+                "container_name": container_name,
+                "image": image,
+                "mounts": mounts,
+                "client_index": client_index,
+            },
+            checked_at=_now_iso(),
+        )
+        _emit_tenant_incident(result, h.get("user_id"))
+        results.append(result)
+
+    return results
+
+
+def ensure_static_container_mount(hosting_id: int, dry_run: bool = True) -> dict:
+    """
+    Recreates a static nginx container with the correct read-only bind mount.
+
+    Preconditions (all enforced server-side):
+      - hosting status == 'active'
+      - container image contains 'nginx'
+      - db_container_name is empty (not WordPress)
+      - /opt/clients/{container_name}/index.html exists on the host
+      - mount not already present
+
+    dry_run=True  — validate preconditions + preview, no changes.
+    dry_run=False — docker stop → docker rm → docker run with -v :ro.
+    Audit: tenant_container_recreated_with_static_mount
+    """
+    from app.infra.db import get_connection, release_connection
+
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT hosting_id, user_id, subdomain, container_name, status, plan, db_container_name
+            FROM hostings WHERE hosting_id = %s
+            """,
+            (hosting_id,),
+        )
+        row = cur.fetchone()
+    except Exception as exc:
+        return {"error": f"DB error: {exc}", "code": "db_error", "repair_available": False}
+    finally:
+        if conn:
+            release_connection(conn)
+
+    if not row:
+        return {"error": "Hosting not found", "code": "hosting_not_found", "repair_available": False}
+
+    h = dict(row)
+
+    if h["status"] != "active":
+        return {
+            "error": f"Hosting status is '{h['status']}', must be 'active'",
+            "code": "hosting_not_active",
+            "repair_available": False,
+        }
+
+    db_container = (h.get("db_container_name") or "").strip()
+    if db_container:
+        return {
+            "error": "WordPress hosting — static mount repair does not apply",
+            "code": "not_static_hosting",
+            "repair_available": False,
+        }
+
+    container_name = (h.get("container_name") or "").strip()
+    if not container_name:
+        return {"error": "Hosting has no container_name", "code": "hosting_incomplete", "repair_available": False}
+
+    image = _container_image(container_name)
+    if "nginx" not in image.lower():
+        return {
+            "error": f"Container image '{image}' is not nginx — static repair only applies to nginx containers",
+            "code": "not_nginx_container",
+            "repair_available": False,
+        }
+
+    client_dir = f"/opt/clients/{container_name}"
+    client_index = os.path.join(client_dir, "index.html")
+    if not os.path.exists(client_index):
+        return {
+            "error": f"No index.html at {client_index} — upload site content before repairing mount",
+            "code": "no_client_content",
+            "repair_available": False,
+        }
+
+    mounts = _get_container_mounts(container_name)
+    if _has_html_mount(mounts):
+        return {
+            "ok": True,
+            "dry_run": dry_run,
+            "action": "already_correct",
+            "message": "Container already has /usr/share/nginx/html mount — no action needed",
+            "container_name": container_name,
+            "repair_available": False,
+        }
+
+    plan = (h.get("plan") or "free").lower()
+    resources = _PLAN_RESOURCES.get(plan, _PLAN_RESOURCES["free"])
+    mount_spec = f"{client_dir}:/usr/share/nginx/html:ro"
+
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "action": "would_recreate",
+            "container_name": container_name,
+            "image": image,
+            "mount": mount_spec,
+            "resources": resources,
+            "message": "Dry run — no changes made. Set dry_run=false to apply.",
+        }
+
+    try:
+        from app.infra.docker_client import run_docker_command
+
+        run_docker_command(["stop", container_name], timeout=15)
+        run_docker_command(["rm", container_name], timeout=10)
+
+        rc, _, err = run_docker_command([
+            "run", "-d",
+            "--name", container_name,
+            "--network", "deploy_hosting_network",
+            "--restart", "unless-stopped",
+            "--cpus", resources["cpu"],
+            "--memory", resources["memory"],
+            "-v", mount_spec,
+            "nginx:alpine",
+        ], timeout=30)
+
+        if rc != 0:
+            return {"error": f"docker run failed: {err}", "code": "docker_run_failed", "repair_available": True}
+
+        _log_audit_event(
+            "tenant_container_recreated_with_static_mount",
+            {"hosting_id": hosting_id, "container_name": container_name, "mount": mount_spec},
+        )
+
+        return {
+            "ok": True,
+            "dry_run": False,
+            "action": "recreated",
+            "container_name": container_name,
+            "mount": mount_spec,
+            "repair_available": False,
+        }
+    except Exception as exc:
+        return {"error": f"Repair failed: {exc}", "code": "repair_error", "repair_available": True}
+
+
 # ─── Scheduler job ────────────────────────────────────────────────────────────
 
 def router_health_guard_job() -> None:
@@ -1121,11 +1392,25 @@ def router_health_guard_job() -> None:
     except Exception as exc:
         logger.error("router_health_guard: docker provider heuristic failed: %s", exc)
 
+    # ── Static container mount check ──────────────────────────────────────────
+    mount_results = []
+    try:
+        mount_results = check_static_container_mounts()
+        if mount_results:
+            logger.warning(
+                "router_health_guard_job: %d static container(s) with missing html mount",
+                len(mount_results),
+            )
+    except Exception as exc:
+        logger.error("router_health_guard: static mount check failed: %s", exc)
+
     healthy_p = sum(1 for r in platform_results if r.healthy)
     healthy_t = sum(1 for r in tenant_results if r.healthy)
     unhealthy_t = len(tenant_results) - healthy_t
     logger.info(
-        "router_health_guard_job: done — platform=%d/%d ok, tenants=%d/%d ok, unhealthy_tenants=%d",
-        healthy_p, len(platform_results), healthy_t, len(tenant_results), unhealthy_t,
+        "router_health_guard_job: done — platform=%d/%d ok, tenants=%d/%d ok, "
+        "unhealthy_tenants=%d, invalid_mounts=%d",
+        healthy_p, len(platform_results), healthy_t, len(tenant_results),
+        unhealthy_t, len(mount_results),
     )
     _log_audit_event("router_health_check_completed", {"scope": "platform+tenant"})

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   getRouterHealthPlatform, checkRouterHealthPlatform, repairRouterHealthPlatform,
-  getRouterHealthTenants, repairRouterHealthTenant,
+  getRouterHealthTenants, repairRouterHealthTenant, staticRepairRouterHealthTenant,
 } from '../../services/api';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -25,6 +25,8 @@ const INCIDENT_LABEL = {
   tls_or_certificate_issue:            'Error SSL/TLS',
   container_not_running:               'Container caído',
   platform_route_unhealthy:            'Ruta de plataforma caída',
+  misconfigured_site_content:          'Contenido inválido',
+  invalid_container_mount:             'Mount faltante',
 };
 
 const INCIDENT_STYLE = {
@@ -33,6 +35,8 @@ const INCIDENT_STYLE = {
   public_route_timeout:                'text-amber-400 bg-amber-500/10 border-amber-500/25',
   tls_or_certificate_issue:            'text-purple-400 bg-purple-500/10 border-purple-500/25',
   container_not_running:               'text-red-400 bg-red-500/10 border-red-500/25',
+  misconfigured_site_content:          'text-amber-400 bg-amber-500/10 border-amber-500/25',
+  invalid_container_mount:             'text-orange-400 bg-orange-500/10 border-orange-500/25',
   platform_route_unhealthy:            'text-red-400 bg-red-500/10 border-red-500/25',
 };
 
@@ -382,6 +386,89 @@ function TenantRepairButtons({ r, onRepairDone }) {
   );
 }
 
+function StaticRepairButtons({ r, onRepairDone }) {
+  const [repairing, setRepairing] = useState(false);
+  const [repairResult, setRepairResult] = useState(null);
+  const [repairError, setRepairError] = useState(null);
+
+  const canRepair = r.incident_type === 'invalid_container_mount' ||
+                    r.incident_type === 'misconfigured_site_content';
+
+  const handleRepair = async (dry_run) => {
+    if (!dry_run && !window.confirm(
+      'Esto recreará el contenedor nginx con el mount correcto.\n\n' +
+      'Los archivos del cliente en /opt/clients/ NO se tocan.\n' +
+      'No modifica DNS, base de datos ni datos del cliente.\n\n' +
+      '¿Confirmar recreación del contenedor?'
+    )) return;
+
+    setRepairing(true);
+    setRepairResult(null);
+    setRepairError(null);
+    try {
+      const res = await staticRepairRouterHealthTenant(r.hosting_id, dry_run);
+      setRepairResult({ ...res, dry_run });
+      if (!dry_run) onRepairDone?.();
+    } catch (e) {
+      setRepairError(_parseRepairError(e));
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  if (!canRepair) return null;
+
+  return (
+    <div className="flex flex-col gap-2 mt-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          onClick={() => handleRepair(true)}
+          disabled={repairing}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e1e24] border border-white/10 text-xs text-amber-300 hover:bg-[#2a2a32] disabled:opacity-50 transition-colors"
+        >
+          {repairing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+          Simular recreación
+        </button>
+        <button
+          onClick={() => handleRepair(false)}
+          disabled={repairing}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e1e24] border border-orange-500/30 text-xs text-orange-400 hover:bg-orange-500/10 disabled:opacity-50 transition-colors"
+        >
+          {repairing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+          Recrear contenedor
+        </button>
+      </div>
+
+      {repairResult && (
+        <div className={`rounded-lg border px-3 py-2 text-xs flex flex-col gap-1
+          ${repairResult.action === 'recreated' ? 'border-emerald-500/20 bg-emerald-500/8'
+          : repairResult.action === 'already_correct' ? 'border-blue-500/20 bg-blue-500/8'
+          : 'border-amber-500/30 bg-amber-500/8'}`}>
+          <p className={`font-semibold
+            ${repairResult.action === 'recreated' ? 'text-emerald-400'
+            : repairResult.action === 'already_correct' ? 'text-blue-400'
+            : 'text-amber-400'}`}>
+            {repairResult.dry_run ? 'Simulación: ' : ''}
+            {repairResult.action === 'recreated' ? 'Contenedor recreado con mount correcto'
+            : repairResult.action === 'already_correct' ? 'Mount ya estaba correcto'
+            : `Acción: ${repairResult.action}`}
+          </p>
+          {repairResult.mount && <p className="font-mono text-gray-500 text-[10px]">{repairResult.mount}</p>}
+          {repairResult.message && <p className="text-gray-400">{repairResult.message}</p>}
+        </div>
+      )}
+      {repairError && (
+        <div className="rounded-lg border border-red-500/25 bg-red-500/8 px-3 py-2 text-xs">
+          <p className="text-red-400">{repairError.message || 'Error al recrear contenedor'}</p>
+          {repairError.code === 'no_client_content' && (
+            <p className="text-gray-500 mt-1">Subí el ZIP del sitio primero, luego intenta recrear el contenedor.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TenantsTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -494,6 +581,7 @@ function TenantsTab() {
                     </div>
                   )}
                   <TenantRepairButtons r={r} onRepairDone={load} />
+                  <StaticRepairButtons r={r} onRepairDone={load} />
                 </div>
               )}
             </div>

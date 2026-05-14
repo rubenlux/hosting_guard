@@ -344,6 +344,9 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
 
         image = "nginx:alpine"
 
+        host_site_dir = f"/opt/clients/{container_name}"
+        os.makedirs(host_site_dir, exist_ok=True)
+
         command = [
             "run", "-d",
             "--name",     container_name,
@@ -352,6 +355,7 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
             # FIX #7: aplicar límites de recursos del plan (antes faltaban en este endpoint)
             "--cpus",     plan["cpu"],
             "--memory",   plan["memory"],
+            "-v", f"{host_site_dir}:/usr/share/nginx/html:ro",
             "-l", "traefik.enable=true",
             "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
             "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
@@ -1271,6 +1275,16 @@ async def upload_zip(
     # Record BEFORE makedirs — bind-mount only if dir already existed
     has_host_mount = os.path.isdir(site_dir)
     os.makedirs(site_dir, exist_ok=True)
+
+    if not os.access(site_dir, os.W_OK):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "ok": False,
+                "code": "import_dir_not_writable",
+                "message": f"El directorio de uploads no es escribible. Contacta al administrador.",
+            },
+        )
 
     tmp_zip = os.path.join(site_dir, "_upload.zip")
     extracted_dir = os.path.join(site_dir, "_extracted")

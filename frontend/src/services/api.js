@@ -1085,3 +1085,8 @@ export const repairRouterHealthTenant = async (hosting_id, dry_run = true) => {
   const response = await api.post(`/admin/router-health/tenants/${hosting_id}/repair`, { dry_run });
   return response.data;
 };
+
+export const staticRepairRouterHealthTenant = async (hosting_id, dry_run = true) => {
+  const response = await api.post(`/admin/router-health/tenants/${hosting_id}/static-repair`, { dry_run });
+  return response.data;
+};

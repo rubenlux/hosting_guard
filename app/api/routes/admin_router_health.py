@@ -147,3 +147,35 @@ def repair_tenant(hosting_id: int, body: RepairBody, _: dict = Depends(require_r
             )
         raise HTTPException(status_code=400, detail={"ok": False, "code": code, "message": result["error"]})
     return result
+
+
+@router.post("/tenants/{hosting_id}/static-repair")
+def static_repair_tenant(hosting_id: int, body: RepairBody, _: dict = Depends(require_role("admin"))):
+    """
+    Recreate a static nginx container with the correct read-only bind mount.
+
+    dry_run=true (default): validate preconditions + preview, no changes.
+    dry_run=false: docker stop → docker rm → docker run with -v /opt/clients/{name}:/usr/share/nginx/html:ro
+
+    Preconditions (enforced server-side):
+      - hosting status must be 'active'
+      - container image must contain 'nginx'
+      - db_container_name must be empty (not WordPress)
+      - /opt/clients/{container_name}/index.html must exist on host
+      - mount must not already be present
+
+    Error codes:
+      hosting_not_active    — hosting stopped          → 400
+      not_static_hosting    — WordPress site            → 400
+      not_nginx_container   — unexpected image          → 400
+      no_client_content     — no index.html on host     → 400
+      docker_run_failed     — container start failed    → 500
+    """
+    from fastapi import HTTPException
+    from app.services.router_health_guard import ensure_static_container_mount
+    result = ensure_static_container_mount(hosting_id=hosting_id, dry_run=body.dry_run)
+    if "error" in result:
+        code = result.get("code", "static_repair_error")
+        status = 500 if code == "docker_run_failed" else 400
+        raise HTTPException(status_code=status, detail={"ok": False, "code": code, "message": result["error"]})
+    return result
