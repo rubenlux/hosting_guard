@@ -2357,7 +2357,12 @@ IMPORTANTE: La IA NO debe bloquear IPs ni suspender usuarios. Solo recomendar.""
 def _derive_pm_mode(pm: dict) -> str:
     if not pm.get("enabled"):
         return "off"
-    if pm.get("block_xmlrpc") or pm.get("rate_limit_wp_login") or pm.get("block_scanner_paths"):
+    if (
+        pm.get("block_xmlrpc") or pm.get("rate_limit_wp_login") or pm.get("block_scanner_paths")
+        or pm.get("elevated_sensitivity")
+        # legacy field names (safety net for old DB rows)
+        or pm.get("block_wp_login") or pm.get("block_scanners") or pm.get("block_rate_limit")
+    ):
         return "protect"
     return "monitor"
 
@@ -2373,7 +2378,7 @@ _MODE_SETTINGS: dict = {
     },
     "protect": {
         "enabled": True, "block_xmlrpc": True,
-        "rate_limit_wp_login": True, "block_scanner_paths": True, "elevated_sensitivity": False,
+        "rate_limit_wp_login": True, "block_scanner_paths": True, "elevated_sensitivity": True,
     },
 }
 
@@ -3052,7 +3057,7 @@ _REMEDIATION_STATUS_LABEL = {
     "skipped":            "Omitido",
     "blocked_by_policy":  "Bloqueado por política",
     "expired":            "Expirado (TTL)",
-    "rollback_completed": "Rollback completado",
+    "rollback_completed": "Revertida",
     "failed":             "Fallido",
 }
 

@@ -11,7 +11,7 @@ Resolved policy dict:
 
 Mode derivation:
   off     — enabled=false
-  protect — enabled=true AND any of block_xmlrpc / rate_limit_wp_login / block_scanner_paths
+  protect — enabled=true AND any of block_xmlrpc / rate_limit_wp_login / block_scanner_paths / elevated_sensitivity
   monitor — enabled=true but no block flags set
 """
 import json
@@ -36,7 +36,12 @@ _OFF_POLICY: dict = {
 def _derive_mode(pm: dict) -> str:
     if not pm.get("enabled"):
         return "off"
-    if pm.get("block_xmlrpc") or pm.get("rate_limit_wp_login") or pm.get("block_scanner_paths"):
+    if (
+        pm.get("block_xmlrpc") or pm.get("rate_limit_wp_login") or pm.get("block_scanner_paths")
+        or pm.get("elevated_sensitivity")
+        # legacy field names (safety net for old DB rows)
+        or pm.get("block_wp_login") or pm.get("block_scanners") or pm.get("block_rate_limit")
+    ):
         return "protect"
     return "monitor"
 

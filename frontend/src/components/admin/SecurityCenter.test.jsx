@@ -214,7 +214,7 @@ describe('SecurityCenter — RemediationsSection', () => {
     });
   });
 
-  it('confirming rollback shows success toast', async () => {
+  it('confirming rollback shows success toast with correct message', async () => {
     setupMocks([makeRem({ can_rollback: true })]);
     await act(async () => { render(<SecurityCenter />); });
     await waitFor(() => screen.getByTestId('rollback-btn'));
@@ -226,7 +226,30 @@ describe('SecurityCenter — RemediationsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('rollback-toast')).toBeTruthy();
-      expect(screen.getByTestId('rollback-toast').textContent).toContain('revertido');
+      expect(screen.getByTestId('rollback-toast').textContent).toContain('No se ejecutó ninguna otra acción');
+    });
+  });
+
+  it('rollback button hidden after successful rollback (optimistic + API refresh)', async () => {
+    // First load returns applied item; second load (post-rollback) returns it rolled back
+    getRemediations
+      .mockResolvedValueOnce({ items: [makeRem({ can_rollback: true })] })
+      .mockResolvedValueOnce({ items: [makeRem({ can_rollback: false, status: 'rollback_completed', status_label: 'Revertida' })] });
+    getSecuritySummary.mockResolvedValue({ threat_level: 'normal', open_events: 0, critical_24h: 0 });
+    getSecurityEvents.mockResolvedValue({ items: [] });
+    getAdminHostings.mockResolvedValue(MOCK_HOSTINGS);
+    getProtectionMode.mockResolvedValue({ hosting_id: 5, mode: 'monitor', protection_mode: {} });
+    rollbackRemediation.mockResolvedValue({ ok: true, status: 'rollback_completed' });
+
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => screen.getByTestId('rollback-btn'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('rollback-btn')); });
+    await waitFor(() => screen.getByTestId('rollback-confirm-btn'));
+    await act(async () => { fireEvent.click(screen.getByTestId('rollback-confirm-btn')); });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('rollback-btn')).toBeNull();
     });
   });
 });

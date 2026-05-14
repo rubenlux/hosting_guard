@@ -330,7 +330,9 @@ function ProtectionModePanel() {
     if (!selectedId) return;
     setSaving(true);
     try {
-      await putProtectionMode(selectedId, mode);
+      const r = await putProtectionMode(selectedId, mode);
+      // Sync state from backend response to catch any server-side derivation difference
+      if (r?.mode) setMode(r.mode);
       setToast({ type: 'success', msg: 'Modo de protección actualizado' });
       setTimeout(() => setToast(null), 3000);
     } catch (e) {
@@ -476,8 +478,14 @@ function RemediationsSection() {
     setRollingBack(remediationId);
     try {
       await rollbackRemediation(remediationId);
-      setRollbackMsg({ type: 'success', text: 'Bloqueo revertido correctamente' });
-      setTimeout(() => setRollbackMsg(null), 3000);
+      // Optimistic update: immediately hide button and flip status before refresh
+      setItems(prev => prev.map(item =>
+        item.remediation_id === remediationId
+          ? { ...item, status: 'rollback_completed', status_label: 'Revertida', can_rollback: false, is_active: false }
+          : item
+      ));
+      setRollbackMsg({ type: 'success', text: 'Bloqueo revertido. No se ejecutó ninguna otra acción.' });
+      setTimeout(() => setRollbackMsg(null), 4000);
       load();
     } catch (e) {
       setRollbackMsg({ type: 'error', text: e?.response?.data?.detail || 'Error al revertir el bloqueo' });
