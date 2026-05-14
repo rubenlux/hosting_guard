@@ -62,6 +62,34 @@ def _check_lockfile(work_dir: str, filename: str) -> Optional[str]:
     return None
 
 
+def _scan_npm_lockfile_format(path: str) -> "dict[str, str]":
+    """Scan a package-lock.json or npm-shrinkwrap.json for pinned @tanstack/* versions."""
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            lock = json.load(f)
+    except Exception:
+        return {}
+    found: "dict[str, str]" = {}
+    for key, info in lock.get("packages", {}).items():
+        if "@tanstack/" not in key or not isinstance(info, dict):
+            continue
+        parts = key.split("node_modules/")
+        last = parts[-1] if parts else key
+        if last.startswith("@tanstack/"):
+            pkg_name = "/".join(last.split("/")[:2])
+            version = info.get("version", "")
+            if version:
+                found[pkg_name] = version
+    for pkg_name, info in lock.get("dependencies", {}).items():
+        if pkg_name.startswith("@tanstack/") and isinstance(info, dict):
+            version = info.get("version", "")
+            if version and pkg_name not in found:
+                found[pkg_name] = version
+    return found
+
+
 def check_node_sass_preflight(work_dir: str) -> Optional[dict]:
     """Scan manifest files for node-sass. Returns {"package": ..., "detection_source": ...} or None."""
     source = (
@@ -99,38 +127,51 @@ def _node_sass_check(work_dir: str) -> Optional[dict]:
 
 
 def _package_manager_check(work_dir: str) -> Optional[dict]:
-    """Detect pnpm or pure-yarn projects that can't be built with npm."""
-    has_pkg_lock = os.path.exists(os.path.join(work_dir, "package-lock.json"))
+    """Block conflicting lockfiles or missing lockfiles; allow any single-PM project."""
+    has_npm  = (
+        os.path.exists(os.path.join(work_dir, "package-lock.json"))
+        or os.path.exists(os.path.join(work_dir, "npm-shrinkwrap.json"))
+    )
+    has_pnpm = os.path.exists(os.path.join(work_dir, "pnpm-lock.yaml"))
+    has_yarn = os.path.exists(os.path.join(work_dir, "yarn.lock"))
 
-    if os.path.exists(os.path.join(work_dir, "pnpm-lock.yaml")):
+    lockfile_count = sum([has_npm, has_pnpm, has_yarn])
+
+    if lockfile_count > 1:
+        detected = []
+        for f in ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock"):
+            if os.path.exists(os.path.join(work_dir, f)):
+                detected.append(f)
         return {
-            "code": "package_manager_pnpm_detected",
+            "code": "multiple_lockfiles_detected",
             "stage": "dependency_preflight",
-            "detail": "El proyecto usa pnpm, que no está disponible en el entorno de build actual.",
+            "detail": (
+                f"El proyecto contiene múltiples lockfiles: {', '.join(detected)}. "
+                "Dejá solo uno para evitar instalaciones inconsistentes."
+            ),
             "suggested_fix": (
-                "Este deploy usa npm. Configurá el Install Command manualmente "
-                "(ej: 'npm install') o migrá a npm borrando pnpm-lock.yaml."
+                "Eliminá los lockfiles que no correspondan al package manager que uses "
+                "y dejá solo el correcto (package-lock.json, pnpm-lock.yaml, o yarn.lock)."
             ),
             "evidence": {
-                "lockfile": "pnpm-lock.yaml",
+                "lockfiles": detected,
                 "install_skipped": True,
-                "reason": "unsupported_package_manager",
+                "reason": "multiple_lockfiles",
             },
         }
 
-    if os.path.exists(os.path.join(work_dir, "yarn.lock")) and not has_pkg_lock:
+    if lockfile_count == 0:
         return {
-            "code": "package_manager_yarn_detected",
+            "code": "lockfile_required",
             "stage": "dependency_preflight",
-            "detail": "El proyecto usa Yarn, que no está disponible en el entorno de build actual.",
+            "detail": "Por seguridad, HostingGuard requiere un lockfile para instalar dependencias.",
             "suggested_fix": (
-                "Este deploy usa npm. Generá un package-lock.json ejecutando npm install "
-                "localmente, o configurá el Install Command a 'npm install'."
+                "Ejecutá 'npm install', 'pnpm install', o 'yarn install' localmente "
+                "y commiteá el lockfile generado (package-lock.json, pnpm-lock.yaml, o yarn.lock)."
             ),
             "evidence": {
-                "lockfile": "yarn.lock",
                 "install_skipped": True,
-                "reason": "unsupported_package_manager",
+                "reason": "no_lockfile_found",
             },
         }
 
@@ -241,35 +282,14 @@ def _next_ssr_check(work_dir: str, pkg: dict) -> Optional[dict]:
 
 # ── TanStack supply-chain guard ───────────────────────────────────────────────
 
-def _scan_package_lock(work_dir: str) -> dict[str, str]:
+def _scan_package_lock(work_dir: str) -> "dict[str, str]":
     """Return {pkg: version} for @tanstack/* packages pinned in package-lock.json."""
-    path = os.path.join(work_dir, "package-lock.json")
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path) as f:
-            lock = json.load(f)
-    except Exception:
-        return {}
-    found: dict[str, str] = {}
-    # v2/v3: packages dict keyed like "node_modules/@tanstack/react-query"
-    for key, info in lock.get("packages", {}).items():
-        if "@tanstack/" not in key or not isinstance(info, dict):
-            continue
-        parts = key.split("node_modules/")
-        last = parts[-1] if parts else key
-        if last.startswith("@tanstack/"):
-            pkg_name = "/".join(last.split("/")[:2])
-            version = info.get("version", "")
-            if version:
-                found[pkg_name] = version
-    # v1: dependencies dict
-    for pkg_name, info in lock.get("dependencies", {}).items():
-        if pkg_name.startswith("@tanstack/") and isinstance(info, dict):
-            version = info.get("version", "")
-            if version and pkg_name not in found:
-                found[pkg_name] = version
-    return found
+    return _scan_npm_lockfile_format(os.path.join(work_dir, "package-lock.json"))
+
+
+def _scan_shrinkwrap(work_dir: str) -> "dict[str, str]":
+    """Return {pkg: version} for @tanstack/* packages pinned in npm-shrinkwrap.json."""
+    return _scan_npm_lockfile_format(os.path.join(work_dir, "npm-shrinkwrap.json"))
 
 
 def _scan_pnpm_lock(work_dir: str) -> dict[str, str]:
@@ -323,7 +343,7 @@ def _has_tanstack_in_manifest(pkg: dict) -> bool:
 def _tanstack_supply_chain_check(work_dir: str, pkg: dict) -> Optional[dict]:
     # Aggregate all pinned @tanstack versions across all lockfile formats
     all_pinned: dict[str, str] = {}
-    for scanner in (_scan_package_lock, _scan_pnpm_lock, _scan_yarn_lock):
+    for scanner in (_scan_package_lock, _scan_shrinkwrap, _scan_pnpm_lock, _scan_yarn_lock):
         all_pinned.update(scanner(work_dir))
 
     affected = {
@@ -355,7 +375,7 @@ def _tanstack_supply_chain_check(work_dir: str, pkg: dict) -> Optional[dict]:
 
     has_lock = any(
         os.path.exists(os.path.join(work_dir, f))
-        for f in ("package-lock.json", "pnpm-lock.yaml", "yarn.lock")
+        for f in ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock")
     )
     if not has_lock and _has_tanstack_in_manifest(pkg):
         return {
@@ -398,3 +418,41 @@ def run_dependency_preflight(work_dir: str, pkg: dict) -> Optional[dict]:
         if result:
             return result
     return None
+
+
+# ── Package manager detection (called after preflight passes) ─────────────────
+
+def _extract_pm_version(pm_field: str, pm_name: str) -> Optional[str]:
+    """Extract version from package.json packageManager field like 'pnpm@8.15.0'."""
+    if pm_field.startswith(f"{pm_name}@"):
+        return pm_field.split("@", 1)[1].split("+")[0]
+    return None
+
+
+def detect_package_manager(work_dir: str, pkg: dict) -> dict:
+    """
+    Return {package_manager, lockfile, version} for the project.
+    Call this only after run_dependency_preflight() returned None (= valid single lockfile).
+    """
+    pm_field = pkg.get("packageManager", "")
+
+    if os.path.exists(os.path.join(work_dir, "pnpm-lock.yaml")):
+        return {
+            "package_manager": "pnpm",
+            "lockfile": "pnpm-lock.yaml",
+            "version": _extract_pm_version(pm_field, "pnpm"),
+        }
+
+    if os.path.exists(os.path.join(work_dir, "yarn.lock")):
+        return {
+            "package_manager": "yarn",
+            "lockfile": "yarn.lock",
+            "version": _extract_pm_version(pm_field, "yarn"),
+        }
+
+    lockfile = (
+        "package-lock.json"
+        if os.path.exists(os.path.join(work_dir, "package-lock.json"))
+        else "npm-shrinkwrap.json"
+    )
+    return {"package_manager": "npm", "lockfile": lockfile, "version": None}

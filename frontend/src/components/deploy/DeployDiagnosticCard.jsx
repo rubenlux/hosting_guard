@@ -25,11 +25,18 @@ const CODE_LABELS = {
   ssl_provisioning_timeout:                     'SSL en proceso de activación',
   npm_supply_chain_tanstack_compromise:          'Alerta de seguridad: compromiso de cadena de suministro npm',
   npm_lockfile_required_for_supply_chain_safety: 'Lockfile requerido para seguridad de cadena de suministro',
+  npm_supply_chain_risk:                         'Riesgo de cadena de suministro npm',
+  multiple_lockfiles_detected:                   'Múltiples lockfiles detectados',
+  lockfile_required:                             'Lockfile requerido',
+  npm_ci_failed:                                 'npm ci falló',
+  pnpm_install_failed:                           'pnpm install falló',
+  yarn_install_failed:                           'yarn install falló',
 };
 
 const SUPPLY_CHAIN_CODES = new Set([
   'npm_supply_chain_tanstack_compromise',
   'npm_lockfile_required_for_supply_chain_safety',
+  'npm_supply_chain_risk',
 ]);
 
 export default function DeployDiagnosticCard({ errorData }) {

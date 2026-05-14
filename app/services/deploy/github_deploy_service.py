@@ -67,7 +67,7 @@ from app.services.deploy.project_detector import (
     _find_serve_dir,
     _read_pkg,
 )
-from app.services.deploy.dependency_preflight import run_dependency_preflight
+from app.services.deploy.dependency_preflight import detect_package_manager, run_dependency_preflight
 
 logger = logging.getLogger(__name__)
 
@@ -316,29 +316,13 @@ async def run_github_deploy(
                     )
 
             if has_package_json:
-                _has_pkg_lock = os.path.exists(os.path.join(work_dir, "package-lock.json"))
-                install_cmd = data.install_command or ("npm ci" if _has_pkg_lock else "npm install")
-                build_cmd   = data.build_command   or "npm run build"
-                out_dir     = data.output_directory or _detect_out_dir(pkg)
+                out_dir = data.output_directory or _detect_out_dir(pkg)
                 _detected.setdefault("root_directory", data.root_directory or ".")
                 _fw = _detect_framework(pkg)
                 _detected["framework"]        = _fw
                 _detected["output_directory"] = out_dir or "(auto-detect after build)"
 
-                deploy_log["stages"]["build_info"] = {
-                    "root_directory":   os.path.relpath(work_dir, site_dir),
-                    "package_json":     True,
-                    "framework":        _fw,
-                    "install_command":  install_cmd,
-                    "build_command":    build_cmd,
-                    "output_directory": out_dir or "(auto-detect after build)",
-                }
-                logger.info(
-                    "github_deploy_stage stage=build_info repo=%s root=%s framework=%s output=%s",
-                    data.repo_url, _detected.get("root_directory"), _fw, out_dir,
-                )
-
-                # Preflight: detect incompatible deps/config before running npm install
+                # Preflight: detect incompatible deps/config before running install
                 _preflight = run_dependency_preflight(work_dir, pkg)
                 if _preflight:
                     raise DeployError(
@@ -353,6 +337,40 @@ async def run_github_deploy(
                             **_preflight["evidence"],
                         },
                     )
+
+                # Package manager detection — preflight passed = exactly one lockfile type
+                _pm_info = detect_package_manager(work_dir, pkg)
+                _pm = _pm_info["package_manager"]
+                if _pm == "pnpm":
+                    _pnpm_ver = _pm_info.get("version")
+                    _prepare = (
+                        f"corepack prepare pnpm@{_pnpm_ver} --activate"
+                        if _pnpm_ver else "corepack prepare pnpm --activate"
+                    )
+                    install_cmd = data.install_command or (
+                        f"corepack enable && {_prepare} && pnpm install --frozen-lockfile"
+                    )
+                    build_cmd = data.build_command or "pnpm run build"
+                elif _pm == "yarn":
+                    install_cmd = data.install_command or "corepack enable && yarn install --immutable"
+                    build_cmd   = data.build_command   or "yarn build"
+                else:
+                    install_cmd = data.install_command or "npm ci"
+                    build_cmd   = data.build_command   or "npm run build"
+
+                deploy_log["stages"]["build_info"] = {
+                    "root_directory":   os.path.relpath(work_dir, site_dir),
+                    "package_json":     True,
+                    "framework":        _fw,
+                    "package_manager":  _pm,
+                    "install_command":  install_cmd,
+                    "build_command":    build_cmd,
+                    "output_directory": out_dir or "(auto-detect after build)",
+                }
+                logger.info(
+                    "github_deploy_stage stage=build_info repo=%s root=%s framework=%s pm=%s output=%s",
+                    data.repo_url, _detected.get("root_directory"), _fw, _pm, out_dir,
+                )
 
                 # Phase 1 — separate install and build with rich diagnostics
                 _npm_log_dir = tempfile.mkdtemp(prefix="hg_npm_")
@@ -390,7 +408,8 @@ async def run_github_deploy(
 
                 if _install_run.returncode != 0:
                     _iout = _install_run.stderr + _install_run.stdout
-                    if "ERESOLVE" in _iout:
+                    # ERESOLVE peer-dep retry only applies to npm (not pnpm/yarn)
+                    if _pm == "npm" and "ERESOLVE" in _iout:
                         _retry_install = await loop.run_in_executor(
                             None,
                             lambda: _node_run(f"{_native_prefix}npm install --legacy-peer-deps"),
@@ -404,12 +423,19 @@ async def run_github_deploy(
                 if _install_run.returncode != 0:
                     _iout = _install_run.stderr + _install_run.stdout
                     _icode, _idetail, _ifix = classify_npm_failure(_iout, stage="dependency_install")
+                    # Map generic fallback to PM-specific code
+                    if _icode == "npm_install_failed":
+                        _icode = {
+                            "pnpm": "pnpm_install_failed",
+                            "yarn": "yarn_install_failed",
+                        }.get(_pm, "npm_ci_failed")
                     _ilog = read_npm_log(extract_npm_log_path(_iout), _npm_log_dir)
                     raise DeployError(
                         code=_icode, stage="dependency_install",
                         detail=_idetail, suggested_fix=_ifix,
                         technical_detail=_iout[-400:],
                         evidence={
+                            "package_manager":   _pm,
                             "install_cmd":       install_cmd,
                             "node_version":      _node_ver,
                             "npm_version":       _npm_ver,
