@@ -9,6 +9,7 @@ import {
   getSecuritySummary, getSecurityEvents,
   resolveSecurityEvent, getSecurityEventAISummary,
   getRemediations, rollbackRemediation,
+  getAdminHostings, getProtectionMode, putProtectionMode,
 } from '../../services/api';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -288,6 +289,153 @@ function Detail({ label, val }) {
   );
 }
 
+// ─── Protection mode panel ───────────────────────────────────────────────────
+
+const PM_MODES = [
+  { value: 'off',     label: 'Apagado', desc: 'Sin protección activa. ForwardAuth no bloquea nada.' },
+  { value: 'monitor', label: 'Monitor', desc: 'Solo observa y registra amenazas. No bloquea tráfico.' },
+  { value: 'protect', label: 'Proteger', desc: 'Bloquea IPs atacantes, xmlrpc y scanners automáticamente.' },
+];
+
+function ProtectionModePanel() {
+  const [hostings, setHostings]       = useState([]);
+  const [selectedId, setSelectedId]   = useState('');
+  const [mode, setMode]               = useState('off');
+  const [loadingHostings, setLoadingHostings] = useState(true);
+  const [loadingMode, setLoadingMode] = useState(false);
+  const [saving, setSaving]           = useState(false);
+  const [toast, setToast]             = useState(null);
+
+  useEffect(() => {
+    getAdminHostings()
+      .then(data => {
+        const list = Array.isArray(data) ? data : (data.items || []);
+        setHostings(list);
+        if (list.length > 0) setSelectedId(list[0].hosting_id);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingHostings(false));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    setLoadingMode(true);
+    getProtectionMode(selectedId)
+      .then(r => setMode(r.mode || 'off'))
+      .catch(() => setMode('off'))
+      .finally(() => setLoadingMode(false));
+  }, [selectedId]);
+
+  async function handleSave() {
+    if (!selectedId) return;
+    setSaving(true);
+    try {
+      await putProtectionMode(selectedId, mode);
+      setToast({ type: 'success', msg: 'Modo de protección actualizado' });
+      setTimeout(() => setToast(null), 3000);
+    } catch (e) {
+      setToast({ type: 'error', msg: e?.response?.data?.detail || 'Error al guardar' });
+      setTimeout(() => setToast(null), 4000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const modeStyle = (v) => {
+    if (mode !== v) return 'bg-transparent border-white/8 text-gray-600 hover:border-white/15 hover:text-gray-400';
+    if (v === 'protect') return 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400';
+    if (v === 'monitor') return 'bg-amber-500/15 border-amber-500/40 text-amber-400';
+    return 'bg-white/5 border-white/20 text-gray-300';
+  };
+
+  return (
+    <div className="bg-[#111] rounded-xl border border-white/8 overflow-hidden" data-testid="protection-mode-panel">
+      <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+        <Shield className="w-4 h-4 text-[#00ff88]" />
+        <span className="text-[11px] font-semibold text-white">Modo de protección</span>
+      </div>
+      <div className="p-4 space-y-3">
+        <div>
+          <label className="text-[9px] text-gray-600 uppercase tracking-wide mb-1.5 block">Hosting</label>
+          <select
+            value={selectedId}
+            onChange={e => setSelectedId(Number(e.target.value))}
+            disabled={loadingHostings}
+            className="w-full bg-[#0d0d0f] border border-white/8 text-[11px] text-gray-300 rounded px-3 py-1.5 outline-none focus:border-white/20 disabled:opacity-50"
+            data-testid="hosting-select"
+          >
+            {hostings.map(h => (
+              <option key={h.hosting_id} value={h.hosting_id}>{h.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {loadingMode ? (
+          <div className="flex items-center gap-2 text-[10px] text-gray-600 py-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Cargando modo actual...
+          </div>
+        ) : (
+          <>
+            <div className="flex gap-2" data-testid="mode-selector">
+              {PM_MODES.map(m => (
+                <button
+                  key={m.value}
+                  onClick={() => setMode(m.value)}
+                  className={`flex-1 px-3 py-2 rounded-lg border text-[10px] font-medium transition-all ${modeStyle(m.value)}`}
+                  data-testid={`mode-btn-${m.value}`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-[10px] text-gray-500 bg-[#0d0d0f] rounded-lg px-3 py-2 border border-white/5">
+              {PM_MODES.find(m => m.value === mode)?.desc}
+            </div>
+
+            {mode === 'protect' && (
+              <div className="flex items-start gap-2 bg-amber-500/8 border border-amber-500/20 rounded-lg px-3 py-2" data-testid="protect-warning">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                <span className="text-[10px] text-amber-400/80">
+                  En modo Proteger el tráfico legítimo podría bloquearse si es clasificado como amenaza. Revisá los logs de ForwardAuth regularmente.
+                </span>
+              </div>
+            )}
+          </>
+        )}
+
+        {toast && (
+          <div
+            className={`text-[10px] px-3 py-2 rounded-lg flex items-center gap-2 ${
+              toast.type === 'success'
+                ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                : 'bg-red-500/10 border border-red-500/20 text-red-400'
+            }`}
+            data-testid="mode-toast"
+          >
+            {toast.type === 'success'
+              ? <CheckCircle2 className="w-3 h-3 shrink-0" />
+              : <XCircle className="w-3 h-3 shrink-0" />}
+            {toast.msg}
+          </div>
+        )}
+
+        <div className="flex justify-end pt-1">
+          <button
+            onClick={handleSave}
+            disabled={saving || loadingMode || !selectedId}
+            className="px-4 py-1.5 bg-[#00ff88]/10 border border-[#00ff88]/30 text-[#00ff88] text-[10px] font-semibold rounded-lg hover:bg-[#00ff88]/15 disabled:opacity-40 transition-all flex items-center gap-1.5"
+            data-testid="save-mode-btn"
+          >
+            {saving && <Loader2 className="w-3 h-3 animate-spin" />}
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Remediations section ─────────────────────────────────────────────────────
 
 const REM_STATUS_COLOR = {
@@ -300,11 +448,13 @@ const REM_STATUS_COLOR = {
 };
 
 function RemediationsSection() {
-  const [items, setItems]       = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState(null);
+  const [items, setItems]             = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState(null);
   const [rollingBack, setRollingBack] = useState(null);
   const [filterStatus, setFilterStatus] = useState('applied');
+  const [confirmId, setConfirmId]     = useState(null);
+  const [rollbackMsg, setRollbackMsg] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -326,110 +476,151 @@ function RemediationsSection() {
     setRollingBack(remediationId);
     try {
       await rollbackRemediation(remediationId);
+      setRollbackMsg({ type: 'success', text: 'Bloqueo revertido correctamente' });
+      setTimeout(() => setRollbackMsg(null), 3000);
       load();
     } catch (e) {
-      setError(e?.response?.data?.detail || 'Error al hacer rollback');
+      setRollbackMsg({ type: 'error', text: e?.response?.data?.detail || 'Error al revertir el bloqueo' });
+      setTimeout(() => setRollbackMsg(null), 4000);
     } finally {
       setRollingBack(null);
     }
   }
 
   return (
-    <div className="bg-[#111] rounded-xl border border-white/8 overflow-hidden" data-testid="remediations-section">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
-        <div className="flex items-center gap-2">
-          <Shield className="w-4 h-4 text-[#00ff88]" />
-          <span className="text-[11px] font-semibold text-white">Remediaciones automáticas</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={filterStatus}
-            onChange={e => setFilterStatus(e.target.value)}
-            className="bg-[#0d0d0f] border border-white/8 text-[10px] text-gray-300 rounded px-2 py-1 outline-none focus:border-white/20"
-            data-testid="rem-status-filter"
-          >
-            <option value="">Todos</option>
-            <option value="applied">Activas</option>
-            <option value="rollback_completed">Rollback</option>
-            <option value="blocked_by_policy">Bloqueadas</option>
-            <option value="failed">Fallidas</option>
-          </select>
-          <button onClick={load} disabled={loading} className="p-1.5 rounded hover:bg-white/5 transition-colors">
-            <RefreshCw className={`w-3.5 h-3.5 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="px-4 py-2 text-[10px] text-red-400 flex items-center gap-1.5">
-          <AlertTriangle className="w-3 h-3" /> {error}
-        </div>
-      )}
-
-      {loading && items.length === 0 && (
-        <div className="flex items-center justify-center py-10 gap-2 text-[11px] text-gray-600">
-          <Loader2 className="w-4 h-4 animate-spin" /> Cargando...
-        </div>
-      )}
-
-      {!loading && items.length === 0 && !error && (
-        <div className="py-10 text-center text-[11px] text-gray-600">
-          No hay remediaciones registradas.
-        </div>
-      )}
-
-      {items.length > 0 && (
-        <div className="max-h-[400px] overflow-y-auto divide-y divide-white/[0.04]">
-          {items.map(r => (
-            <div key={r.remediation_id} className="px-4 py-3 flex items-start gap-3 hover:bg-white/[0.02] transition-colors" data-testid="remediation-row">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${REM_STATUS_COLOR[r.status] || 'text-gray-400 bg-white/5 border-white/8'}`} data-testid="rem-status-badge">
-                    {r.status_label || r.status}
-                  </span>
-                  <span className="text-[10px] text-white font-medium">{r.type_label || r.remediation_type}</span>
-                  {r.rule_id && (
-                    <span className="text-[9px] text-gray-500 font-mono">[{r.rule_id}]</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 mt-1 flex-wrap">
-                  {r.target_value && (
-                    <span className="text-[9px] text-gray-400 font-mono">
-                      {r.target_type}: <span className="text-gray-300">{r.target_value}</span>
-                    </span>
-                  )}
-                  {r.hosting_id && (
-                    <span className="text-[9px] text-gray-500">hosting #{r.hosting_id}</span>
-                  )}
-                  {r.expires_at && r.status === 'applied' && (
-                    <span className="text-[9px] text-amber-500/70">expira {fmtDate(r.expires_at)}</span>
-                  )}
-                </div>
-                {r.reason && (
-                  <div className="text-[9px] text-gray-600 mt-0.5 truncate">{r.reason}</div>
-                )}
-              </div>
-              <div className="shrink-0 text-[9px] text-gray-600 text-right">
-                <div>{fmtDate(r.created_at)}</div>
-                {r.can_rollback && (
-                  <button
-                    onClick={() => handleRollback(r.remediation_id)}
-                    disabled={rollingBack === r.remediation_id}
-                    className="mt-1 flex items-center gap-1 text-blue-400 hover:text-blue-300 disabled:opacity-50 transition-colors ml-auto"
-                    data-testid="rollback-btn"
-                  >
-                    {rollingBack === r.remediation_id
-                      ? <Loader2 className="w-3 h-3 animate-spin" />
-                      : <RotateCcw className="w-3 h-3" />}
-                    Rollback
-                  </button>
-                )}
-              </div>
+    <>
+      {confirmId !== null && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" data-testid="rollback-confirm-dialog">
+          <div className="bg-[#111] border border-white/10 rounded-xl p-5 w-full max-w-sm">
+            <div className="text-[12px] font-semibold text-white mb-1.5">¿Revertir bloqueo?</div>
+            <p className="text-[10px] text-gray-400 mb-4 leading-relaxed">
+              El bloqueo será eliminado de inmediato. Esta acción no se puede deshacer.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setConfirmId(null)}
+                className="px-3 py-1.5 text-[10px] text-gray-400 hover:text-white border border-white/8 rounded transition-colors"
+                data-testid="rollback-cancel-btn"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { const id = confirmId; setConfirmId(null); handleRollback(id); }}
+                className="px-3 py-1.5 text-[10px] bg-amber-500/15 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 rounded transition-colors"
+                data-testid="rollback-confirm-btn"
+              >
+                Revertir
+              </button>
             </div>
-          ))}
+          </div>
         </div>
       )}
-    </div>
+
+      <div className="bg-[#111] rounded-xl border border-white/8 overflow-hidden" data-testid="remediations-section">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+          <div className="flex items-center gap-2">
+            <Shield className="w-4 h-4 text-[#00ff88]" />
+            <span className="text-[11px] font-semibold text-white">Remediaciones automáticas</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value)}
+              className="bg-[#0d0d0f] border border-white/8 text-[10px] text-gray-300 rounded px-2 py-1 outline-none focus:border-white/20"
+              data-testid="rem-status-filter"
+            >
+              <option value="">Todos</option>
+              <option value="applied">Aplicadas</option>
+              <option value="rollback_completed">Revertidas</option>
+              <option value="blocked_by_policy">Bloqueadas por política</option>
+              <option value="failed">Fallidas</option>
+              <option value="skipped">Omitidas (Monitor)</option>
+              <option value="expired">Expiradas</option>
+            </select>
+            <button onClick={load} disabled={loading} className="p-1.5 rounded hover:bg-white/5 transition-colors">
+              <RefreshCw className={`w-3.5 h-3.5 text-gray-500 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {(error || rollbackMsg) && (
+          <div className={`px-4 py-2 text-[10px] flex items-center gap-1.5 ${
+            rollbackMsg?.type === 'success'
+              ? 'text-emerald-400'
+              : 'text-red-400'
+          }`} data-testid={rollbackMsg ? 'rollback-toast' : undefined}>
+            {rollbackMsg?.type === 'success'
+              ? <CheckCircle2 className="w-3 h-3" />
+              : <AlertTriangle className="w-3 h-3" />}
+            {rollbackMsg ? rollbackMsg.text : error}
+          </div>
+        )}
+
+        {loading && items.length === 0 && (
+          <div className="flex items-center justify-center py-10 gap-2 text-[11px] text-gray-600">
+            <Loader2 className="w-4 h-4 animate-spin" /> Cargando...
+          </div>
+        )}
+
+        {!loading && items.length === 0 && !error && (
+          <div className="py-10 text-center text-[11px] text-gray-600">
+            No hay remediaciones registradas.
+          </div>
+        )}
+
+        {items.length > 0 && (
+          <div className="max-h-[400px] overflow-y-auto divide-y divide-white/[0.04]">
+            {items.map(r => (
+              <div key={r.remediation_id} className="px-4 py-3 flex items-start gap-3 hover:bg-white/[0.02] transition-colors" data-testid="remediation-row">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${REM_STATUS_COLOR[r.status] || 'text-gray-400 bg-white/5 border-white/8'}`} data-testid="rem-status-badge">
+                      {r.status_label || r.status}
+                    </span>
+                    <span className="text-[10px] text-white font-medium">{r.type_label || r.remediation_type}</span>
+                    {r.rule_id && (
+                      <span className="text-[9px] text-gray-500 font-mono">[{r.rule_id}]</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 mt-1 flex-wrap">
+                    {r.target_value && (
+                      <span className="text-[9px] text-gray-400 font-mono">
+                        {r.target_type}: <span className="text-gray-300">{r.target_value}</span>
+                      </span>
+                    )}
+                    {r.hosting_id && (
+                      <span className="text-[9px] text-gray-500">hosting #{r.hosting_id}</span>
+                    )}
+                    {r.expires_at && r.status === 'applied' && (
+                      <span className="text-[9px] text-amber-500/70">expira {fmtDate(r.expires_at)}</span>
+                    )}
+                  </div>
+                  {r.reason && (
+                    <div className="text-[9px] text-gray-600 mt-0.5 truncate">{r.reason}</div>
+                  )}
+                </div>
+                <div className="shrink-0 text-[9px] text-gray-600 text-right">
+                  <div>{fmtDate(r.created_at)}</div>
+                  {r.can_rollback && (
+                    <button
+                      onClick={() => setConfirmId(r.remediation_id)}
+                      disabled={rollingBack === r.remediation_id}
+                      className="mt-1.5 flex items-center gap-1 text-[9px] font-medium px-2 py-1 rounded bg-amber-500/10 border border-amber-500/25 text-amber-400 hover:bg-amber-500/15 disabled:opacity-50 transition-colors"
+                      data-testid="rollback-btn"
+                    >
+                      {rollingBack === r.remediation_id
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <RotateCcw className="w-3 h-3" />}
+                      Revertir bloqueo
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -663,6 +854,9 @@ export default function SecurityCenter() {
           </div>
         )}
       </div>
+
+      {/* ── Protection mode ── */}
+      <ProtectionModePanel />
 
       {/* ── Auto-remediations ── */}
       <RemediationsSection />

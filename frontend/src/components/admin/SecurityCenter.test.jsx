@@ -25,11 +25,15 @@ vi.mock('../../services/api', () => ({
   getSecurityEventAISummary: vi.fn(),
   getRemediations:           vi.fn(),
   rollbackRemediation:       vi.fn(),
+  getAdminHostings:          vi.fn(),
+  getProtectionMode:         vi.fn(),
+  putProtectionMode:         vi.fn(),
 }));
 
 import {
   getSecuritySummary, getSecurityEvents,
   getRemediations, rollbackRemediation,
+  getAdminHostings, getProtectionMode, putProtectionMode,
 } from '../../services/api';
 import SecurityCenter from './SecurityCenter';
 
@@ -57,6 +61,11 @@ function makeRem(overrides = {}) {
   };
 }
 
+const MOCK_HOSTINGS = [
+  { hosting_id: 5, name: 'Mi Sitio', subdomain: 'misitio.hostingguard.lat' },
+  { hosting_id: 6, name: 'Otro Sitio', subdomain: 'otro.hostingguard.lat' },
+];
+
 function setupMocks(remItems = [makeRem()]) {
   getSecuritySummary.mockResolvedValue({
     threat_level: 'normal', open_events: 0, critical_24h: 0,
@@ -64,6 +73,9 @@ function setupMocks(remItems = [makeRem()]) {
   getSecurityEvents.mockResolvedValue({ items: [] });
   getRemediations.mockResolvedValue({ items: remItems });
   rollbackRemediation.mockResolvedValue({ ok: true, status: 'rollback_completed' });
+  getAdminHostings.mockResolvedValue(MOCK_HOSTINGS);
+  getProtectionMode.mockResolvedValue({ hosting_id: 5, mode: 'monitor', protection_mode: { enabled: true } });
+  putProtectionMode.mockResolvedValue({ ok: true, mode: 'protect' });
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -116,18 +128,19 @@ describe('SecurityCenter — RemediationsSection', () => {
     });
   });
 
-  it('rollback button calls rollbackRemediation and refreshes list', async () => {
+  it('rollback button calls rollbackRemediation and refreshes list after confirm', async () => {
     setupMocks([makeRem({ can_rollback: true })]);
     await act(async () => { render(<SecurityCenter />); });
     await waitFor(() => screen.getByTestId('rollback-btn'));
 
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('rollback-btn'));
-    });
+    await act(async () => { fireEvent.click(screen.getByTestId('rollback-btn')); });
+    await waitFor(() => screen.getByTestId('rollback-confirm-btn'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('rollback-confirm-btn')); });
 
     await waitFor(() => {
       expect(rollbackRemediation).toHaveBeenCalledWith(1);
-      expect(getRemediations).toHaveBeenCalledTimes(2); // initial + after rollback
+      expect(getRemediations).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -162,6 +175,169 @@ describe('SecurityCenter — RemediationsSection', () => {
       expect(getRemediations).toHaveBeenCalledTimes(2);
       const lastCall = getRemediations.mock.calls[1][0];
       expect(lastCall.status).toBe('rollback_completed');
+    });
+  });
+
+  it('rollback button shows "Revertir bloqueo" text', async () => {
+    setupMocks([makeRem({ can_rollback: true })]);
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => {
+      expect(screen.getByTestId('rollback-btn').textContent).toContain('Revertir bloqueo');
+    });
+  });
+
+  it('clicking rollback opens confirmation dialog', async () => {
+    setupMocks([makeRem({ can_rollback: true })]);
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => screen.getByTestId('rollback-btn'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('rollback-btn')); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('rollback-confirm-dialog')).toBeTruthy();
+    });
+  });
+
+  it('cancel in confirmation dialog dismisses without calling rollbackRemediation', async () => {
+    setupMocks([makeRem({ can_rollback: true })]);
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => screen.getByTestId('rollback-btn'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('rollback-btn')); });
+    await waitFor(() => screen.getByTestId('rollback-cancel-btn'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('rollback-cancel-btn')); });
+
+    await waitFor(() => {
+      expect(rollbackRemediation).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('rollback-confirm-dialog')).toBeNull();
+    });
+  });
+
+  it('confirming rollback shows success toast', async () => {
+    setupMocks([makeRem({ can_rollback: true })]);
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => screen.getByTestId('rollback-btn'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('rollback-btn')); });
+    await waitFor(() => screen.getByTestId('rollback-confirm-btn'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('rollback-confirm-btn')); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('rollback-toast')).toBeTruthy();
+      expect(screen.getByTestId('rollback-toast').textContent).toContain('revertido');
+    });
+  });
+});
+
+// ── ProtectionModePanel tests ─────────────────────────────────────────────────
+
+describe('SecurityCenter — ProtectionModePanel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders protection mode panel', async () => {
+    setupMocks();
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => {
+      expect(screen.getByTestId('protection-mode-panel')).toBeTruthy();
+    });
+  });
+
+  it('loads hostings into selector on mount', async () => {
+    setupMocks();
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => {
+      expect(getAdminHostings).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('hosting-select')).toBeTruthy();
+    });
+  });
+
+  it('loads current mode when hosting is selected', async () => {
+    setupMocks();
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => {
+      expect(getProtectionMode).toHaveBeenCalledWith(5);
+    });
+  });
+
+  it('mode selector shows three options: off, monitor, protect', async () => {
+    setupMocks();
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => screen.getByTestId('mode-selector'));
+
+    expect(screen.getByTestId('mode-btn-off')).toBeTruthy();
+    expect(screen.getByTestId('mode-btn-monitor')).toBeTruthy();
+    expect(screen.getByTestId('mode-btn-protect')).toBeTruthy();
+  });
+
+  it('clicking a mode button changes selection', async () => {
+    setupMocks();
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => screen.getByTestId('mode-btn-protect'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('mode-btn-protect')); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('protect-warning')).toBeTruthy();
+    });
+  });
+
+  it('protect warning shown only when protect mode is selected', async () => {
+    getProtectionMode.mockResolvedValue({ hosting_id: 5, mode: 'off', protection_mode: {} });
+    setupMocks();
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => screen.getByTestId('mode-btn-protect'));
+
+    expect(screen.queryByTestId('protect-warning')).toBeNull();
+
+    await act(async () => { fireEvent.click(screen.getByTestId('mode-btn-protect')); });
+    await waitFor(() => {
+      expect(screen.getByTestId('protect-warning')).toBeTruthy();
+    });
+  });
+
+  it('save button calls putProtectionMode with selected hosting and mode', async () => {
+    setupMocks();
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => screen.getByTestId('mode-btn-protect'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('mode-btn-protect')); });
+    await act(async () => { fireEvent.click(screen.getByTestId('save-mode-btn')); });
+
+    await waitFor(() => {
+      expect(putProtectionMode).toHaveBeenCalledWith(5, 'protect');
+    });
+  });
+
+  it('success toast shown after successful save', async () => {
+    setupMocks();
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => screen.getByTestId('save-mode-btn'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('save-mode-btn')); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mode-toast')).toBeTruthy();
+      expect(screen.getByTestId('mode-toast').textContent).toContain('actualizado');
+    });
+  });
+
+  it('error toast shown on save failure', async () => {
+    setupMocks();
+    putProtectionMode.mockRejectedValueOnce({
+      response: { data: { detail: 'Error de prueba' } },
+    });
+    await act(async () => { render(<SecurityCenter />); });
+    await waitFor(() => screen.getByTestId('save-mode-btn'));
+
+    await act(async () => { fireEvent.click(screen.getByTestId('save-mode-btn')); });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mode-toast')).toBeTruthy();
+      expect(screen.getByTestId('mode-toast').textContent).toContain('Error');
     });
   });
 });
