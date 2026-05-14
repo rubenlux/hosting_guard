@@ -881,6 +881,11 @@ export const getProtectionMode = async (hostingId) => {
   return response.data;
 };
 
+export const putProtectionMode = async (hostingId, mode) => {
+  const response = await api.put(`/admin/hostings/${hostingId}/protection-mode`, { mode });
+  return response.data;
+};
+
 // ---------------------------------------------------------------------------
 // Presence & Activity
 // ---------------------------------------------------------------------------

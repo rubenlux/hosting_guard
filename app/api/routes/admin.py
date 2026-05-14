@@ -2354,12 +2354,40 @@ IMPORTANTE: La IA NO debe bloquear IPs ni suspender usuarios. Solo recomendar.""
         raise HTTPException(status_code=500, detail=f"AI summary failed: {exc}")
 
 
+def _derive_pm_mode(pm: dict) -> str:
+    if not pm.get("enabled"):
+        return "off"
+    if pm.get("block_xmlrpc") or pm.get("rate_limit_wp_login") or pm.get("block_scanner_paths"):
+        return "protect"
+    return "monitor"
+
+
+_MODE_SETTINGS: dict = {
+    "off": {
+        "enabled": False, "block_xmlrpc": False,
+        "rate_limit_wp_login": False, "block_scanner_paths": False, "elevated_sensitivity": False,
+    },
+    "monitor": {
+        "enabled": True, "block_xmlrpc": False,
+        "rate_limit_wp_login": False, "block_scanner_paths": False, "elevated_sensitivity": False,
+    },
+    "protect": {
+        "enabled": True, "block_xmlrpc": True,
+        "rate_limit_wp_login": True, "block_scanner_paths": True, "elevated_sensitivity": False,
+    },
+}
+
+
 class ProtectionModeBody(BaseModel):
     enabled:              bool = True
     block_xmlrpc:         bool = False
     rate_limit_wp_login:  bool = False
     block_scanner_paths:  bool = False
     elevated_sensitivity: bool = False
+
+
+class ProtectionModeSimpleBody(BaseModel):
+    mode: str  # "off" | "monitor" | "protect"
 
 
 @router.post("/hostings/{hosting_id}/protection-mode")
@@ -2434,6 +2462,73 @@ def set_protection_mode(
     return {"ok": True, "hosting_id": hosting_id, "protection_mode": settings}
 
 
+@router.put("/hostings/{hosting_id}/protection-mode")
+def put_protection_mode_simple(
+    hosting_id: int,
+    body: ProtectionModeSimpleBody,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Set protection mode using a simple off/monitor/protect label."""
+    from app.infra.db import get_connection, release_connection
+    import json as _json
+    from datetime import datetime, timezone
+
+    if body.mode not in _MODE_SETTINGS:
+        raise HTTPException(status_code=400, detail=f"Modo inválido: '{body.mode}'. Valores válidos: off, monitor, protect")
+
+    base = _MODE_SETTINGS[body.mode]
+    settings = {**base, "set_at": datetime.now(timezone.utc).isoformat(), "set_by": admin["user_id"]}
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE hostings SET protection_mode = %s WHERE hosting_id = %s RETURNING hosting_id",
+            (_json.dumps(settings), hosting_id),
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Hosting no encontrado")
+        conn.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        release_connection(conn)
+
+    _admin_audit.log(
+        admin_id=admin["user_id"],
+        admin_email=admin.get("email", ""),
+        action="protection_mode_set",
+        ip=_get_ip(request),
+        details=f"hosting_id={hosting_id} mode={body.mode}",
+    )
+
+    from app.services.activity_service import log_event
+    log_event(
+        hosting_id=hosting_id,
+        actor_type="admin",
+        actor_user_id=admin["user_id"],
+        actor_email=admin.get("email"),
+        event_type="protection_mode_changed",
+        category="security",
+        severity="warning" if body.mode == "protect" else "info",
+        title=f"Modo protección cambiado a {body.mode}",
+        source="admin",
+        metadata=settings,
+    )
+
+    try:
+        from app.services.security.security_policy_resolver import invalidate_policy
+        invalidate_policy(hosting_id)
+    except Exception as _exc:
+        logger.warning("put_protection_mode: cache invalidation failed: %s", _exc)
+
+    return {"ok": True, "hosting_id": hosting_id, "mode": body.mode, "protection_mode": settings}
+
+
 @router.get("/hostings/{hosting_id}/protection-mode")
 def get_protection_mode(
     hosting_id: int,
@@ -2465,7 +2560,7 @@ def get_protection_mode(
         except Exception:
             pm = {}
 
-    return {"hosting_id": hosting_id, "name": row.get("name"), "protection_mode": pm}
+    return {"hosting_id": hosting_id, "name": row.get("name"), "protection_mode": pm, "mode": _derive_pm_mode(pm)}
 
 
 # ── AI Sentinel — system_incidents ───────────────────────────────────────────
