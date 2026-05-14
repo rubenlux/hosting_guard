@@ -4,8 +4,19 @@ Docker-based build helpers.
 Provides env-flag building, version parsing, image selection,
 Traefik label generation, and the tool-presence check.
 """
+import re
 import shutil
 from typing import Optional
+
+# Env var names (case-insensitive suffix match) that must never reach build containers.
+# Build containers are ephemeral and untrusted; credentials injected here can be
+# exfiltrated by a malicious postinstall script in a compromised dependency.
+_BLOCKED_BUILD_ENV_RE = re.compile(
+    r"DATABASE_URL$|DB_PASS|DB_PASSWORD|SECRET_KEY|JWT_SECRET|"
+    r"NPM_TOKEN|NODE_AUTH_TOKEN|GITHUB_TOKEN|GH_TOKEN|"
+    r"SSH_PRIVATE_KEY|SSH_KEY(?:$|_)|PRIVATE_KEY|API_SECRET",
+    re.IGNORECASE,
+)
 
 from app.services.deploy_diagnostics import DeployError, DEPLOY_RUNTIME_MISSING_TOOL
 
@@ -23,6 +34,12 @@ def _docker_env_flags(env_vars: dict) -> list:
     for k, v in env_vars.items():
         flags += ["-e", f"{k}={v}"]
     return flags
+
+
+def _safe_build_env_flags(env_vars: dict) -> list:
+    """Like _docker_env_flags but strips secrets unsafe for ephemeral npm build containers."""
+    safe = {k: v for k, v in env_vars.items() if not _BLOCKED_BUILD_ENV_RE.search(k)}
+    return _docker_env_flags(safe)
 
 
 def _detect_image_for_start(work_dir: str, framework: Optional[str]) -> str:

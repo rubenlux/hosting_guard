@@ -189,6 +189,24 @@ MATRIX: dict = {
         "requires_user_action": True,
         "requires_admin_action": False,
     },
+    "npm_supply_chain_tanstack_compromise": {
+        "stage": "dependency_preflight",
+        "severity": "critical",
+        "detail": "El proyecto referencia paquetes involucrados en el compromiso de la cadena de suministro de TanStack (2026-05-11). El deploy fue bloqueado por seguridad.",
+        "suggested_fix": "Actualizá los paquetes @tanstack afectados a la última versión parcheada y regenerá el lockfile con 'npm install'.",
+        "retryable": False,
+        "requires_user_action": True,
+        "requires_admin_action": False,
+    },
+    "npm_lockfile_required_for_supply_chain_safety": {
+        "stage": "dependency_preflight",
+        "severity": "critical",
+        "detail": "El proyecto incluye @tanstack/* pero no tiene lockfile. Sin lockfile no se pueden verificar las versiones contra el compromiso de cadena de suministro de TanStack (2026-05-11).",
+        "suggested_fix": "Ejecutá 'npm install' localmente para generar un package-lock.json, verificá las versiones de @tanstack/* y commiteá el lockfile.",
+        "retryable": False,
+        "requires_user_action": True,
+        "requires_admin_action": False,
+    },
 
     # ── Dependency install ────────────────────────────────────────────────────
     "npm_install_failed": {

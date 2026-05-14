@@ -3,7 +3,7 @@ Dependency preflight — scans package manifests and config files for known-inco
 packages and unsupported configurations. Called before npm install to fail fast
 without running node-gyp or the full install process.
 
-Priority order: node-sass → pnpm → yarn → node version → next SSR
+Priority order: node-sass → supply-chain → pnpm → yarn → node version → next SSR
 """
 import json
 import os
@@ -11,6 +11,21 @@ import re
 from typing import Optional
 
 _INCOMPATIBLE_PACKAGES = frozenset({"node-sass"})
+
+# TanStack npm supply-chain compromise — advisory 2026-05-11
+# Maps package name → set of pinned versions known to be malicious.
+_TANSTACK_AFFECTED: dict[str, frozenset] = {
+    "@tanstack/react-query":                frozenset({"5.75.0", "5.75.1", "5.75.2"}),
+    "@tanstack/query-core":                 frozenset({"5.75.0", "5.75.1", "5.75.2"}),
+    "@tanstack/vue-query":                  frozenset({"5.75.0", "5.75.1", "5.75.2"}),
+    "@tanstack/svelte-query":               frozenset({"5.75.0", "5.75.1", "5.75.2"}),
+    "@tanstack/solid-query":                frozenset({"5.75.0", "5.75.1", "5.75.2"}),
+    "@tanstack/angular-query-experimental": frozenset({"5.75.0", "5.75.1", "5.75.2"}),
+    "@tanstack/react-table":                frozenset({"8.21.0"}),
+    "@tanstack/table-core":                 frozenset({"8.21.0"}),
+    "@tanstack/react-router":               frozenset({"1.120.0", "1.120.1"}),
+    "@tanstack/router":                     frozenset({"1.120.0", "1.120.1"}),
+}
 
 # Node major version used in the build container
 _CONTAINER_NODE_MAJOR = 20
@@ -224,6 +239,147 @@ def _next_ssr_check(work_dir: str, pkg: dict) -> Optional[dict]:
     }
 
 
+# ── TanStack supply-chain guard ───────────────────────────────────────────────
+
+def _scan_package_lock(work_dir: str) -> dict[str, str]:
+    """Return {pkg: version} for @tanstack/* packages pinned in package-lock.json."""
+    path = os.path.join(work_dir, "package-lock.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            lock = json.load(f)
+    except Exception:
+        return {}
+    found: dict[str, str] = {}
+    # v2/v3: packages dict keyed like "node_modules/@tanstack/react-query"
+    for key, info in lock.get("packages", {}).items():
+        if "@tanstack/" not in key or not isinstance(info, dict):
+            continue
+        parts = key.split("node_modules/")
+        last = parts[-1] if parts else key
+        if last.startswith("@tanstack/"):
+            pkg_name = "/".join(last.split("/")[:2])
+            version = info.get("version", "")
+            if version:
+                found[pkg_name] = version
+    # v1: dependencies dict
+    for pkg_name, info in lock.get("dependencies", {}).items():
+        if pkg_name.startswith("@tanstack/") and isinstance(info, dict):
+            version = info.get("version", "")
+            if version and pkg_name not in found:
+                found[pkg_name] = version
+    return found
+
+
+def _scan_pnpm_lock(work_dir: str) -> dict[str, str]:
+    """Return {pkg: version} for @tanstack/* packages pinned in pnpm-lock.yaml."""
+    path = os.path.join(work_dir, "pnpm-lock.yaml")
+    if not os.path.exists(path):
+        return {}
+    found: dict[str, str] = {}
+    try:
+        content = open(path, errors="replace").read()
+        for m in re.finditer(
+            r"""['"/ ](@tanstack/[\w-]+)@([\d]+\.[\d]+\.[\d]+[\w.-]*)['"/ ]?\s*:""",
+            content,
+        ):
+            found[m.group(1)] = m.group(2)
+    except Exception:
+        pass
+    return found
+
+
+def _scan_yarn_lock(work_dir: str) -> dict[str, str]:
+    """Return {pkg: version} for @tanstack/* packages pinned in yarn.lock (v1 and berry)."""
+    path = os.path.join(work_dir, "yarn.lock")
+    if not os.path.exists(path):
+        return {}
+    found: dict[str, str] = {}
+    try:
+        current_pkg: Optional[str] = None
+        for line in open(path, errors="replace"):
+            m_hdr = re.match(r'^["\s]*(@tanstack/[\w-]+)@', line)
+            if m_hdr:
+                current_pkg = m_hdr.group(1)
+            if current_pkg:
+                m_ver = re.match(r'\s+version[:\s]+"?([\d]+\.[\d]+\.[\d]+[\w.-]*)"?', line)
+                if m_ver:
+                    found[current_pkg] = m_ver.group(1)
+                    current_pkg = None
+    except Exception:
+        pass
+    return found
+
+
+def _has_tanstack_in_manifest(pkg: dict) -> bool:
+    for section in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        for name in pkg.get(section, {}):
+            if name.startswith("@tanstack/"):
+                return True
+    return False
+
+
+def _tanstack_supply_chain_check(work_dir: str, pkg: dict) -> Optional[dict]:
+    # Aggregate all pinned @tanstack versions across all lockfile formats
+    all_pinned: dict[str, str] = {}
+    for scanner in (_scan_package_lock, _scan_pnpm_lock, _scan_yarn_lock):
+        all_pinned.update(scanner(work_dir))
+
+    affected = {
+        name: ver
+        for name, ver in all_pinned.items()
+        if name in _TANSTACK_AFFECTED and ver in _TANSTACK_AFFECTED[name]
+    }
+    if affected:
+        return {
+            "code": "npm_supply_chain_tanstack_compromise",
+            "stage": "dependency_preflight",
+            "detail": (
+                "Este deploy fue bloqueado porque el proyecto referencia paquetes involucrados "
+                "en el compromiso de la cadena de suministro de TanStack (anunciado 2026-05-11). "
+                "Fijá una versión segura y commiteá un lockfile."
+            ),
+            "suggested_fix": (
+                "Actualizá los paquetes @tanstack afectados a la última versión parcheada "
+                "y regenerá el lockfile con 'npm install'. "
+                "Consultá https://github.com/TanStack para las versiones seguras."
+            ),
+            "evidence": {
+                "install_skipped": True,
+                "reason": "supply_chain_compromised_version",
+                "affected_packages": affected,
+                "advisory_date": "2026-05-11",
+            },
+        }
+
+    has_lock = any(
+        os.path.exists(os.path.join(work_dir, f))
+        for f in ("package-lock.json", "pnpm-lock.yaml", "yarn.lock")
+    )
+    if not has_lock and _has_tanstack_in_manifest(pkg):
+        return {
+            "code": "npm_lockfile_required_for_supply_chain_safety",
+            "stage": "dependency_preflight",
+            "detail": (
+                "El proyecto incluye paquetes @tanstack/* pero no tiene lockfile. "
+                "Sin un lockfile no es posible verificar que las versiones instaladas "
+                "no estén comprometidas por el ataque de cadena de suministro de TanStack (2026-05-11)."
+            ),
+            "suggested_fix": (
+                "Ejecutá 'npm install' localmente para generar un package-lock.json, "
+                "verificá que las versiones de @tanstack/* sean seguras y commiteá el lockfile."
+            ),
+            "evidence": {
+                "install_skipped": True,
+                "reason": "lockfile_required_for_supply_chain_safety",
+                "advisory_date": "2026-05-11",
+            },
+        }
+
+    return None
+
+
 def run_dependency_preflight(work_dir: str, pkg: dict) -> Optional[dict]:
     """
     Run all preflight checks in priority order.
@@ -233,6 +389,7 @@ def run_dependency_preflight(work_dir: str, pkg: dict) -> Optional[dict]:
     """
     for check in (
         lambda: _node_sass_check(work_dir),
+        lambda: _tanstack_supply_chain_check(work_dir, pkg),
         lambda: _package_manager_check(work_dir),
         lambda: _node_version_check(work_dir, pkg),
         lambda: _next_ssr_check(work_dir, pkg),

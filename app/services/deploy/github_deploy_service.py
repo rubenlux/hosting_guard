@@ -56,6 +56,7 @@ from app.services.deploy.build_runner import (
     _detect_image_for_start,
     _docker_env_flags,
     _parse_versions,
+    _safe_build_env_flags,
     _traefik_labels,
 )
 from app.services.deploy.project_detector import (
@@ -315,7 +316,8 @@ async def run_github_deploy(
                     )
 
             if has_package_json:
-                install_cmd = data.install_command or "npm install"
+                _has_pkg_lock = os.path.exists(os.path.join(work_dir, "package-lock.json"))
+                install_cmd = data.install_command or ("npm ci" if _has_pkg_lock else "npm install")
                 build_cmd   = data.build_command   or "npm run build"
                 out_dir     = data.output_directory or _detect_out_dir(pkg)
                 _detected.setdefault("root_directory", data.root_directory or ".")
@@ -358,7 +360,7 @@ async def run_github_deploy(
                     "apk add --no-cache python3 make g++ >/dev/null 2>&1 && "
                     "node --version && npm --version && "
                 )
-                _env_flags = _docker_env_flags(data.env_vars)
+                _env_flags = _safe_build_env_flags(data.env_vars)
 
                 def _node_run(cmd: str, timeout: int = 300) -> subprocess.CompletedProcess:
                     return subprocess.run(
