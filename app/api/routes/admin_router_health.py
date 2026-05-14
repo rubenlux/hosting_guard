@@ -27,8 +27,10 @@ class RepairBody(BaseModel):
 
 @router.get("/platform")
 def get_platform_config(_: dict = Depends(require_role("admin"))):
-    """Return static config + file presence for platform routes (no live HTTP check)."""
-    from app.services.router_health_guard import PLATFORM_ROUTES, _router_source_for_platform
+    """Return static config + file visibility for platform routes (no live HTTP check)."""
+    from app.services.router_health_guard import (
+        PLATFORM_ROUTES, _router_source_for_platform, _dynamic_file_visibility,
+    )
     out = []
     for route in PLATFORM_ROUTES:
         dfile = route.get("dynamic_file", "")
@@ -38,7 +40,7 @@ def get_platform_config(_: dict = Depends(require_role("admin"))):
             "paths": route.get("paths", []),
             "expected_statuses": route.get("expected_statuses", [200]),
             "dynamic_file": dfile,
-            "dynamic_file_exists": os.path.exists(dfile) if dfile else False,
+            "dynamic_file_visibility": _dynamic_file_visibility(dfile) if dfile else "absent",
             "router_source": _router_source_for_platform(route),
             "scope": "platform",
         })
@@ -106,3 +108,24 @@ def check_tenant(
         "healthy": sum(1 for r in results if r.healthy),
         "unhealthy": sum(1 for r in results if not r.healthy),
     }
+
+
+@router.post("/tenants/{hosting_id}/repair")
+def repair_tenant(hosting_id: int, body: RepairBody, _: dict = Depends(require_role("admin"))):
+    """
+    Repair or preview the Traefik dynamic route for a single tenant.
+
+    dry_run=true (default): preview YAML + pre-checks, no disk write.
+    dry_run=false: write dynamic file, backup existing, audit log.
+
+    Preconditions (enforced server-side):
+      - hosting status must be 'active'
+      - container must be running
+      - subdomain must be valid
+    """
+    from fastapi import HTTPException
+    from app.services.router_health_guard import ensure_tenant_traefik_route
+    result = ensure_tenant_traefik_route(hosting_id=hosting_id, dry_run=body.dry_run)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result

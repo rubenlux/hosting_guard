@@ -202,6 +202,7 @@ const iconBtn = {
 function SiteRow({ hosting, healthData, healthHistory, onOpenLogs, onOpenFiles, onUpload, onRestart }) {
   const [hover, setHover] = useState(false);
   const hd = healthData?.[hosting.hosting_id] ?? {};
+  const routerIssue = hd.public_reachable === false;
   const score = hd.score ?? hosting.health ?? 100;
   const cpu   = parseFloat(hd.cpu ?? hosting.cpu ?? 0);
   const ram   = parseFloat(hd.ram ?? hosting.ram ?? 0);
@@ -226,7 +227,12 @@ function SiteRow({ hosting, healthData, healthHistory, onOpenLogs, onOpenFiles, 
       <div style={{ minWidth: 0, width: 190, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: T.text, letterSpacing: '-0.01em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hosting.name}</span>
-          <span style={{ width: 5, height: 5, borderRadius: 999, background: hosting.status === 'active' ? T.good : T.bad, boxShadow: hosting.status === 'active' ? `0 0 6px ${T.good}` : 'none', flexShrink: 0 }} />
+          <span style={{ width: 5, height: 5, borderRadius: 999, background: routerIssue ? T.bad : (hosting.status === 'active' ? T.good : T.bad), boxShadow: routerIssue ? `0 0 6px ${T.bad}` : (hosting.status === 'active' ? `0 0 6px ${T.good}` : 'none'), flexShrink: 0 }} />
+          {routerIssue && (
+            <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: T.badSoft, color: T.bad, letterSpacing: '0.06em', textTransform: 'uppercase', flexShrink: 0 }}>
+              Ruta caída
+            </span>
+          )}
         </div>
         <div style={{ fontSize: 10.5, color: T.textMute, fontFamily: T.mono, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{domain}</div>
       </div>
@@ -379,7 +385,9 @@ export default function DashboardOverview({
 
   const active = hostings.filter(h => h.status === 'active').length;
   const total  = hostings.length;
-  const pct    = total > 0 ? Math.round((active / total) * 100) : 0;
+  const brokenRoutes = hostings.filter(h => healthData[h.hosting_id]?.public_reachable === false).length;
+  const publicOperational = Math.max(0, active - brokenRoutes);
+  const pct    = active > 0 ? Math.round((publicOperational / active) * 100) : 0;
   const health = avgHealthScore ?? 100;
   const cpu    = parseFloat(avgCpu ?? 0);
   const cpuColor = cpu > 85 ? T.bad : cpu > 60 ? T.warn : T.accent;
@@ -413,11 +421,15 @@ export default function DashboardOverview({
         </div>
         <div style={{ fontSize: 12.5, color: T.textDim, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 6, height: 6, borderRadius: 999, background: T.good, boxShadow: `0 0 6px ${T.good}`, display: 'inline-block' }} />
-            Salud <span style={{ color: T.text, fontWeight: 600, fontFamily: T.mono }}>{health}/100</span>
+            <span style={{ width: 6, height: 6, borderRadius: 999, background: brokenRoutes > 0 ? T.bad : T.good, boxShadow: `0 0 6px ${brokenRoutes > 0 ? T.bad : T.good}`, display: 'inline-block' }} />
+            Salud <span style={{ color: brokenRoutes > 0 ? T.bad : T.text, fontWeight: 600, fontFamily: T.mono }}>{health}/100</span>
           </span>
           <span style={{ color: T.border }}>·</span>
-          <span>Todo operativo</span>
+          <span style={{ color: brokenRoutes > 0 ? T.bad : T.textDim }}>
+            {brokenRoutes > 0
+              ? `${brokenRoutes} sitio${brokenRoutes !== 1 ? 's' : ''} con ruta caída`
+              : 'Todo operativo'}
+          </span>
           <span style={{ color: T.border }}>·</span>
           <span>{active} sitio{active !== 1 ? 's' : ''} activo{active !== 1 ? 's' : ''}</span>
           {unresolved > 0 && <>
@@ -430,14 +442,20 @@ export default function DashboardOverview({
       {/* ── KPI cards ──────────────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 14 }}>
         <StatCard
-          label="Sitios Activos" value={active} suffix={`/${total}`}
-          foot={<span style={{ color: T.good }}>● {pct}% operativos</span>}
-          series={seriesSites} color={T.good} IconC={Globe}
+          label="Sitios Activos" value={publicOperational} suffix={`/${total}`}
+          foot={brokenRoutes > 0
+            ? <span style={{ color: T.bad }}>● {brokenRoutes} con ruta caída</span>
+            : <span style={{ color: T.good }}>● {pct}% operativos</span>}
+          series={seriesSites} color={brokenRoutes > 0 ? T.bad : T.good} IconC={Globe}
+          alert={brokenRoutes > 0}
         />
         <StatCard
           label="Salud General" value={health} suffix="/100"
-          foot={<span>↑ Estable últimas 24h</span>}
-          series={seriesHealth} color={T.violet} IconC={Shield}
+          foot={brokenRoutes > 0
+            ? <span style={{ color: T.bad }}>Rutas públicas caídas</span>
+            : <span>↑ Estable últimas 24h</span>}
+          series={seriesHealth} color={brokenRoutes > 0 ? T.bad : T.violet} IconC={Shield}
+          alert={health < 40}
         />
         <StatCard
           label="CPU Promedio" value={avgCpu ?? '0.0'} suffix="%"

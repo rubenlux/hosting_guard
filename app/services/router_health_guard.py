@@ -30,6 +30,40 @@ _USER_AGENT = "HostingGuard-RouterHealth/1.0"
 _HTTP_TIMEOUT = 10
 # Traefik's default 404 body is "404 page not found" = 19 bytes
 _TRAEFIK_404_MAX_BODY = 30
+_BASE_DOMAIN = "hostingguard.lat"
+
+
+def normalize_tenant_public_host(subdomain: str, base_domain: str = _BASE_DOMAIN) -> str:
+    """
+    Normalize a subdomain/FQDN from the DB to a public hostname.
+    Handles: already-FQDN, bare slug, mixed case, protocol prefix, trailing slashes, custom domains.
+    Never produces *.base_domain.base_domain.
+    """
+    s = subdomain.strip().lower()
+    for prefix in ("https://", "http://"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+    s = s.split("/")[0].split("?")[0].split(":")[0]
+    if s.endswith("." + base_domain) or s == base_domain:
+        return s
+    if "." in s:
+        return s
+    return f"{s}.{base_domain}"
+
+
+def _dynamic_file_visibility(path: str) -> str:
+    """
+    Returns 'visible', 'not_mounted_in_app', or 'absent'.
+    'not_mounted_in_app': parent dir absent → volume not mounted in this container.
+    'absent': dir exists but specific file does not (file genuinely missing on host).
+    """
+    if not path:
+        return "absent"
+    if os.path.exists(path):
+        return "visible"
+    if not os.path.exists(os.path.dirname(path)):
+        return "not_mounted_in_app"
+    return "absent"
 
 PLATFORM_ROUTES = [
     {
@@ -127,6 +161,7 @@ class RouterHealthResult:
     expected_status: str = "active"
     container_running: Optional[bool] = None
     router_source: str = "unknown"  # "dynamic_file" | "docker_labels" | "missing" | "unknown"
+    dynamic_file_visibility: Optional[str] = None  # "visible" | "not_mounted_in_app" | "absent"
     public_status_code: Optional[int] = None
     content_type: Optional[str] = None
     healthy: bool = False
@@ -144,6 +179,7 @@ class RouterHealthResult:
             "expected_status": self.expected_status,
             "container_running": self.container_running,
             "router_source": self.router_source,
+            "dynamic_file_visibility": self.dynamic_file_visibility,
             "public_status_code": self.public_status_code,
             "content_type": self.content_type,
             "healthy": self.healthy,
@@ -318,6 +354,8 @@ def check_platform_routes() -> list:
         paths = route_cfg["paths"]
         expected_statuses = route_cfg["expected_statuses"]
         router_source = _router_source_for_platform(route_cfg)
+        dfile = route_cfg.get("dynamic_file", "")
+        dfile_visibility = _dynamic_file_visibility(dfile)
 
         failing_path = None
         failing_status = None
@@ -344,6 +382,7 @@ def check_platform_routes() -> list:
                 host=host,
                 scope="platform",
                 router_source=router_source,
+                dynamic_file_visibility=dfile_visibility,
                 public_status_code=last_status,
                 content_type=last_ct,
                 healthy=True,
@@ -359,13 +398,14 @@ def check_platform_routes() -> list:
                 "body_size": failing_body,
                 "router_source": router_source,
                 "expected_service": route_cfg.get("service"),
-                "dynamic_file": route_cfg.get("dynamic_file"),
-                "dynamic_file_exists": os.path.exists(route_cfg.get("dynamic_file", "")),
+                "dynamic_file": dfile,
+                "dynamic_file_visibility": dfile_visibility,
             }
             result = RouterHealthResult(
                 host=host,
                 scope="platform",
                 router_source=router_source,
+                dynamic_file_visibility=dfile_visibility,
                 public_status_code=failing_status,
                 content_type=failing_ct,
                 healthy=False,
@@ -440,7 +480,7 @@ def _check_tenant_hosting(h: dict) -> "RouterHealthResult":
     subdomain = h["subdomain"]
     container_name = h["container_name"]
     user_id = h.get("user_id")
-    host = f"{subdomain}.hostingguard.lat"
+    host = normalize_tenant_public_host(subdomain)
 
     container_running = _container_status(container_name)
     router_source = _router_source_for_tenant(hosting_id, container_name)
@@ -493,6 +533,12 @@ def _check_tenant_hosting(h: dict) -> "RouterHealthResult":
 
     if not healthy:
         _emit_tenant_incident(result, user_id)
+    else:
+        # Resolve any open router health incidents for this tenant (recovery)
+        try:
+            _resolve_tenant_router_incidents(hosting_id)
+        except Exception:
+            pass
 
     return result
 
@@ -647,6 +693,176 @@ def _log_audit_event(event_type: str, payload: dict) -> None:
         conn.commit()
     except Exception as exc:
         logger.debug("router_health_guard: audit log failed (%s): %s", event_type, exc)
+    finally:
+        if conn:
+            release_connection(conn)
+
+
+# ─── Tenant router repair ─────────────────────────────────────────────────────
+
+def ensure_tenant_traefik_route(hosting_id: int, dry_run: bool = True) -> dict:
+    """
+    Creates or updates the Traefik dynamic YAML for a tenant hosting.
+
+    Safety contract:
+      - Only works for active hostings with running containers.
+      - Never modifies client files, DNS, Docker Compose, or billing.
+      - Backs up existing file before overwriting.
+
+    Returns:
+        {"dry_run", "hosting_id", "host", "container_name", "action", "yaml", "file_path"}
+        or {"error": str}
+    """
+    from app.infra.db import get_connection, release_connection
+
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT hosting_id, user_id, subdomain, container_name, status FROM hostings WHERE hosting_id = %s",
+            (hosting_id,),
+        )
+        row = cur.fetchone()
+    except Exception as exc:
+        logger.error("ensure_tenant_route: DB error: %s", exc)
+        return {"error": f"DB error: {exc}"}
+    finally:
+        if conn:
+            release_connection(conn)
+
+    if not row:
+        return {"error": "Hosting not found"}
+
+    h = dict(row)
+    if h["status"] != "active":
+        return {"error": f"Hosting status is '{h['status']}', must be 'active'"}
+
+    subdomain = (h.get("subdomain") or "").strip()
+    container_name = (h.get("container_name") or "").strip()
+    if not subdomain or not container_name:
+        return {"error": "Hosting missing subdomain or container_name"}
+
+    host = normalize_tenant_public_host(subdomain)
+
+    container_running = _container_status(container_name)
+    if not container_running:
+        status_str = "stopped" if container_running is False else "not found"
+        return {"error": f"Container '{container_name}' is {status_str}. Resolve container first."}
+
+    router_name = f"tenant-{hosting_id}"
+    yaml_content = (
+        f"# tenant-{hosting_id}.yml\n"
+        f"# Managed by router_health_guard.py — do not edit manually.\n"
+        f"# Route: {host} → {container_name}:80\n"
+        f"# ForwardAuth: hg-forwardauth@docker\n\n"
+        f"http:\n"
+        f"  routers:\n"
+        f"    {router_name}:\n"
+        f"      rule: \"Host(`{host}`)\"\n"
+        f"      entryPoints:\n"
+        f"        - websecure\n"
+        f"      service: {router_name}\n"
+        f"      tls:\n"
+        f"        certResolver: le\n"
+        f"      middlewares:\n"
+        f"        - hg-forwardauth@docker\n"
+        f"      priority: 50\n\n"
+        f"  services:\n"
+        f"    {router_name}:\n"
+        f"      loadBalancer:\n"
+        f"        servers:\n"
+        f"          - url: \"http://{container_name}:80\"\n"
+    )
+
+    DYNAMIC_DIR = "/opt/traefik-dynamic"
+    file_path = f"{DYNAMIC_DIR}/{hosting_id}.yml"
+
+    existing_content = ""
+    file_exists = os.path.exists(file_path)
+    if file_exists:
+        try:
+            with open(file_path) as f:
+                existing_content = f.read()
+        except OSError:
+            existing_content = ""
+
+    action = "unchanged" if (file_exists and existing_content == yaml_content) else (
+        "updated" if file_exists else "created"
+    )
+
+    result = {
+        "dry_run": dry_run,
+        "hosting_id": hosting_id,
+        "host": host,
+        "container_name": container_name,
+        "action": action,
+        "yaml": yaml_content,
+        "file_path": file_path,
+    }
+
+    if action == "unchanged":
+        return result
+
+    if not dry_run:
+        BACKUP_DIR = os.path.join(DYNAMIC_DIR, "backups")
+        if action == "updated":
+            os.makedirs(BACKUP_DIR, exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            bak = os.path.join(BACKUP_DIR, f"{hosting_id}.yml.{ts}")
+            try:
+                with open(bak, "w") as f:
+                    f.write(existing_content)
+            except OSError as exc:
+                logger.warning("ensure_tenant_route: backup failed %s: %s", bak, exc)
+
+        os.makedirs(DYNAMIC_DIR, exist_ok=True)
+        with open(file_path, "w") as f:
+            f.write(yaml_content)
+
+        logger.info("router_health_guard: tenant route %s %s", action, file_path)
+        _log_audit_event("tenant_router_repaired", {
+            "hosting_id": hosting_id,
+            "host": host,
+            "container_name": container_name,
+            "file_path": file_path,
+            "action": action,
+        })
+
+    return result
+
+
+def _resolve_tenant_router_incidents(hosting_id: int) -> None:
+    """Resolve open router_health_guard incidents for a tenant that is now healthy."""
+    from app.infra.db import get_connection, release_connection
+    from app.services.incidents.incident_deduper import _resolve_incident
+
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT correlation_key FROM system_incidents
+            WHERE source_table = 'router_health_guard'
+              AND status = 'open'
+              AND hosting_id = %s
+            """,
+            (hosting_id,),
+        )
+        keys = [r[0] for r in cur.fetchall()]
+        for key in keys:
+            _resolve_incident(conn, key, extra_evidence={"resolved_reason": "router_health_recovered"})
+        if keys:
+            conn.commit()
+            logger.info("router_health_guard: resolved %d incident(s) for hosting_id=%s (recovered)", len(keys), hosting_id)
+    except Exception as exc:
+        logger.warning("router_health_guard: incident resolve failed for hosting_id=%s: %s", hosting_id, exc)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
     finally:
         if conn:
             release_connection(conn)

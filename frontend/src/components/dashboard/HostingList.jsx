@@ -113,6 +113,11 @@ export default function HostingList({
                     Salud: {healthData[h.hosting_id].score ?? 0}%
                   </div>
                 )}
+                {healthData[h.hosting_id]?.public_reachable === false && (
+                  <div className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-red-500/20 text-red-400">
+                    Web inaccesible
+                  </div>
+                )}
               </div>
               {h.wp_admin_password && (
                 <div className="flex items-center gap-2 mt-1 text-[10px] font-mono text-gray-500">

@@ -57,6 +57,29 @@ export function evaluateHosting(hosting, healthData, alerts) {
     };
   }
 
+  // 0. PUBLIC ROUTE DOWN — Traefik router missing/unreachable.
+  // Takes priority over all other signals: if the public domain doesn't respond,
+  // container metrics are irrelevant to the end user.
+  if (hd.public_reachable === false && hd.router_incident_type) {
+    const ROUTER_LABELS = {
+      traefik_router_missing_or_unmatched: 'Router Traefik faltante',
+      traefik_backend_unreachable:         'Backend inaccesible',
+      public_route_timeout:                'Timeout de ruta pública',
+      tls_or_certificate_issue:            'Error SSL/TLS',
+      container_not_running:               'Contenedor detenido',
+    };
+    const label = ROUTER_LABELS[hd.router_incident_type] || hd.router_incident_type;
+    return {
+      hostingId:         hosting.hosting_id,
+      hostingName:       hosting.name,
+      severity:          'critical',
+      summary:           `El dominio público no responde (${label}). El sitio no es accesible.`,
+      recommendation:    'Reparar el router Traefik desde el panel de administración → Router Health.',
+      requiresAttention: true,
+      signals:           [label],
+    };
+  }
+
   // 1. INFRA — container down
   if (hosting.status !== 'active') {
     return {

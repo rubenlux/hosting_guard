@@ -121,13 +121,63 @@ async def get_dashboard_summary(user: dict = Depends(verify_token)):
 
     health_results = await asyncio.gather(*[_get_health(hid) for hid in active_ids])
 
+    # Query open router health incidents — overrides health score when routes are down.
+    def _get_router_incidents():
+        if not active_ids:
+            return {}
+        from app.infra.db import get_connection, release_connection
+        conn = None
+        try:
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT hosting_id, incident_type, severity
+                FROM system_incidents
+                WHERE source_table = 'router_health_guard'
+                  AND status = 'open'
+                  AND hosting_id = ANY(%s)
+                ORDER BY hosting_id, last_seen DESC
+                """,
+                (active_ids,),
+            )
+            result = {}
+            for row in cur.fetchall():
+                hid = row[0]
+                if hid not in result:  # keep most-recent per hosting
+                    result[hid] = {"incident_type": row[1], "severity": row[2]}
+            return result
+        except Exception as exc:
+            logger.warning("dashboard: router incidents query failed: %s", exc)
+            return {}
+        finally:
+            if conn:
+                release_connection(conn)
+
+    router_incidents = await loop.run_in_executor(None, _get_router_incidents)
+
     health_map = {}
     history_map = {}
     for hosting_id, health, history in health_results:
-        health_map[hosting_id] = health or {
+        base = health or {
             "score": 100, "status": "healthy", "cpu": 0.0, "ram": 0.0,
-            "error_count": 0, "warning_count": 0, "trend": "stable"
+            "error_count": 0, "warning_count": 0, "trend": "stable",
         }
+        ri = router_incidents.get(hosting_id)
+        if ri:
+            # Router is down — override score to 0 regardless of container/CPU/RAM metrics.
+            # public_reachable and router_incident_type flow to the frontend for advisory + badges.
+            base = {
+                **base,
+                "score": 0,
+                "status": "critical",
+                "public_reachable": False,
+                "router_incident_type": ri["incident_type"],
+            }
+        else:
+            base.setdefault("public_reachable", True)
+
+        health_map[hosting_id] = base
         history_map[hosting_id] = [
             {"score": r["score"], "cpu": r["cpu"], "ram": r["ram"], "timestamp": r["created_at"]}
             for r in history

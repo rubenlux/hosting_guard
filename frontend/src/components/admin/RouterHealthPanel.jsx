@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   getRouterHealthPlatform, checkRouterHealthPlatform, repairRouterHealthPlatform,
-  getRouterHealthTenants,
+  getRouterHealthTenants, repairRouterHealthTenant,
 } from '../../services/api';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -44,6 +44,9 @@ const ROUTER_SOURCE_STYLE = {
 };
 
 function HealthBadge({ healthy, incident_type }) {
+  if (healthy === undefined || healthy === null) {
+    return <span className="text-xs text-gray-500 font-medium">No verificado</span>;
+  }
   if (healthy) {
     return (
       <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
@@ -60,6 +63,25 @@ function HealthBadge({ healthy, incident_type }) {
       {label}
     </span>
   );
+}
+
+function DynamicFileTag({ visibility, routerSource }) {
+  if (visibility === 'visible') {
+    return <span className="ml-1 text-emerald-500">(visible)</span>;
+  }
+  if (visibility === 'not_mounted_in_app') {
+    if (routerSource === 'docker_labels') {
+      return <span className="ml-1 text-gray-500">(no montado en container — activo por docker labels)</span>;
+    }
+    return <span className="ml-1 text-amber-400">(no montado en app container)</span>;
+  }
+  if (visibility === 'absent') {
+    if (routerSource === 'docker_labels') {
+      return <span className="ml-1 text-gray-500">(sin archivo — ruta activa por docker labels)</span>;
+    }
+    return <span className="ml-1 text-red-500">(ausente)</span>;
+  }
+  return null;
 }
 
 function StatusCode({ code }) {
@@ -120,7 +142,7 @@ function PlatformTab() {
     }
   };
 
-  const display = results ? results.results : config ? config.map(r => ({ ...r, healthy: r.dynamic_file_exists })) : [];
+  const display = results ? results.results : config ? config.map(r => ({ ...r, healthy: undefined })) : [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -153,7 +175,7 @@ function PlatformTab() {
                 {route.public_status_code !== undefined && (
                   <StatusCode code={route.public_status_code} />
                 )}
-                <HealthBadge healthy={route.healthy !== undefined ? route.healthy : route.dynamic_file_exists} incident_type={route.incident_type} />
+                <HealthBadge healthy={route.healthy} incident_type={route.incident_type} />
               </div>
             </div>
 
@@ -180,9 +202,7 @@ function PlatformTab() {
               <div className="flex items-center gap-1.5 text-[11px]">
                 <FileText className="w-3 h-3 text-gray-600" />
                 <span className="font-mono text-gray-600">{route.dynamic_file}</span>
-                <span className={`ml-1 ${route.dynamic_file_exists ? 'text-emerald-500' : 'text-red-500'}`}>
-                  {route.dynamic_file_exists ? '(existe)' : '(FALTANTE)'}
-                </span>
+                <DynamicFileTag visibility={route.dynamic_file_visibility} routerSource={route.router_source} />
               </div>
             )}
 
@@ -263,6 +283,80 @@ function PlatformTab() {
 }
 
 // ─── Tenants Tab ──────────────────────────────────────────────────────────────
+
+function TenantRepairButtons({ r, onRepairDone }) {
+  const [repairing, setRepairing] = useState(false);
+  const [repairResult, setRepairResult] = useState(null);
+  const [repairError, setRepairError] = useState(null);
+
+  const canRepair = r.incident_type === 'traefik_router_missing_or_unmatched';
+
+  const handleRepair = async (dry_run) => {
+    if (!dry_run && !window.confirm(
+      'Esto solo recrea la ruta Traefik del sitio.\n\n' +
+      'No modifica archivos, contenedores, DNS ni datos del cliente.\n\n' +
+      '¿Confirmar reparación?'
+    )) return;
+
+    setRepairing(true);
+    setRepairResult(null);
+    setRepairError(null);
+    try {
+      const res = await repairRouterHealthTenant(r.hosting_id, dry_run);
+      setRepairResult({ ...res, dry_run });
+      if (!dry_run) onRepairDone?.();
+    } catch (e) {
+      setRepairError(e.response?.data?.detail || 'Error al reparar router');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  if (!canRepair) return null;
+
+  return (
+    <div className="flex flex-col gap-2 mt-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          onClick={() => handleRepair(true)}
+          disabled={repairing}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e1e24] border border-white/10 text-xs text-amber-300 hover:bg-[#2a2a32] disabled:opacity-50 transition-colors"
+        >
+          {repairing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+          Simular reparación
+        </button>
+        <button
+          onClick={() => handleRepair(false)}
+          disabled={repairing}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e1e24] border border-emerald-500/30 text-xs text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50 transition-colors"
+        >
+          {repairing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
+          Reparar router
+        </button>
+      </div>
+
+      {repairResult && (
+        <div className={`rounded-lg border px-3 py-2 text-xs flex flex-col gap-1 ${repairResult.action === 'unchanged' ? 'border-emerald-500/20 bg-emerald-500/8' : 'border-amber-500/30 bg-amber-500/8'}`}>
+          <p className={`font-semibold ${repairResult.action === 'unchanged' ? 'text-emerald-400' : 'text-amber-400'}`}>
+            {repairResult.dry_run ? 'Simulación: ' : ''}{repairResult.action === 'unchanged' ? 'Archivo ya correcto' : `Acción: ${repairResult.action}`}
+          </p>
+          <p className="font-mono text-gray-500">{repairResult.file_path}</p>
+          {repairResult.yaml && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-gray-500 hover:text-gray-300">Ver YAML generado</summary>
+              <pre className="mt-1 text-[10px] text-green-400 bg-black/40 p-2 rounded overflow-x-auto">{repairResult.yaml}</pre>
+            </details>
+          )}
+        </div>
+      )}
+      {repairError && (
+        <div className="rounded-lg border border-red-500/25 bg-red-500/8 px-3 py-2 text-xs text-red-400">
+          {repairError}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function TenantsTab() {
   const [data, setData] = useState(null);
@@ -375,6 +469,7 @@ function TenantsTab() {
                       {fmtDate(r.checked_at)}
                     </div>
                   )}
+                  <TenantRepairButtons r={r} onRepairDone={load} />
                 </div>
               )}
             </div>

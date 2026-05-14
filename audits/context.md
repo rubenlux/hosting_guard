@@ -1686,3 +1686,253 @@ Resultado final: **22 passed**.
 ### Fix técnico relevante: patch path para `get_connection`
 
 `get_connection` se importa dentro del cuerpo de `check_tenant_routes` (no a nivel de módulo). El patch correcto es `app.infra.db.get_connection`, no `app.services.router_health_guard.get_connection`.
+
+---
+
+## 2026-05-14 — Fase 4A.2 Fix: Falsos positivos en Plataforma y Tenants (BLOQUE 2)
+
+### Problema
+
+Cuatro falsos positivos reportados en producción tras desplegar el Router Health Guard:
+
+1. **Tenant host duplicado**: `mi-academia.hostingguard.lat.hostingguard.lat` — la columna `subdomain` en DB almacena FQDNs completos; el código concatenaba `.hostingguard.lat` sin verificar.
+2. **Plataforma marcada Unhealthy incorrectamente**: `/opt/traefik-dynamic/` no está montado en el container de la app (solo en el container de Traefik). `os.path.exists()` devuelve `False` aunque la ruta pública devuelva 200.
+3. **`router_source=docker_labels` + "FALTANTE"**: Contradicción al mostrar en UI `router_source=docker_labels` (fuente correcta) con badge de archivo dinámico faltante — el archivo dinámico es irrelevante si la ruta viene de docker labels.
+4. **Admin curl auth**: Comportamiento correcto — no tocar.
+
+### Correcciones aplicadas
+
+#### `app/services/router_health_guard.py`
+
+**`normalize_tenant_public_host(subdomain, base_domain=_BASE_DOMAIN) -> str`** (nueva función):
+- Elimina protocolo y path
+- Si termina en `.hostingguard.lat` o ES el base domain → devuelve tal cual (evita duplicación)
+- Si contiene `.` pero no es el dominio base → devuelve tal cual (dominio custom)
+- Si no contiene `.` → añade `.hostingguard.lat`
+- `_BASE_DOMAIN = "hostingguard.lat"` como constante de módulo
+
+**`_dynamic_file_visibility(path: str) -> str`** (nueva función):
+- `"visible"` — el archivo existe y es legible
+- `"not_mounted_in_app"` — el directorio padre no existe: el volumen no está montado en este container
+- `"absent"` — el directorio existe pero el archivo no (falta genuino)
+
+**`RouterHealthResult` dataclass**:
+- Campo nuevo: `dynamic_file_visibility: Optional[str] = None`
+- `to_dict()` incluye `"dynamic_file_visibility": self.dynamic_file_visibility`
+
+**`check_platform_routes()`**:
+- Calcula `dfile_visibility = _dynamic_file_visibility(dfile)` en lugar de `os.path.exists(dfile)`
+- Asigna `dynamic_file_visibility` al resultado
+- La salud de la ruta de plataforma depende del HTTP check, no de la visibilidad del archivo
+
+**`_check_tenant_hosting()`**:
+- Usa `host = normalize_tenant_public_host(subdomain)` en lugar de `f"{subdomain}.hostingguard.lat"`
+
+#### `app/api/routes/admin_router_health.py` — `GET /platform`
+
+- Usa `_dynamic_file_visibility` en lugar de `os.path.exists`
+- Campo renombrado: `dynamic_file_visibility` (antes `dynamic_file_exists`)
+- Plataforma sana si HTTP check pasa, independientemente de visibilidad del archivo en este container
+
+#### `frontend/src/components/admin/RouterHealthPanel.jsx` — `DynamicFileTag`
+
+Nuevo componente contextual que muestra tres estados distintos:
+- `"visible"` → badge azul "Archivo presente"
+- `"not_mounted_in_app"` → badge gris "No montado (normal)" — no implica error
+- `"absent"` → badge rojo "Archivo faltante" — sí implica error
+- `null/undefined` → badge gris "Desconocido"
+
+El badge "FALTANTE" ya no se muestra para rutas cuya fuente es `docker_labels` cuando el volumen no está montado en el container de la app.
+
+### Tests añadidos (23–30)
+
+- Tests 23–25: `normalize_tenant_public_host` — FQDN ya completo, bare slug, dominio con punto pero no base domain
+- Test 26: plataforma sana si HTTP 200 aunque `dynamic_file_visibility = "not_mounted_in_app"`
+- Test 27: plataforma unhealthy si HTTP falla (sin importar visibilidad de archivo)
+- Test 28: SSL error en host normalizado → código -2
+- Tests 29–30: `_dynamic_file_visibility` — volumen no montado vs archivo ausente
+
+Resultado: **30 passed**.
+
+---
+
+## 2026-05-14 — Fase 4A.2 Fix Crítico Unificado: Tenant Router Health + Dashboard Health Real (BLOQUE 3)
+
+### Objetivo
+
+Cerrar la brecha entre el Router Health Guard (detecta rutas caídas) y el Dashboard (mostraba 100/100 aunque el dominio público fuera inaccesible). Añadir reparación manual de rutas tenant y propagar el estado real a todos los consumers de frontend.
+
+### Restricciones de seguridad
+
+**NO modificado en esta fase**: `platform-frontend.yml`, `platform-api.yml`, ForwardAuth enforcement, Protection Mode, `remediation_engine`, auth/2FA/revoke sessions, npm/pnpm deploy, Docker Compose global, DNS, archivos de clientes, bases de datos de clientes.
+
+### Arquitectura del fix
+
+El canal de información es:
+```
+router_health_guard_job()
+  → system_incidents (source='router_health_guard', open)
+    → get_dashboard_summary() overlay
+      → healthData en frontend (score=0, public_reachable=False, router_incident_type)
+        → DashboardOverview, HostingList, useAIAdvisory (todos leen el mismo healthData)
+```
+
+### BLOQUE 3.1 — `app/services/router_health_guard.py`
+
+**`ensure_tenant_traefik_route(hosting_id, dry_run=True) -> dict`** (nueva función):
+- Valida: hosting `status='active'`, contenedor corriendo, `subdomain` y `container_name` presentes
+- Genera YAML canónico con `hg-forwardauth@docker` middleware, `priority: 50` (menos que plataforma `100`), service `http://{container_name}:80`
+- Si `dry_run=False`: backup del archivo existente antes de sobrescribir, escribe en `/opt/traefik-dynamic/{hosting_id}.yml`
+- Retorna `{"error": str}` en caso de fallo; dict con `dry_run`, `yaml_content`, `path`, `backed_up` en caso de éxito
+
+**`_resolve_tenant_router_incidents(hosting_id)`** (nueva función):
+- Consulta `system_incidents` WHERE `source_table='router_health_guard'`, `status='open'`, `hosting_id` matching
+- Llama `_resolve_incident` para cada uno con `extra_evidence={"resolved_reason": "router_health_recovered"}`
+
+**Auto-resolve en `_check_tenant_hosting()`**:
+- Si `healthy=True`: llama `_resolve_tenant_router_incidents(hosting_id)` con try/except silencioso
+- Los incidentes se resuelven automáticamente cuando la ruta vuelve a funcionar
+
+### BLOQUE 3.2 — `app/api/routes/admin_router_health.py`
+
+**`POST /admin/router-health/tenants/{hosting_id}/repair`**:
+```python
+class RepairBody(BaseModel):
+    dry_run: bool = True
+
+@router.post("/tenants/{hosting_id}/repair")
+def repair_tenant(hosting_id: int, body: RepairBody, _: dict = Depends(require_role("admin"))):
+    result = ensure_tenant_traefik_route(hosting_id=hosting_id, dry_run=body.dry_run)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+```
+
+### BLOQUE 3.3 — `app/api/routes/alerts.py` — overlay de incidentes de router
+
+**`_get_router_incidents(conn, active_ids) -> dict`** (nueva función interna en `get_dashboard_summary`):
+- Query: `SELECT ... FROM system_incidents WHERE source_table='router_health_guard' AND status='open' AND hosting_id=ANY($1)`
+- Retorna `{hosting_id: {"incident_type": ..., "severity": ...}}`
+
+**Overlay en `health_map`**:
+```python
+ri = router_incidents.get(hosting_id)
+if ri:
+    base = {**base, "score": 0, "status": "critical",
+            "public_reachable": False,
+            "router_incident_type": ri["incident_type"]}
+else:
+    base.setdefault("public_reachable", True)
+```
+
+Este overlay corre sobre el `base` existente (que ya incluye CPU/RAM/logs del health_engine). Si hay incidente de router activo, el score se fuerza a 0 independientemente de las métricas de container.
+
+### BLOQUE 3.4 — `frontend/src/services/api.js`
+
+```javascript
+export const repairRouterHealthTenant = async (hosting_id, dry_run = true) => {
+  const response = await api.post(`/admin/router-health/tenants/${hosting_id}/repair`, { dry_run });
+  return response.data;
+};
+```
+
+### BLOQUE 3.5 — `frontend/src/hooks/useAIAdvisory.js` — Tier 0 (Router down)
+
+Añadido antes de Tier 1 (container down) en `evaluateHosting()`:
+
+```javascript
+// 0. PUBLIC ROUTE DOWN — Traefik router missing/unreachable.
+if (hd.public_reachable === false && hd.router_incident_type) {
+    const ROUTER_LABELS = {
+        traefik_router_missing_or_unmatched: 'Router Traefik faltante',
+        traefik_backend_unreachable:         'Backend inaccesible',
+        public_route_timeout:                'Timeout de ruta pública',
+        tls_or_certificate_issue:            'Error SSL/TLS',
+        container_not_running:               'Contenedor detenido',
+    };
+    const label = ROUTER_LABELS[hd.router_incident_type] || hd.router_incident_type;
+    return {
+        severity: 'critical',
+        summary: `El dominio público no responde (${label}). El sitio no es accesible.`,
+        recommendation: 'Reparar el router Traefik desde el panel de administración → Router Health.',
+        requiresAttention: true,
+        signals: [label],
+    };
+}
+```
+
+**Por qué Tier 0 toma prioridad**: Si el dominio público no responde, los usuarios no pueden acceder al sitio. Las métricas de container (CPU, RAM) son irrelevantes desde la perspectiva del usuario final. La causa raíz (router caído) debe ganar sobre señales secundarias.
+
+**Guard en Tier 3 (alerts críticas)**: `hd.score < 90 && alerts.some(...)` — previene que una alerta crítica sin resolver de un incidente anterior muestre "CRÍTICO" cuando el score actual es 100 (contradicción "SALUD 100% + CRÍTICO").
+
+### BLOQUE 3.6 — `frontend/src/components/dashboard/DashboardOverview.jsx`
+
+**Nuevas derivaciones**:
+```javascript
+const brokenRoutes = hostings.filter(
+  h => healthData[h.hosting_id]?.public_reachable === false
+).length;
+const publicOperational = Math.max(0, active - brokenRoutes);
+const pct = active > 0 ? Math.round((publicOperational / active) * 100) : 0;
+```
+
+**Header status dot**: Color rojo cuando `brokenRoutes > 0`, verde cuando todo operativo.
+
+**"Todo operativo"**: Muestra `"X sitios con ruta caída"` en rojo cuando `brokenRoutes > 0`.
+
+**StatCard "Sitios Activos"**: Value = `publicOperational` (no `active`). Footer muestra "X con ruta caída" en rojo cuando aplica.
+
+**StatCard "Salud General"**: Footer muestra "Rutas públicas caídas" en rojo cuando `brokenRoutes > 0`.
+
+**`SiteRow`**:
+- `routerIssue = hd.public_reachable === false`
+- Status dot: rojo si `routerIssue`, verde si `status=active`, gris si detenido
+- Badge "Ruta caída" en rojo cuando `routerIssue`
+
+### BLOQUE 3.7 — `frontend/src/components/dashboard/HostingList.jsx`
+
+Badge "Web inaccesible" después del badge de salud:
+```jsx
+{healthData[h.hosting_id]?.public_reachable === false && (
+  <div className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-red-500/20 text-red-400">
+    Web inaccesible
+  </div>
+)}
+```
+
+### BLOQUE 3.8 — `frontend/src/components/admin/RouterHealthPanel.jsx` — TenantRepairButtons
+
+Nuevo componente `TenantRepairButtons` dentro del tab de Tenants:
+- Solo visible cuando `r.incident_type === 'traefik_router_missing_or_unmatched'`
+- "Simular reparación" → `repairRouterHealthTenant(id, dry_run=true)` — muestra YAML via `<details>`
+- "Reparar router" → `window.confirm` con texto exacto: *"Esto solo recrea la ruta Traefik del sitio. No modifica archivos, contenedores, DNS ni datos del cliente."* → `repairRouterHealthTenant(id, dry_run=false)`
+- `onRepairDone={load}` — recarga el listado tras reparación exitosa
+
+### BLOQUE 3.9 — Tests añadidos (31–38)
+
+| Test | Función cubierta |
+|---|---|
+| 31 | `ensure_tenant_traefik_route` dry_run no escribe archivo |
+| 32 | YAML generado contiene `hg-forwardauth`, `priority: 50`, service correcto |
+| 33 | Rechaza hosting inactivo (status ≠ 'active') |
+| 34 | Rechaza si contenedor no corre |
+| 35 | En modo live: escribe archivo, hace backup del existente |
+| 36 | Overlay de incidente de router fuerza `score=0`, `public_reachable=False` en `get_dashboard_summary` |
+| 37 | `_resolve_tenant_router_incidents` resuelve incidentes abiertos del tenant |
+| 38 | Auto-resolve: cuando `_check_tenant_hosting` encuentra healthy=True, llama `_resolve_tenant_router_incidents` |
+
+Resultado final: **38 passed**.
+
+### Pendiente de validación en producción
+
+```sql
+-- Verificar que el overlay funciona:
+SELECT hi.subdomain, si.incident_type, si.status
+FROM system_incidents si
+JOIN hostings hi ON hi.hosting_id = (si.context_json->>'hosting_id')::int
+WHERE si.source_table = 'router_health_guard' AND si.status = 'open';
+
+-- Dashboard debe mostrar score=0 y public_reachable=false para estos hostings.
+-- El header debe mostrar "X sitios con ruta caída" en rojo.
+-- useAIAdvisory debe emitir advisory critical de Tier 0 para estos hostings.
+```
