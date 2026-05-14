@@ -1051,3 +1051,32 @@ export const rollbackRemediation = async (remediationId) => {
   const response = await api.post(`/admin/remediations/${remediationId}/rollback`);
   return response.data;
 };
+
+// ── Router Health Guard (Phase 4A.2) ─────────────────────────────────────────
+
+export const getRouterHealthPlatform = async () => {
+  const response = await api.get('/admin/router-health/platform');
+  return response.data;
+};
+
+export const checkRouterHealthPlatform = async () => {
+  const response = await api.post('/admin/router-health/platform/check');
+  return response.data;
+};
+
+export const repairRouterHealthPlatform = async (dry_run = true) => {
+  const response = await api.post('/admin/router-health/platform/repair', { dry_run });
+  return response.data;
+};
+
+export const getRouterHealthTenants = async (params = {}) => {
+  const response = await api.get('/admin/router-health/tenants', { params });
+  return response.data;
+};
+
+export const checkRouterHealthTenants = async (hosting_id = null) => {
+  const response = await api.post('/admin/router-health/tenants/check', null, {
+    params: hosting_id ? { hosting_id } : {},
+  });
+  return response.data;
+};

@@ -1574,3 +1574,115 @@ Documenta:
 ### Invariante de seguridad documentada
 
 **NUNCA agregar `hg-forwardauth` a `api.hostingguard.lat`**: el endpoint `/internal/forwardauth` del app es el que valida las requests — si se le agrega ForwardAuth, cada request a la API llama a `/internal/forwardauth`, que también pasa por Traefik, que llama de nuevo a `/internal/forwardauth` → loop infinito. Esto está documentado en el runbook y en comentarios dentro de los YAML.
+
+---
+
+## 2026-05-14 — Fase 4A.2: Router Health Guard
+
+**Objetivo**: Detectar automáticamente routing roto en Traefik (plataforma + tenants) antes de que afecte usuarios, con auto-reparación limitada a rutas de plataforma y creación de incidentes para tenants.
+
+**Principio de seguridad**: Router Health Guard NO toca código del cliente, archivos del cliente, base de datos del cliente, DNS externo, Docker Compose global, certificados, datos sensibles, ni billing. Solo diagnóstica y repara rutas de plataforma propias.
+
+### BLOQUE 1 — Servicio: `app/services/router_health_guard.py`
+
+**`RouterHealthResult`** (dataclass):
+- Campos: `host`, `scope` (platform|tenant), `hosting_id`, `container_name`, `container_running`, `router_source` (docker_labels|dynamic_file|unknown|none), `public_status_code` (-2=SSL error, -1=timeout, 0=conn refused, 1xx–5xx), `content_type`, `healthy`, `incident_type`, `summary`, `evidence`, `checked_at`
+- `to_dict()` para serialización API
+
+**`_http_check(url, timeout)`**: Hace HTTP GET con `urllib.request`, devuelve `(status_code, content_type, body_size)`. Detecta timeout (-1), SSL error (-2), connection error (0).
+
+**`_classify_failure(status_code, ct, body_size)`**: Clasifica el fallo en `incident_type`:
+- 404 + body 19 bytes + `text/plain` → `traefik_router_missing_or_unmatched`
+- 404 otro → `app_level_404`
+- 502/503 → `backend_unreachable`
+- -1 → `timeout`
+- -2 → `ssl_error`
+- 0 → `connection_refused`
+- Otro → `unexpected_status`
+
+**`check_platform_routes()`**: Chequea los 3 hosts de plataforma (`hostingguard.lat`, `www.hostingguard.lat`, `api.hostingguard.lat`). Para cada uno:
+- Determina `router_source` leyendo si existe el archivo dynamic file
+- Hace HTTP check al URL público
+- Si falla: emite incidente via `_emit_platform_incident`
+- Devuelve lista de `RouterHealthResult`
+
+**`check_tenant_routes(limit=100, hosting_id=None)`**: Consulta DB → `status='active'`, `subdomain NOT NULL`, `container_name NOT NULL`. Para cada tenant:
+- Si contenedor no corre: `incident_type=container_stopped`, sin HTTP check
+- Si corre: HTTP check a `https://{subdomain}.hostingguard.lat`
+- `expected_statuses = [200, 301, 302, 401, 403]` (ForwardAuth devuelve 401/302 para no autenticados — es correcto)
+- Si falla: emite incidente via `_emit_tenant_incident` (nunca auto-repara)
+- Error por tenant aislado con try/except (un fallo no aborta el resto)
+
+**`ensure_platform_traefik_routes(dry_run=False)`**: Compara contenido actual de los archivos dynamic con el YAML canónico embebido. Si difiere o no existe: hace backup del existente → escribe nuevo (solo si `dry_run=False`). Devuelve dict con `dry_run`, `changed`, `files` (path → action: created|updated|unchanged).
+
+**`router_health_guard_job()`**: Corre en scheduler cada 60s (initial_delay=30s):
+1. `check_platform_routes()` → si `REPAIR_MODE == "protect"` y hay fallos, llama `ensure_platform_traefik_routes()` y loguea resultado
+2. `check_tenant_routes()` → loguea `tenant_router_repair_skipped_policy` por cada tenant unhealthy (nunca repara)
+
+### BLOQUE 2 — Política de reparación: `app/services/router_repair_policy.py`
+
+```python
+REPAIR_MODE: str = os.getenv("ROUTER_HEALTH_REPAIR_MODE", "protect")
+```
+
+Modos: `off` (solo detecta), `monitor` (detecta + alerta sin reparar), `protect` (auto-repara solo plataforma). Default: `protect`.
+
+Tenants: **nunca auto-reparar** — siempre solo diagnóstico + incidente.
+
+### BLOQUE 3 — Incidentes: deduplicación por `correlation_key`
+
+- Plataforma: `f"platform_route:{incident_type}:{host}"`
+- Tenant: `_context_hash(host, hosting_id, incident_type, container_name)` — SHA256 truncado a 16 chars
+- Upsert via `_upsert_incident` de `app.services.incidents.incident_deduper`
+- Campos: `incident_type`, `severity`, `title`, `description`, `correlation_key`, `context_json`
+
+### BLOQUE 4 — API Admin: `app/api/routes/admin_router_health.py`
+
+Todos los endpoints protegidos con `Depends(require_role("admin"))`.
+
+| Endpoint | Función |
+|---|---|
+| `GET /admin/router-health/platform` | Config estática + existencia de archivos (sin HTTP check) |
+| `POST /admin/router-health/platform/check` | Ejecuta `check_platform_routes()` en tiempo real |
+| `POST /admin/router-health/platform/repair` | Body `{"dry_run": bool}`, llama `ensure_platform_traefik_routes` |
+| `GET /admin/router-health/tenants` | Params: `unhealthy_only`, `hosting_id`, `limit=50` |
+| `POST /admin/router-health/tenants/check` | Param: `hosting_id` opcional |
+
+Registrado en `app/api/main.py` via `app.include_router(router_health_router)`.
+
+### BLOQUE 5 — UI: `frontend/src/components/admin/RouterHealthPanel.jsx`
+
+Tab "Plataforma":
+- Carga config estática de `GET /platform` al montar
+- Botones: "Verificar ahora" (POST check), "Simular reparación" (POST repair dry_run=true), "Reparar rutas de plataforma" (POST repair dry_run=false, con `window.confirm`)
+- Por cada ruta: badge de `router_source`, `dynamic_file_exists`, `public_status_code`, `incident_type`
+
+Tab "Tenants":
+- Carga de `GET /tenants`, filtro checkbox "Solo con problemas"
+- Filas colapsables: info de Docker + status code
+- Badge por `container_running`, `router_source`, `incident_type`
+
+Navegación en `AdminDashboard.jsx`: ítem `{ id: 'router-health', label: 'Router Health', icon: Globe }`.
+
+### BLOQUE 6 — Tests: `tests/test_router_health_guard.py`
+
+22 tests cubriendo los 20 criterios de aceptación del spec + 2 adicionales:
+
+- Tests 1–3: clasificación de fallos (`_classify_failure`)
+- Tests 4–5: chequeo de rutas de plataforma (healthy y fallo Traefik 404)
+- Tests 6–7: chequeo de tenants (contenedor parado, HTTP 401 es healthy)
+- Tests 8–9: `ensure_platform_traefik_routes` (dry_run, repair efectivo)
+- Test 10: `ensure_platform_traefik_routes` no escribe si ya está correcto (idempotencia)
+- Tests 11–12: emisión de incidentes de plataforma y tenant
+- Test 13: `_http_check` timeout → código -1
+- Test 14: ForwardAuth no presente en YAMLs de plataforma (sin `middlewares:` ni `hg-forwardauth@`)
+- Test 15: scheduler job llama `check_platform_routes` y `check_tenant_routes`
+- Tests 16–17: respuesta estructurada de API (testeados via service functions directamente — dependency override de FastAPI no funciona con `require_role("admin")` factory)
+- Tests 18–20: repair solo en mode "protect", `correlation_key` correcto, log de audit en repair
+- Tests 21–22: SSL error → código -2, tenant con fallo no bloquea al siguiente
+
+Resultado final: **22 passed**.
+
+### Fix técnico relevante: patch path para `get_connection`
+
+`get_connection` se importa dentro del cuerpo de `check_tenant_routes` (no a nivel de módulo). El patch correcto es `app.infra.db.get_connection`, no `app.services.router_health_guard.get_connection`.

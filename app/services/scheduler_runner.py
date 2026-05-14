@@ -117,11 +117,14 @@ async def _main() -> None:
     schedule_job(poll_prometheus_alerts,         interval=60)      # 1 min
     schedule_job(collect_resource_usage,         interval=60)      # 60 s — CPU/RAM per container
     schedule_job(sync_incidents_feed,            interval=120)     # 2 min — AI Eyes bridge
+    from app.services.router_health_guard import router_health_guard_job
+
     # ── Every 5 minutes ──────────────────────────────────────────────────────
     schedule_job(collect_traffic,                interval=300)     # 5 min
     schedule_job(check_all_hostings,             interval=300)     # 5 min
     schedule_job(reconcile_containers,           interval=300)     # 5 min
     schedule_job(check_pending_domains,          interval=300)     # 5 min
+    schedule_job(router_health_guard_job,        interval=60,  initial_delay=30)  # 1 min platform + tenants
     # ── Every 12 hours ───────────────────────────────────────────────────────
     schedule_job(check_and_expire_free_hostings, interval=43200)   # 12 h
     # ── Daily ────────────────────────────────────────────────────────────────
@@ -132,7 +135,7 @@ async def _main() -> None:
     schedule_job(cleanup_sessions,               interval=86400)   # 24 h
     schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
-    base_count = 18
+    base_count = 19
     optional_count = 0
 
     if ENABLE_CAPACITY_FORECAST:

@@ -37,6 +37,7 @@ import OnlineUsersCard from '../components/admin/OnlineUsersCard';
 import ActivityTimeline from '../components/admin/ActivityTimeline';
 import SecurityCenter from '../components/admin/SecurityCenter';
 import SentinelPanel from '../components/admin/SentinelPanel';
+import RouterHealthPanel from '../components/admin/RouterHealthPanel';
 import SecurityStatusBeacon from '../components/admin/SecurityStatusBeacon';
 import ResourceUsage from '../components/admin/ResourceUsage';
 import UnitEconomics from '../components/admin/UnitEconomics';
@@ -80,6 +81,7 @@ const NAV = [
   { id: 'ai-report',     label: 'AI Report',        icon: Sparkles },
   { id: 'notifications', label: 'Notificaciones',   icon: BellRing },
   { id: 'equipo',        label: 'Equipo',           icon: UserCog },
+  { id: 'router-health', label: 'Router Health',    icon: Globe },
   { id: 'audit',         label: 'Audit Log',        icon: FileText },
   { id: 'settings',      label: 'Settings',         icon: Settings },
 ];
@@ -1240,6 +1242,7 @@ export default function AdminDashboard() {
             {/* ══ SECURITY CENTER ══ */}
             {section === 'security' && <SecurityCenter />}
             {section === 'sentinel' && <SentinelPanel />}
+            {section === 'router-health' && <RouterHealthPanel />}
 
             {/* ══ ONLINE USERS / PRESENCE ══ */}
             {section === 'presence' && <OnlineUsersCard />}
