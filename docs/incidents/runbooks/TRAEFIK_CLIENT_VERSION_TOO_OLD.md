@@ -10,6 +10,7 @@ safe_actions:
   - remove_docker_provider_from_traefik_config
 forbidden_actions:
   - auto_upgrade_docker_on_production
+  - auto_restart_traefik_without_config_backup
 signatures:
   - "client version 1.24 is too old"
   - "client version 1.XX is too old. Minimum version required is"

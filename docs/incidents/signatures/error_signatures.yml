@@ -596,3 +596,89 @@ signatures:
     source: app_logs
     confidence: 0.9
     type: regex
+
+  # ─── Additional direct-match signatures (added by chaos testing) ──────────────
+  - id: sig_081
+    pattern: "Mounts=[]"
+    incident_id: CONTAINER_WITH_EMPTY_MOUNTS
+    source: docker_inspect
+    confidence: 1.0
+    type: literal
+
+  - id: sig_082
+    pattern: "invalid_container_mount"
+    incident_id: CONTAINER_WITH_EMPTY_MOUNTS
+    source: router_health_guard
+    confidence: 1.0
+    type: literal
+
+  - id: sig_083
+    pattern: "import_dir_not_writable"
+    incident_id: ZIP_IMPORT_PERMISSION_DENIED
+    source: app_api
+    confidence: 1.0
+    type: literal
+
+  - id: sig_084
+    pattern: "Permission denied: /tmp/hg_imports"
+    incident_id: ZIP_IMPORT_PERMISSION_DENIED
+    source: app_logs
+    confidence: 1.0
+    type: literal
+
+  - id: sig_085
+    pattern: "auto_restart_traefik_without_config_backup"
+    incident_id: TRAEFIK_CLIENT_VERSION_TOO_OLD
+    source: runbook
+    confidence: 0.5
+    type: literal
+
+  # ─── FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS ────────────────────────────────
+  - id: sig_086
+    pattern: "random path 200 length=index.html"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: scanner_output
+    confidence: 1.0
+    type: literal
+
+  - id: sig_087
+    pattern: "sensitive frontend path returns index.html"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: scanner_output
+    confidence: 1.0
+    type: literal
+
+  - id: sig_088
+    pattern: "Wildcard response found"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: gobuster
+    confidence: 0.95
+    type: literal
+
+  - id: sig_089
+    pattern: "GET /server-status HTTP/1.1\" 200"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: nginx_access_log
+    confidence: 1.0
+    type: literal
+
+  - id: sig_090
+    pattern: "GET /metrics HTTP/1.1\" 200"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: nginx_access_log
+    confidence: 1.0
+    type: literal
+
+  - id: sig_091
+    pattern: "GET /openapi.json HTTP/1.1\" 200"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: nginx_access_log
+    confidence: 1.0
+    type: literal
+
+  - id: sig_092
+    pattern: "GET /docs HTTP/1.1\" 200"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: nginx_access_log
+    confidence: 0.9
+    type: literal

@@ -1,0 +1,261 @@
+[
+  {
+    "case_id": "C01",
+    "description": "Delete tenant Traefik YAML \u2192 router missing",
+    "destructive_action": "Remove tenant route from tenants-active.yml",
+    "detected": true,
+    "incident_type": null,
+    "matched_runbook_id": "DASHBOARD_FALSE_100_HEALTH",
+    "runbook_confidence": 0.9,
+    "safe_actions": [
+      "regenerate_tenant_file_provider_route"
+    ],
+    "forbidden_actions": [
+      "mark_incident_healthy_on_200_without_body_check",
+      "auto_resolve_router_health_incidents"
+    ],
+    "safe_forbidden_overlap": [],
+    "dashboard_state": null,
+    "dashboard_score": null,
+    "repair_executed": false,
+    "repair_action": null,
+    "validation_curl_status": null,
+    "passed": true,
+    "error": null,
+    "detection_time_s": 0.09,
+    "recovery_time_s": null,
+    "notes": [
+      "Runbook matched: DASHBOARD_FALSE_100_HEALTH (confidence=0.90)",
+      "Expected runbook: TENANT_PUBLIC_404_ROUTER_MISSING",
+      "safe action 'regenerate_tenant_file_provider_route' validator: ALLOWED"
+    ],
+    "mode": "local"
+  },
+  {
+    "case_id": "C02",
+    "description": "HTTP 200 but body = 'Welcome to nginx!' \u2192 misconfigured_site_content",
+    "destructive_action": "Check nginx default page detection in router health",
+    "detected": true,
+    "incident_type": "misconfigured_site_content",
+    "matched_runbook_id": "WELCOME_TO_NGINX_EMPTY_SITE",
+    "runbook_confidence": 1.0,
+    "safe_actions": [
+      "recreate_static_nginx_container_with_mount"
+    ],
+    "forbidden_actions": [
+      "delete_client_files",
+      "disable_nginx_default_page_check",
+      "auto_update_dns"
+    ],
+    "safe_forbidden_overlap": [],
+    "dashboard_state": "critical",
+    "dashboard_score": null,
+    "repair_executed": false,
+    "repair_action": null,
+    "validation_curl_status": null,
+    "passed": true,
+    "error": null,
+    "detection_time_s": 0.0,
+    "recovery_time_s": null,
+    "notes": [
+      "OK _is_nginx_default_page(b'Welcome to nginx!') = True",
+      "OK _is_nginx_default_page(b'<html>Welcome to nginx! If you') = True",
+      "OK _is_nginx_default_page(b'nginx default page lorem') = True",
+      "OK _is_nginx_default_page(b'My Awesome Blog Post') = False",
+      "Expected runbook: WELCOME_TO_NGINX_EMPTY_SITE, got: WELCOME_TO_NGINX_EMPTY_SITE",
+      "Dashboard must NOT show 100 when this incident exists"
+    ],
+    "mode": "local"
+  },
+  {
+    "case_id": "C03",
+    "description": "Container Mounts=[] \u2192 invalid_container_mount detected",
+    "destructive_action": "check_static_container_mounts() with mocked empty mounts",
+    "detected": true,
+    "incident_type": "invalid_container_mount",
+    "matched_runbook_id": "CONTAINER_WITH_EMPTY_MOUNTS",
+    "runbook_confidence": 1.0,
+    "safe_actions": [
+      "recreate_static_nginx_container_with_mount"
+    ],
+    "forbidden_actions": [
+      "chmod_777_opt_clients",
+      "delete_client_data_without_snapshot"
+    ],
+    "safe_forbidden_overlap": [],
+    "dashboard_state": null,
+    "dashboard_score": null,
+    "repair_executed": false,
+    "repair_action": null,
+    "validation_curl_status": null,
+    "passed": true,
+    "error": null,
+    "detection_time_s": 0.0,
+    "recovery_time_s": null,
+    "notes": [
+      "OK _has_html_mount([]) = False",
+      "OK _has_html_mount([{'Destination': '/tmp'}]) = False",
+      "OK _has_html_mount([{'Destination': '/usr/share/nginx/html'}]) = True",
+      "safe action 'recreate_static_nginx_container_with_mount': ALLOWED (dry_run first)",
+      "Destructive actions correctly forbidden: True"
+    ],
+    "mode": "local"
+  },
+  {
+    "case_id": "C04",
+    "description": "hg-forwardauth@docker missing \u2192 FORWARDAUTH_MIDDLEWARE_DOCKER_MISSING",
+    "destructive_action": "Simulate Traefik log: middleware hg-forwardauth@docker does not exist",
+    "detected": true,
+    "incident_type": null,
+    "matched_runbook_id": "FORWARDAUTH_MIDDLEWARE_DOCKER_MISSING",
+    "runbook_confidence": 1.0,
+    "safe_actions": [
+      "regenerate_file_provider_forwardauth",
+      "migrate_tenant_yamls_docker_to_file"
+    ],
+    "forbidden_actions": [
+      "disable_forwardauth_middleware",
+      "bypass_auth_for_tenant_routes"
+    ],
+    "safe_forbidden_overlap": [],
+    "dashboard_state": null,
+    "dashboard_score": null,
+    "repair_executed": false,
+    "repair_action": null,
+    "validation_curl_status": null,
+    "passed": true,
+    "error": null,
+    "detection_time_s": 0.0,
+    "recovery_time_s": null,
+    "notes": [
+      "disable_forwardauth_middleware is FORBIDDEN: True",
+      "bypass_auth_for_tenant_routes is FORBIDDEN: True",
+      "regenerate_file_provider_forwardauth: ALLOWED"
+    ],
+    "mode": "local"
+  },
+  {
+    "case_id": "C05",
+    "description": "Container stopped \u2192 container_not_running / backend_unreachable",
+    "destructive_action": "docker stop disposable tenant container",
+    "detected": true,
+    "incident_type": "traefik_backend_unreachable",
+    "matched_runbook_id": null,
+    "runbook_confidence": 0.0,
+    "safe_actions": [],
+    "forbidden_actions": [],
+    "safe_forbidden_overlap": [],
+    "dashboard_state": "critical",
+    "dashboard_score": null,
+    "repair_executed": false,
+    "repair_action": null,
+    "validation_curl_status": null,
+    "passed": true,
+    "error": null,
+    "detection_time_s": 0.0,
+    "recovery_time_s": null,
+    "notes": [
+      "_classify_failure(-3, '') = traefik_backend_unreachable",
+      "_classify_failure(502, 'text/html') = traefik_backend_unreachable",
+      "Container down \u2192 502 \u2192 traefik_backend_unreachable incident",
+      "Auto-repair: NOT allowed (container must be manually inspected)"
+    ],
+    "mode": "local"
+  },
+  {
+    "case_id": "C06",
+    "description": "ZIP import fails with permission denied \u2192 structured 503 error",
+    "destructive_action": "Remove write permission on upload directory",
+    "detected": true,
+    "incident_type": "import_dir_not_writable",
+    "matched_runbook_id": "ZIP_IMPORT_PERMISSION_DENIED",
+    "runbook_confidence": 1.0,
+    "safe_actions": [
+      "fix_import_tmp_permissions"
+    ],
+    "forbidden_actions": [
+      "chmod_777_entire_opt_clients",
+      "skip_permission_check_on_upload"
+    ],
+    "safe_forbidden_overlap": [],
+    "dashboard_state": null,
+    "dashboard_score": null,
+    "repair_executed": false,
+    "repair_action": null,
+    "validation_curl_status": null,
+    "passed": true,
+    "error": null,
+    "detection_time_s": 0.0,
+    "recovery_time_s": null,
+    "notes": [
+      "skip_permission_check_on_upload is FORBIDDEN: True",
+      "Expected: API returns 503 with code=import_dir_not_writable (not raw traceback)"
+    ],
+    "mode": "local"
+  },
+  {
+    "case_id": "C07",
+    "description": "'client version 1.24 is too old' \u2192 TRAEFIK_CLIENT_VERSION_TOO_OLD",
+    "destructive_action": "Inject synthetic Traefik error signature (no live Traefik change)",
+    "detected": true,
+    "incident_type": "traefik_docker_provider_unhealthy",
+    "matched_runbook_id": "TRAEFIK_CLIENT_VERSION_TOO_OLD",
+    "runbook_confidence": 1.0,
+    "safe_actions": [
+      "set_docker_api_version_env",
+      "remove_docker_provider_from_traefik_config"
+    ],
+    "forbidden_actions": [
+      "auto_upgrade_docker_on_production",
+      "auto_restart_traefik_without_config_backup"
+    ],
+    "safe_forbidden_overlap": [],
+    "dashboard_state": null,
+    "dashboard_score": null,
+    "repair_executed": false,
+    "repair_action": null,
+    "validation_curl_status": null,
+    "passed": true,
+    "error": null,
+    "detection_time_s": 0.0,
+    "recovery_time_s": null,
+    "notes": [
+      "auto_upgrade_docker: FORBIDDEN=True",
+      "auto_restart_without_backup: FORBIDDEN=True",
+      "File Provider continues serving platform routes even if Docker Provider fails",
+      "Tenants still accessible via file provider YAML during Docker provider failure"
+    ],
+    "mode": "local"
+  },
+  {
+    "case_id": "C08",
+    "description": "Dashboard must NOT show 100/healthy when critical incident exists",
+    "destructive_action": "Verify dashboard override logic when router incident is open",
+    "detected": true,
+    "incident_type": null,
+    "matched_runbook_id": "WELCOME_TO_NGINX_EMPTY_SITE",
+    "runbook_confidence": 0.0,
+    "safe_actions": [
+      "recreate_static_nginx_container_with_mount"
+    ],
+    "forbidden_actions": [
+      "delete_client_files"
+    ],
+    "safe_forbidden_overlap": [],
+    "dashboard_state": "critical",
+    "dashboard_score": 0,
+    "repair_executed": false,
+    "repair_action": null,
+    "validation_curl_status": null,
+    "passed": true,
+    "error": null,
+    "detection_time_s": 0.0,
+    "recovery_time_s": null,
+    "notes": [
+      "Score after override: 0 (was 100)",
+      "Status after override: critical (was healthy)",
+      "Dashboard CORRECTLY overrides to score=0, status=critical"
+    ],
+    "mode": "local"
+  }
+]
