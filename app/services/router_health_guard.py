@@ -557,7 +557,7 @@ def _emit_platform_incident(result: RouterHealthResult) -> None:
             conn,
             source_table="router_health_guard",
             source_id=f"platform:{result.host}",
-            source_type="system",
+            source_type="router_health",
             correlation_key=correlation_key,
             incident_type="platform_route_unhealthy",
             severity="critical",
@@ -594,7 +594,7 @@ def _emit_tenant_incident(result: RouterHealthResult, user_id: Optional[int]) ->
             conn,
             source_table="router_health_guard",
             source_id=f"tenant:{result.hosting_id}:{result.host}",
-            source_type="site",
+            source_type="router_health",
             correlation_key=correlation_key,
             incident_type=result.incident_type or "traefik_router_missing_or_unmatched",
             severity="critical",
@@ -878,14 +878,20 @@ def router_health_guard_job() -> None:
     """
     from app.services.router_repair_policy import REPAIR_MODE
 
+    logger.info("router_health_guard_job: starting (REPAIR_MODE=%s)", REPAIR_MODE)
     _log_audit_event("router_health_check_started", {"scope": "platform+tenant"})
 
     # ── Platform ──────────────────────────────────────────────────────────────
+    platform_results = []
     try:
         platform_results = check_platform_routes()
         unhealthy_platform = [r for r in platform_results if not r.healthy]
 
         if unhealthy_platform:
+            logger.warning(
+                "router_health_guard_job: platform unhealthy hosts=%s",
+                [r.host for r in unhealthy_platform],
+            )
             _log_audit_event(
                 "router_health_unhealthy_detected",
                 {"scope": "platform", "hosts": [r.host for r in unhealthy_platform]},
@@ -905,6 +911,7 @@ def router_health_guard_job() -> None:
         logger.error("router_health_guard: platform check failed: %s", exc)
 
     # ── Tenants ───────────────────────────────────────────────────────────────
+    tenant_results = []
     try:
         tenant_results = check_tenant_routes()
         unhealthy_tenants = [r for r in tenant_results if not r.healthy]
@@ -916,4 +923,11 @@ def router_health_guard_job() -> None:
     except Exception as exc:
         logger.error("router_health_guard: tenant check failed: %s", exc)
 
+    healthy_p = sum(1 for r in platform_results if r.healthy)
+    healthy_t = sum(1 for r in tenant_results if r.healthy)
+    unhealthy_t = len(tenant_results) - healthy_t
+    logger.info(
+        "router_health_guard_job: done — platform=%d/%d ok, tenants=%d/%d ok, unhealthy_tenants=%d",
+        healthy_p, len(platform_results), healthy_t, len(tenant_results), unhealthy_t,
+    )
     _log_audit_event("router_health_check_completed", {"scope": "platform+tenant"})

@@ -1936,3 +1936,80 @@ WHERE si.source_table = 'router_health_guard' AND si.status = 'open';
 -- El header debe mostrar "X sitios con ruta caída" en rojo.
 -- useAIAdvisory debe emitir advisory critical de Tier 0 para estos hostings.
 ```
+
+---
+
+## 2026-05-14 — Fase 4A.2 Fix Crítico 2: Circuit Breaker — sync_incidents_feed destruía incidentes de Router Health
+
+### Problema raíz (diagnóstico completo)
+
+Dashboard mostraba 100/100 y "Todo operativo" aunque 4 tenants devolvían 404 público y RouterHealthPanel los marcaba como "Router faltante".
+
+**Causa 1 (crítica): `source_type` incorrecto en emisión de incidentes**
+
+`_emit_tenant_incident()` usaba `source_type="site"`. `sync_site_alerts.py` tiene un loop "resolve by absence":
+```python
+open_incidents = _query(conn,
+    "SELECT correlation_key FROM system_incidents WHERE source_type = 'site' AND status = 'open'")
+for inc in open_incidents:
+    if inc["correlation_key"] not in seen_keys:  # seen_keys = solo site_alerts
+        _resolve_incident(conn, inc["correlation_key"], ...)  # ← borraba router health incidents
+```
+Las claves de router health (`router_health:traefik_router_missing_or_unmatched:...`) nunca estaban en `seen_keys` (que solo contenía `site_alert:{id}:{level}`). Resultado: cada 120 segundos que corría `sync_incidents_feed`, todos los incidentes de router health de tenants eran resueltos automáticamente.
+
+`_emit_platform_incident()` tenía el mismo bug con `source_type="system"` → `sync_system_alerts.py` los eliminaba igualmente.
+
+**Causa 2 (operacional): logger.info no emitido en `router_health_guard_job()`**
+
+El job solo llamaba `_log_audit_event(...)` (escribe en `orchestrator_events` tabla DB), nunca `logger.info(...)`. Resultado: el job era invisible en `docker compose logs -f scheduler`. No hay evidencia en logs de si el job corre o crashea.
+
+**Causa 3 (operacional): scheduler container no reiniciado tras deploy**
+
+El container `hg_scheduler` estaba corriendo código viejo sin `router_health_guard_job` registrado. Los logs solo mostraban `sync_incidents_feed started/completed`.
+
+### Fix aplicado
+
+**`app/services/router_health_guard.py`**:
+- `_emit_platform_incident()`: `source_type="system"` → `source_type="router_health"`
+- `_emit_tenant_incident()`: `source_type="site"` → `source_type="router_health"`
+- `router_health_guard_job()`: Añadidos `logger.info("router_health_guard_job: starting...")` al inicio y `logger.info("router_health_guard_job: done — platform=X/Y ok, tenants=X/Y ok, unhealthy_tenants=N")` al final. Ahora visible en `docker compose logs -f scheduler`.
+
+**Por qué `source_type="router_health"` es seguro**: Ningún sync handler procesa `source_type='router_health'`. La resolución solo ocurre en `_resolve_tenant_router_incidents()` (cuando la ruta vuelve a responder 200) o manualmente. La query de overlay en `alerts.py` filtra por `source_table='router_health_guard'` (no `source_type`), por lo que sigue funcionando sin cambios.
+
+### Tests añadidos (39–45) — resultado: 45 passed
+
+| Test | Función cubierta |
+|---|---|
+| 39 | `_emit_tenant_incident` usa `source_type='router_health'` |
+| 40 | `_emit_platform_incident` usa `source_type='router_health'` |
+| 41 | `sync_site_alerts` NO resuelve incidentes `router_health` (source_type difiere) |
+| 42 | `sync_system_alerts` NO resuelve incidentes `router_health` (source_type difiere) |
+| 43 | `router_health_guard_job` emite `logger.info` visible en scheduler logs |
+| 44 | `scheduler_runner.py` contiene `router_health_guard_job` con `interval=60` |
+| 45 | `_emit_tenant_incident` setea `hosting_id` correcto para que `_get_router_incidents()` lo encuentre |
+
+Suite completa: **1022 passed, 1 skipped**.
+
+### Acción requerida en producción
+
+```bash
+# Reiniciar el scheduler para cargar el código nuevo:
+docker compose up -d --build hg_scheduler
+
+# Verificar en logs (debe aparecer tras ~30s):
+docker compose logs -f hg_scheduler | grep router_health_guard_job
+# Esperado:
+# job router_health_guard_job started (interval=60s)
+# router_health_guard_job: starting (REPAIR_MODE=protect)
+# router_health_guard_job: done — platform=3/3 ok, tenants=0/4 ok, unhealthy_tenants=4
+
+# Verificar incidentes creados (tras ~60s):
+# psql -c "SELECT hosting_id, incident_type, source_type, status FROM system_incidents WHERE source_table='router_health_guard' AND status='open';"
+# Esperado: 4 rows con source_type='router_health'
+
+# Verificar que sync_incidents_feed NO los resuelve (esperar 120s más):
+# psql -c "SELECT count(*) FROM system_incidents WHERE source_table='router_health_guard' AND status='open';"
+# Esperado: sigue siendo 4, no 0
+
+# Dashboard debe mostrar degradado tras el primer ciclo del job.
+```
