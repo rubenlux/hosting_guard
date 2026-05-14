@@ -2013,3 +2013,26 @@ docker compose logs -f hg_scheduler | grep router_health_guard_job
 
 # Dashboard debe mostrar degradado tras el primer ciclo del job.
 ```
+
+## Cierre — Static Container Mount / Welcome to nginx
+
+Estado: cerrado en producción.
+
+Validación:
+- Código nuevo desplegado en app, scheduler y frontend.
+- `ensure_static_container_mount`, `check_static_container_mounts`, `static-repair` y detector `Welcome to nginx` presentes dentro del contenedor backend.
+- Plataforma: API y frontend HTTP 200.
+- Tenants activos: 4/4 HTTP 200.
+- `mi-academia` ya no sirve Nginx default; devuelve `<title>Course</title>`.
+- `mi-academia` tiene bind mount persistente:
+  `/opt/clients/user_1_mi-academia_a3dab0:/usr/share/nginx/html:ro`.
+- Router Health reporta:
+  `platform=3/3 ok, tenants=4/4 ok, unhealthy_tenants=0, invalid_mounts=0`.
+- `/tmp/hg_imports` es escribible por `appuser`.
+
+Pendiente:
+- Ejecutar chaos test controlado para validar detección de:
+  - `Welcome to nginx`
+  - `Mounts=[]`
+  - `invalid_container_mount`
+  - `static-repair`

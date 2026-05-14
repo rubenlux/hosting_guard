@@ -1,0 +1,80 @@
+safe_actions:
+  - id: regenerate_file_provider_forwardauth
+    description: "Recreate tenant-forwardauth-middleware.yml with hg-forwardauth@file definition"
+    requires_dry_run_first: true
+    requires_human_approval: false
+
+  - id: regenerate_tenant_file_provider_route
+    description: "Regenerate tenant YAML in /opt/traefik-dynamic/ with correct @file middleware"
+    requires_dry_run_first: true
+    requires_human_approval: false
+
+  - id: recreate_static_nginx_container_with_mount
+    description: "Stop, rm, run nginx container with -v /opt/clients/{name}:/usr/share/nginx/html:ro"
+    requires_dry_run_first: true
+    requires_human_approval: false
+
+  - id: fix_import_tmp_permissions
+    description: "Fix permissions on /opt/clients/{name}/ upload directory"
+    requires_dry_run_first: false
+    requires_human_approval: true
+
+  - id: skip_missing_container_in_metrics
+    description: "Skip containers not found in Docker when collecting metrics"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: block_xmlrpc_apache
+    description: "Add nginx location block to return 403 on /xmlrpc.php"
+    requires_dry_run_first: true
+    requires_human_approval: false
+
+  - id: migrate_tenant_yamls_docker_to_file
+    description: "Migrate all tenant Traefik YAMLs from @docker to @file middleware reference"
+    requires_dry_run_first: true
+    requires_human_approval: false
+
+  - id: migrate_all_tenant_yamls_to_file_provider
+    description: "Batch migration of all tenant route YAMLs to file provider"
+    requires_dry_run_first: true
+    requires_human_approval: false
+
+  - id: remove_docker_provider_from_traefik_config
+    description: "Remove --providers.docker flags from Traefik container command"
+    requires_dry_run_first: false
+    requires_human_approval: true
+
+  - id: set_docker_api_version_env
+    description: "Set DOCKER_API_VERSION env var in Traefik container"
+    requires_dry_run_first: false
+    requires_human_approval: true
+
+  - id: fix_traefik_dynamic_dir_permissions
+    description: "chmod /opt/traefik-dynamic to allow app/scheduler write access"
+    requires_dry_run_first: false
+    requires_human_approval: true
+
+  - id: add_source_type_filter_to_sync_handlers
+    description: "Add source_type != router_health filter to sync_site_alerts and sync_system_alerts"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: skip_activity_fetch_on_import_error
+    description: "Catch ImportError in activity repository and return empty list"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: audit_residual_client_dirs
+    description: "List /opt/clients/ directories with no matching active hosting"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: clear_nginx_chunk_cache
+    description: "Clear nginx cache for frontend chunk files after deploy"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: emit_security_event_on_upload_rejection
+    description: "Ensure every upload rejection emits a security event"
+    requires_dry_run_first: false
+    requires_human_approval: false

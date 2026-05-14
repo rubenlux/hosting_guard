@@ -1,0 +1,81 @@
+forbidden_actions:
+  - id: chmod_777_opt_clients
+    reason: "Grants world-write to all client data directories"
+  - id: chmod_777_entire_opt
+    reason: "World-write on /opt is a critical security violation"
+  - id: disable_forwardauth_middleware
+    reason: "Removes authentication from all tenant routes"
+  - id: bypass_auth_for_tenant_routes
+    reason: "Creates unauthenticated public access to protected routes"
+  - id: delete_client_data_without_snapshot
+    reason: "Irreversible data loss for client"
+  - id: delete_activity_records
+    reason: "Audit log is immutable and append-only"
+  - id: auto_upgrade_docker_on_production
+    reason: "Docker upgrade requires maintenance window and full test"
+  - id: auto_restart_traefik_without_config_backup
+    reason: "Traefik restart without backup may cause routing outage"
+  - id: publish_public_directory_as_cra_output
+    reason: "CRA output is build/, not public/ — publishing wrong dir causes blank app"
+  - id: modify_dns_records_automatically
+    reason: "DNS changes require human review — propagation is irreversible for TTL duration"
+  - id: disable_nginx_default_page_check
+    reason: "Body check is the only way to detect false-positive 200 responses"
+  - id: auto_resolve_router_health_incidents
+    reason: "Router health incidents must be resolved only after manual verification"
+  - id: auto_resolve_incidents_without_source_check
+    reason: "Sync handlers must filter by source_type to avoid closing wrong incidents"
+  - id: delete_tenant_yamls_without_backup
+    reason: "Deleting Traefik YAMLs without backup causes immediate routing outage"
+  - id: restart_traefik_mid_migration
+    reason: "Restarting Traefik before migration is complete causes partial outage"
+  - id: create_route_without_auth_middleware
+    reason: "Routes without forwardauth middleware bypass authentication"
+  - id: alter_table_add_column_without_migration
+    reason: "Schema changes require proper migration with rollback plan"
+  - id: alter_column_type_without_migration
+    reason: "Column type changes require proper migration"
+  - id: drop_column_without_backup
+    reason: "Column drops are irreversible"
+  - id: skip_permission_check_on_upload
+    reason: "Must validate writability before accepting upload to avoid silent data loss"
+  - id: delete_hosting_record_when_container_missing
+    reason: "Missing container != deleted hosting — may be transient"
+  - id: stop_all_metric_collection
+    reason: "One missing container must not block metrics for all others"
+  - id: auto_scale_down_on_false_disk_alert
+    reason: "df overreport causes false alerts — must verify before scaling"
+  - id: auto_restart_wp_container
+    reason: "WordPress restart may cause data corruption if write in progress"
+  - id: disable_wordpress_completely
+    reason: "Irreversible customer impact"
+  - id: delete_xmlrpc_file_from_container
+    reason: "Container is ephemeral — change must be in config/image, not manual file delete"
+  - id: auto_change_output_dir_without_user_confirmation
+    reason: "Output directory is user config — auto-change breaks user expectation"
+  - id: delete_container_to_free_disk
+    reason: "False disk alert — do not delete container based on df overreport"
+  - id: backfill_fake_metrics
+    reason: "Fake metrics corrupt monitoring data"
+  - id: disable_resource_dashboard
+    reason: "Dashboard must handle empty data gracefully, not be disabled"
+  - id: auto_cleanup_without_human_review
+    reason: "Client data residuals require human decision before deletion"
+  - id: mark_incident_healthy_on_200_without_body_check
+    reason: "HTTP 200 with nginx default body is a false positive"
+  - id: return_raw_exceptions_to_client
+    reason: "Raw exceptions leak internal details and lack CORS headers"
+  - id: disable_pixel_events
+    reason: "Pixel events are customer analytics — disabling loses data"
+  - id: disable_activity_logging
+    reason: "Activity log is part of audit trail"
+  - id: mount_traefik_dynamic_as_world_writable_permanently
+    reason: "World-writable mount is a security risk — use proper ownership instead"
+  - id: log_client_file_content
+    reason: "Client file content must not be logged — privacy violation"
+  - id: disable_upload_security_checks
+    reason: "Upload security is critical — disabling allows shell uploads"
+  - id: auto_restart_all_sessions
+    reason: "Restarting all sessions logs out all users — disproportionate impact"
+  - id: rollback_frontend_without_testing
+    reason: "Frontend rollback must be tested before applying"

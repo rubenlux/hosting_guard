@@ -611,11 +611,40 @@ def _check_tenant_hosting(h: dict) -> "RouterHealthResult":
 
 # ─── Incident emission ────────────────────────────────────────────────────────
 
+def _enrich_incident_with_runbook(incident_type: str, summary: str) -> dict:
+    """Look up a runbook by incident_type or summary text; return fields for evidence."""
+    try:
+        from app.services.incidents.incident_knowledge_service import (
+            match_error_signature, search_runbooks,
+        )
+        # Try exact signature match on summary first, then incident_type keyword
+        matches = match_error_signature(summary) if summary else []
+        if not matches:
+            matches = match_error_signature(incident_type)
+        if not matches:
+            matches = search_runbooks(incident_type)
+        if not matches:
+            return {}
+        best = matches[0]
+        return {
+            "matched_runbook_id": best.incident_id,
+            "runbook_confidence": best.confidence,
+            "runbook_match_method": best.match_method,
+            "auto_repair_allowed": best.auto_repair_allowed,
+            "safe_actions": best.safe_actions,
+            "forbidden_actions": best.forbidden_actions,
+        }
+    except Exception:
+        return {}
+
+
 def _emit_platform_incident(result: RouterHealthResult) -> None:
     from app.infra.db import get_connection, release_connection
     from app.services.incidents.incident_deduper import _upsert_incident
 
     correlation_key = f"platform_route:{result.incident_type}:{result.host}"
+    runbook_fields = _enrich_incident_with_runbook("platform_route_unhealthy", result.summary or "")
+    evidence = {**(result.evidence or {}), **runbook_fields}
     conn = None
     try:
         conn = get_connection()
@@ -631,7 +660,7 @@ def _emit_platform_incident(result: RouterHealthResult) -> None:
             user_id=None,
             title=f"Ruta pública de plataforma no saludable — {result.host}",
             summary=result.summary,
-            evidence=result.evidence,
+            evidence=evidence,
         )
         conn.commit()
     except Exception as exc:
@@ -652,6 +681,11 @@ def _emit_tenant_incident(result: RouterHealthResult, user_id: Optional[int]) ->
 
     chash = _context_hash(result.host, result.hosting_id, result.incident_type or "", result.container_name)
     correlation_key = f"router_health:{result.incident_type}:{result.host}:{chash}"
+    runbook_fields = _enrich_incident_with_runbook(
+        result.incident_type or "traefik_router_missing_or_unmatched",
+        result.summary or "",
+    )
+    evidence = {**(result.evidence or {}), **runbook_fields}
 
     conn = None
     try:
@@ -668,7 +702,7 @@ def _emit_tenant_incident(result: RouterHealthResult, user_id: Optional[int]) ->
             user_id=user_id,
             title=f"Sitio de cliente inaccesible públicamente — {result.host}",
             summary=result.summary,
-            evidence=result.evidence,
+            evidence=evidence,
         )
         conn.commit()
     except Exception as exc:
@@ -1041,6 +1075,18 @@ def _emit_docker_provider_incident(unhealthy_count: int, total_tenants: int, api
     from app.services.incidents.incident_deduper import _upsert_incident
 
     correlation_key = "router_health:traefik_docker_provider_unhealthy:system"
+    runbook_fields = _enrich_incident_with_runbook("traefik_docker_provider_unhealthy", "")
+    evidence = {
+        "unhealthy_tenants": unhealthy_count,
+        "total_tenants": total_tenants,
+        "traefik_api_status": api_status,
+        "recommended_fix": (
+            "Set DOCKER_API_VERSION=1.44 on docker-socket-proxy "
+            "or upgrade tecnativa/docker-socket-proxy. "
+            "Then restart Traefik container."
+        ),
+        **runbook_fields,
+    }
     conn = None
     try:
         conn = get_connection()
@@ -1060,16 +1106,7 @@ def _emit_docker_provider_incident(unhealthy_count: int, total_tenants: int, api
                 f"Probable fallo del Docker provider de Traefik (API status: {api_status}). "
                 "Verificar versión del socket proxy y reiniciar Traefik."
             ),
-            evidence={
-                "unhealthy_tenants": unhealthy_count,
-                "total_tenants": total_tenants,
-                "traefik_api_status": api_status,
-                "recommended_fix": (
-                    "Set DOCKER_API_VERSION=1.44 on docker-socket-proxy "
-                    "or upgrade tecnativa/docker-socket-proxy. "
-                    "Then restart Traefik container."
-                ),
-            },
+            evidence=evidence,
         )
         conn.commit()
     except Exception as exc:

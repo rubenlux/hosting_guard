@@ -126,13 +126,14 @@ async def get_dashboard_summary(user: dict = Depends(verify_token)):
         if not active_ids:
             return {}
         from app.infra.db import get_connection, release_connection
+        import json as _json
         conn = None
         try:
             conn = get_connection()
             cur = conn.cursor()
             cur.execute(
                 """
-                SELECT hosting_id, incident_type, severity
+                SELECT hosting_id, incident_type, severity, evidence
                 FROM system_incidents
                 WHERE source_table = 'router_health_guard'
                   AND status = 'open'
@@ -145,7 +146,21 @@ async def get_dashboard_summary(user: dict = Depends(verify_token)):
             for row in cur.fetchall():
                 hid = row[0]
                 if hid not in result:  # keep most-recent per hosting
-                    result[hid] = {"incident_type": row[1], "severity": row[2]}
+                    evidence = row[3] or {}
+                    if isinstance(evidence, str):
+                        try:
+                            evidence = _json.loads(evidence)
+                        except Exception:
+                            evidence = {}
+                    result[hid] = {
+                        "incident_type": row[1],
+                        "severity": row[2],
+                        "matched_runbook_id": evidence.get("matched_runbook_id"),
+                        "auto_repair_allowed": evidence.get("auto_repair_allowed", False),
+                        "safe_actions": evidence.get("safe_actions", []),
+                        "forbidden_actions": evidence.get("forbidden_actions", []),
+                        "runbook_confidence": evidence.get("runbook_confidence"),
+                    }
             return result
         except Exception as exc:
             logger.warning("dashboard: router incidents query failed: %s", exc)
@@ -173,6 +188,10 @@ async def get_dashboard_summary(user: dict = Depends(verify_token)):
                 "status": "critical",
                 "public_reachable": False,
                 "router_incident_type": ri["incident_type"],
+                "matched_runbook_id": ri.get("matched_runbook_id"),
+                "auto_repair_allowed": ri.get("auto_repair_allowed", False),
+                "safe_actions": ri.get("safe_actions", []),
+                "forbidden_actions": ri.get("forbidden_actions", []),
             }
         else:
             base.setdefault("public_reachable", True)

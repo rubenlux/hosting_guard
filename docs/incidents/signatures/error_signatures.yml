@@ -1,0 +1,598 @@
+# HostingGuard — Error Signatures Map
+# Maps exact log/error patterns to incident runbook IDs.
+# Used by the RAG diagnostic engine for exact-match lookup (confidence 1.0)
+# and by the monitoring layer for alerting.
+#
+# Fields:
+#   id          — unique signature ID (sig_NNN, sequential)
+#   pattern     — exact substring or regex to match in logs/errors
+#   incident_id — runbook ID in docs/incidents/runbooks/
+#   source      — where this signature appears (traefik_logs, app_logs, db_logs, browser_console, etc.)
+#   confidence  — 1.0 = exact match, 0.9 = very likely, 0.8 = probable
+#   type        — exact | regex | substring
+
+signatures:
+
+  # ─── TRAEFIK_DOCKER_PROVIDER_UNHEALTHY ──────────────────────────────────────
+  - id: sig_001
+    pattern: "docker provider is unhealthy"
+    incident_id: TRAEFIK_DOCKER_PROVIDER_UNHEALTHY
+    source: traefik_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_002
+    pattern: "provider docker failed to connect"
+    incident_id: TRAEFIK_DOCKER_PROVIDER_UNHEALTHY
+    source: traefik_logs
+    confidence: 0.9
+    type: substring
+
+  - id: sig_003
+    pattern: "cannot connect to the Docker daemon"
+    incident_id: TRAEFIK_DOCKER_PROVIDER_UNHEALTHY
+    source: traefik_logs
+    confidence: 1.0
+    type: substring
+
+  # ─── TRAEFIK_CLIENT_VERSION_TOO_OLD ─────────────────────────────────────────
+  - id: sig_004
+    pattern: "client version 1.24 is too old"
+    incident_id: TRAEFIK_CLIENT_VERSION_TOO_OLD
+    source: traefik_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_005
+    pattern: "client version .* is too old. Minimum supported API version is"
+    incident_id: TRAEFIK_CLIENT_VERSION_TOO_OLD
+    source: traefik_logs
+    confidence: 1.0
+    type: regex
+
+  - id: sig_006
+    pattern: "Error response from daemon: client version"
+    incident_id: TRAEFIK_CLIENT_VERSION_TOO_OLD
+    source: traefik_logs
+    confidence: 0.9
+    type: substring
+
+  # ─── FORWARDAUTH_MIDDLEWARE_DOCKER_MISSING ───────────────────────────────────
+  - id: sig_007
+    pattern: "middleware hg-forwardauth@docker does not exist"
+    incident_id: FORWARDAUTH_MIDDLEWARE_DOCKER_MISSING
+    source: traefik_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_008
+    pattern: "hg-forwardauth@docker"
+    incident_id: FORWARDAUTH_MIDDLEWARE_DOCKER_MISSING
+    source: traefik_logs
+    confidence: 0.9
+    type: substring
+
+  - id: sig_009
+    pattern: "undefined middleware"
+    incident_id: FORWARDAUTH_MIDDLEWARE_DOCKER_MISSING
+    source: traefik_logs
+    confidence: 0.8
+    type: substring
+
+  # ─── FILE_PROVIDER_FORWARDAUTH_MIGRATION ────────────────────────────────────
+  - id: sig_010
+    pattern: "middleware hg-forwardauth@file does not exist"
+    incident_id: FILE_PROVIDER_FORWARDAUTH_MIGRATION
+    source: traefik_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_011
+    pattern: "hg-forwardauth@file"
+    incident_id: FILE_PROVIDER_FORWARDAUTH_MIGRATION
+    source: traefik_logs
+    confidence: 0.9
+    type: substring
+
+  - id: sig_012
+    pattern: "forwardAuth URL is missing"
+    incident_id: FILE_PROVIDER_FORWARDAUTH_MIGRATION
+    source: traefik_logs
+    confidence: 0.9
+    type: substring
+
+  # ─── TENANT_PUBLIC_404_ROUTER_MISSING ───────────────────────────────────────
+  - id: sig_013
+    pattern: "404 page not found"
+    incident_id: TENANT_PUBLIC_404_ROUTER_MISSING
+    source: traefik_logs
+    confidence: 0.8
+    type: substring
+
+  - id: sig_014
+    pattern: "no matching router found"
+    incident_id: TENANT_PUBLIC_404_ROUTER_MISSING
+    source: traefik_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_015
+    pattern: "404 Not Found.*traefik"
+    incident_id: TENANT_PUBLIC_404_ROUTER_MISSING
+    source: traefik_logs
+    confidence: 0.9
+    type: regex
+
+  # ─── WELCOME_TO_NGINX_EMPTY_SITE ────────────────────────────────────────────
+  - id: sig_016
+    pattern: "Welcome to nginx!"
+    incident_id: WELCOME_TO_NGINX_EMPTY_SITE
+    source: http_response
+    confidence: 1.0
+    type: substring
+
+  - id: sig_017
+    pattern: "Thank you for using nginx."
+    incident_id: WELCOME_TO_NGINX_EMPTY_SITE
+    source: http_response
+    confidence: 1.0
+    type: substring
+
+  # ─── CONTAINER_WITH_EMPTY_MOUNTS ────────────────────────────────────────────
+  - id: sig_018
+    pattern: "mount point is empty"
+    incident_id: CONTAINER_WITH_EMPTY_MOUNTS
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_019
+    pattern: "Can't connect to local MySQL server"
+    incident_id: CONTAINER_WITH_EMPTY_MOUNTS
+    source: container_logs
+    confidence: 0.9
+    type: substring
+
+  - id: sig_020
+    pattern: "directory /var/www/html is empty"
+    incident_id: CONTAINER_WITH_EMPTY_MOUNTS
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  # ─── ZIP_IMPORT_PERMISSION_DENIED ───────────────────────────────────────────
+  - id: sig_021
+    pattern: "PermissionError: [Errno 13] Permission denied"
+    incident_id: ZIP_IMPORT_PERMISSION_DENIED
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_022
+    pattern: "Permission denied.*zip"
+    incident_id: ZIP_IMPORT_PERMISSION_DENIED
+    source: app_logs
+    confidence: 0.9
+    type: regex
+
+  - id: sig_023
+    pattern: "cannot extract zip: permission denied"
+    incident_id: ZIP_IMPORT_PERMISSION_DENIED
+    source: worker_logs
+    confidence: 1.0
+    type: substring
+
+  # ─── DASHBOARD_FALSE_100_HEALTH ─────────────────────────────────────────────
+  - id: sig_024
+    pattern: "health_score: 100"
+    incident_id: DASHBOARD_FALSE_100_HEALTH
+    source: app_logs
+    confidence: 0.8
+    type: substring
+
+  - id: sig_025
+    pattern: "false positive health check"
+    incident_id: DASHBOARD_FALSE_100_HEALTH
+    source: app_logs
+    confidence: 0.9
+    type: substring
+
+  # ─── ROUTER_HEALTH_INCIDENTS_DELETED_BY_SYNC ────────────────────────────────
+  - id: sig_026
+    pattern: "traefik-dynamic file deleted during sync"
+    incident_id: ROUTER_HEALTH_INCIDENTS_DELETED_BY_SYNC
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_027
+    pattern: "router config overwritten"
+    incident_id: ROUTER_HEALTH_INCIDENTS_DELETED_BY_SYNC
+    source: app_logs
+    confidence: 0.9
+    type: substring
+
+  # ─── REPAIR_ENDPOINT_500_WITH_CORS ──────────────────────────────────────────
+  - id: sig_028
+    pattern: "CORS policy: No 'Access-Control-Allow-Origin' header"
+    incident_id: REPAIR_ENDPOINT_500_WITH_CORS
+    source: browser_console
+    confidence: 0.9
+    type: substring
+
+  - id: sig_029
+    pattern: "500 Internal Server Error.*decision/repair"
+    incident_id: REPAIR_ENDPOINT_500_WITH_CORS
+    source: app_logs
+    confidence: 1.0
+    type: regex
+
+  - id: sig_030
+    pattern: "has been blocked by CORS policy"
+    incident_id: REPAIR_ENDPOINT_500_WITH_CORS
+    source: browser_console
+    confidence: 0.8
+    type: substring
+
+  # ─── TRAEFIK_DYNAMIC_DIR_RW_DENIED ──────────────────────────────────────────
+  - id: sig_031
+    pattern: "permission denied.*traefik-dynamic"
+    incident_id: TRAEFIK_DYNAMIC_DIR_RW_DENIED
+    source: app_logs
+    confidence: 1.0
+    type: regex
+
+  - id: sig_032
+    pattern: "read-only file system.*opt/traefik-dynamic"
+    incident_id: TRAEFIK_DYNAMIC_DIR_RW_DENIED
+    source: app_logs
+    confidence: 1.0
+    type: regex
+
+  - id: sig_033
+    pattern: "OSError: [Errno 30] Read-only file system"
+    incident_id: TRAEFIK_DYNAMIC_DIR_RW_DENIED
+    source: app_logs
+    confidence: 0.9
+    type: substring
+
+  # ─── CUSTOM_DOMAINS_ACTIVITY_REPOSITORY_IMPORT_CRASH ────────────────────────
+  - id: sig_034
+    pattern: "ImportError: cannot import name"
+    incident_id: CUSTOM_DOMAINS_ACTIVITY_REPOSITORY_IMPORT_CRASH
+    source: app_logs
+    confidence: 0.9
+    type: substring
+
+  - id: sig_035
+    pattern: "AttributeError: 'NoneType' object has no attribute 'custom_domain'"
+    incident_id: CUSTOM_DOMAINS_ACTIVITY_REPOSITORY_IMPORT_CRASH
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_036
+    pattern: "ImportError.*activity_repository"
+    incident_id: CUSTOM_DOMAINS_ACTIVITY_REPOSITORY_IMPORT_CRASH
+    source: app_logs
+    confidence: 1.0
+    type: regex
+
+  # ─── ADMIN_STAFF_CREATED_AT_TS_500 ──────────────────────────────────────────
+  - id: sig_037
+    pattern: "column created_at_ts does not exist"
+    incident_id: ADMIN_STAFF_CREATED_AT_TS_500
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_038
+    pattern: "ProgrammingError: column"
+    incident_id: ADMIN_STAFF_CREATED_AT_TS_500
+    source: app_logs
+    confidence: 0.8
+    type: substring
+
+  - id: sig_039
+    pattern: "UndefinedColumn.*created_at_ts"
+    incident_id: ADMIN_STAFF_CREATED_AT_TS_500
+    source: db_logs
+    confidence: 1.0
+    type: regex
+
+  # ─── ADMIN_TERMINATE_PIXEL_EVENTS_TYPE_MISMATCH ─────────────────────────────
+  - id: sig_040
+    pattern: "operator does not exist: text = integer"
+    incident_id: ADMIN_TERMINATE_PIXEL_EVENTS_TYPE_MISMATCH
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_041
+    pattern: "ProgrammingError: operator does not exist"
+    incident_id: ADMIN_TERMINATE_PIXEL_EVENTS_TYPE_MISMATCH
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_042
+    pattern: "No operator matches the given name and argument types"
+    incident_id: ADMIN_TERMINATE_PIXEL_EVENTS_TYPE_MISMATCH
+    source: db_logs
+    confidence: 1.0
+    type: substring
+
+  # ─── RESOURCES_MISSING_CONTAINER_BREAKS_COLLECTOR ───────────────────────────
+  - id: sig_043
+    pattern: "No such container: user_"
+    incident_id: RESOURCES_MISSING_CONTAINER_BREAKS_COLLECTOR
+    source: scheduler_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_044
+    pattern: "Error: No such container"
+    incident_id: RESOURCES_MISSING_CONTAINER_BREAKS_COLLECTOR
+    source: scheduler_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_045
+    pattern: "docker.errors.NotFound.*container"
+    incident_id: RESOURCES_MISSING_CONTAINER_BREAKS_COLLECTOR
+    source: scheduler_logs
+    confidence: 1.0
+    type: regex
+
+  - id: sig_046
+    pattern: "404 Client Error.*Not Found.*containers"
+    incident_id: RESOURCES_MISSING_CONTAINER_BREAKS_COLLECTOR
+    source: scheduler_logs
+    confidence: 0.9
+    type: regex
+
+  # ─── WP_XMLRPC_EXPOSED_APACHE_RUNTIME ───────────────────────────────────────
+  - id: sig_047
+    pattern: "XML-RPC server accepts POST requests only"
+    incident_id: WP_XMLRPC_EXPOSED_APACHE_RUNTIME
+    source: http_response
+    confidence: 1.0
+    type: substring
+
+  - id: sig_048
+    pattern: "200 OK.*xmlrpc.php"
+    incident_id: WP_XMLRPC_EXPOSED_APACHE_RUNTIME
+    source: access_logs
+    confidence: 0.9
+    type: regex
+
+  - id: sig_049
+    pattern: "xmlrpc.php"
+    incident_id: WP_XMLRPC_EXPOSED_APACHE_RUNTIME
+    source: security_scanner
+    confidence: 0.8
+    type: substring
+
+  - id: sig_050
+    pattern: "POST /xmlrpc.php HTTP/1.1\" 200"
+    incident_id: WP_XMLRPC_EXPOSED_APACHE_RUNTIME
+    source: access_logs
+    confidence: 1.0
+    type: substring
+
+  # ─── GITHUB_CRA_OUTPUT_DIRECTORY_MISCONFIG ──────────────────────────────────
+  - id: sig_051
+    pattern: "Failed to fetch dynamically imported module"
+    incident_id: GITHUB_CRA_OUTPUT_DIRECTORY_MISCONFIG
+    source: browser_console
+    confidence: 0.8
+    type: substring
+
+  - id: sig_052
+    pattern: "Cannot GET /"
+    incident_id: GITHUB_CRA_OUTPUT_DIRECTORY_MISCONFIG
+    source: http_response
+    confidence: 0.8
+    type: substring
+
+  - id: sig_053
+    pattern: "output directory not found"
+    incident_id: GITHUB_CRA_OUTPUT_DIRECTORY_MISCONFIG
+    source: worker_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_054
+    pattern: "output directory .* is empty"
+    incident_id: GITHUB_CRA_OUTPUT_DIRECTORY_MISCONFIG
+    source: worker_logs
+    confidence: 1.0
+    type: regex
+
+  # ─── RESOURCE_DISK_DF_OVERREPORT ────────────────────────────────────────────
+  - id: sig_055
+    pattern: "disk usage.*%.*df"
+    incident_id: RESOURCE_DISK_DF_OVERREPORT
+    source: app_logs
+    confidence: 0.8
+    type: regex
+
+  - id: sig_056
+    pattern: "overlay.*disk"
+    incident_id: RESOURCE_DISK_DF_OVERREPORT
+    source: app_logs
+    confidence: 0.8
+    type: regex
+
+  - id: sig_057
+    pattern: "disk_overreport_suspected"
+    incident_id: RESOURCE_DISK_DF_OVERREPORT
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  # ─── RESOURCE_WINDOW_TOO_TIGHT_EMPTY_DASHBOARD ──────────────────────────────
+  - id: sig_058
+    pattern: "no data.*dashboard"
+    incident_id: RESOURCE_WINDOW_TOO_TIGHT_EMPTY_DASHBOARD
+    source: app_logs
+    confidence: 0.8
+    type: regex
+
+  - id: sig_059
+    pattern: "empty chart"
+    incident_id: RESOURCE_WINDOW_TOO_TIGHT_EMPTY_DASHBOARD
+    source: frontend_logs
+    confidence: 0.8
+    type: substring
+
+  - id: sig_060
+    pattern: "no metrics found for the requested time window"
+    incident_id: RESOURCE_WINDOW_TOO_TIGHT_EMPTY_DASHBOARD
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_061
+    pattern: "\"points\": 0"
+    incident_id: RESOURCE_WINDOW_TOO_TIGHT_EMPTY_DASHBOARD
+    source: api_response
+    confidence: 0.9
+    type: substring
+
+  # ─── CLIENT_DIR_RESIDUAL_AFTER_TERMINATE ────────────────────────────────────
+  - id: sig_062
+    pattern: "/opt/clients/ residual"
+    incident_id: CLIENT_DIR_RESIDUAL_AFTER_TERMINATE
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_063
+    pattern: "directory exists after terminate"
+    incident_id: CLIENT_DIR_RESIDUAL_AFTER_TERMINATE
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_064
+    pattern: "residual_client_dir_detected"
+    incident_id: CLIENT_DIR_RESIDUAL_AFTER_TERMINATE
+    source: scheduler_logs
+    confidence: 1.0
+    type: substring
+
+  # ─── COMPOUND_TLD_APEX_MISCLASSIFICATION ────────────────────────────────────
+  - id: sig_065
+    pattern: "compound TLD"
+    incident_id: COMPOUND_TLD_APEX_MISCLASSIFICATION
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_066
+    pattern: "apex misclassification"
+    incident_id: COMPOUND_TLD_APEX_MISCLASSIFICATION
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_067
+    pattern: "tldextract"
+    incident_id: COMPOUND_TLD_APEX_MISCLASSIFICATION
+    source: app_logs
+    confidence: 0.8
+    type: substring
+
+  - id: sig_068
+    pattern: "SSL certificate request failed.*\\.ar$"
+    incident_id: COMPOUND_TLD_APEX_MISCLASSIFICATION
+    source: app_logs
+    confidence: 0.9
+    type: regex
+
+  - id: sig_069
+    pattern: "DNS verification failed.*compound"
+    incident_id: COMPOUND_TLD_APEX_MISCLASSIFICATION
+    source: app_logs
+    confidence: 0.9
+    type: substring
+
+  - id: sig_070
+    pattern: "wrong apex.*com.ar"
+    incident_id: COMPOUND_TLD_APEX_MISCLASSIFICATION
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_071
+    pattern: "wrong apex.*co.uk"
+    incident_id: COMPOUND_TLD_APEX_MISCLASSIFICATION
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  # ─── FRONTEND_CHUNK_404_BLANK_SCREEN ────────────────────────────────────────
+  - id: sig_072
+    pattern: "Failed to fetch dynamically imported module"
+    incident_id: FRONTEND_CHUNK_404_BLANK_SCREEN
+    source: browser_console
+    confidence: 1.0
+    type: substring
+
+  - id: sig_073
+    pattern: "net::ERR_ABORTED 404"
+    incident_id: FRONTEND_CHUNK_404_BLANK_SCREEN
+    source: browser_console
+    confidence: 0.9
+    type: substring
+
+  - id: sig_074
+    pattern: "chunk.*404"
+    incident_id: FRONTEND_CHUNK_404_BLANK_SCREEN
+    source: access_logs
+    confidence: 0.9
+    type: regex
+
+  - id: sig_075
+    pattern: "Loading chunk .* failed"
+    incident_id: FRONTEND_CHUNK_404_BLANK_SCREEN
+    source: browser_console
+    confidence: 1.0
+    type: regex
+
+  - id: sig_076
+    pattern: "GET /assets/index-.*.js 404"
+    incident_id: FRONTEND_CHUNK_404_BLANK_SCREEN
+    source: access_logs
+    confidence: 1.0
+    type: regex
+
+  # ─── SECURITY_UPLOAD_REJECTION_NOT_LOGGED ───────────────────────────────────
+  - id: sig_077
+    pattern: "upload rejected.*not logged"
+    incident_id: SECURITY_UPLOAD_REJECTION_NOT_LOGGED
+    source: app_logs
+    confidence: 1.0
+    type: regex
+
+  - id: sig_078
+    pattern: "security event missing for upload"
+    incident_id: SECURITY_UPLOAD_REJECTION_NOT_LOGGED
+    source: monitoring
+    confidence: 1.0
+    type: substring
+
+  - id: sig_079
+    pattern: "upload_rejection_no_event"
+    incident_id: SECURITY_UPLOAD_REJECTION_NOT_LOGGED
+    source: monitoring
+    confidence: 1.0
+    type: substring
+
+  - id: sig_080
+    pattern: "403.*upload.*no security_event emitted"
+    incident_id: SECURITY_UPLOAD_REJECTION_NOT_LOGGED
+    source: app_logs
+    confidence: 0.9
+    type: regex
