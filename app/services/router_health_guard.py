@@ -146,9 +146,30 @@ http:
           flushInterval: "100ms"
 """
 
+_TENANT_FORWARDAUTH_YAML = """\
+# tenant-forwardauth-middleware.yml
+# Managed by router_health_guard.py — do not edit manually.
+#
+# Defines hg-forwardauth via the FILE provider so tenant routers remain reachable
+# even when Traefik's Docker provider is unavailable (version mismatch, socket issue, etc.).
+#
+# Reference in tenant file routers: hg-forwardauth@file
+# (NOT @docker — that qualifier only works when Docker provider is functional)
+#
+# NEVER add this middleware to platform-api.yml — it would create a ForwardAuth loop.
+
+http:
+  middlewares:
+    hg-forwardauth:
+      forwardAuth:
+        address: "http://hosting_guard:8000/internal/forwardauth"
+        trustForwardHeader: true
+"""
+
 _PLATFORM_FILES = {
     "/opt/traefik-dynamic/platform-frontend.yml": _PLATFORM_FRONTEND_YAML,
     "/opt/traefik-dynamic/platform-api.yml": _PLATFORM_API_YAML,
+    "/opt/traefik-dynamic/tenant-forwardauth-middleware.yml": _TENANT_FORWARDAUTH_YAML,
 }
 
 
@@ -275,6 +296,9 @@ def _router_source_for_platform(route_cfg: dict) -> str:
 
 
 def _router_source_for_tenant(hosting_id: int, container_name: str) -> str:
+    # Accept both naming conventions (tenant-{id}.yml and legacy {id}.yml)
+    if os.path.exists(f"/opt/traefik-dynamic/tenant-{hosting_id}.yml"):
+        return "dynamic_file"
     if os.path.exists(f"/opt/traefik-dynamic/{hosting_id}.yml"):
         return "dynamic_file"
     try:
@@ -700,18 +724,35 @@ def _log_audit_event(event_type: str, payload: dict) -> None:
 
 # ─── Tenant router repair ─────────────────────────────────────────────────────
 
+_TRAEFIK_DYNAMIC_DIR = "/opt/traefik-dynamic"
+# Platform files that tenant repair must never touch.
+_PLATFORM_PROTECTED_FILES = {
+    "platform-frontend.yml",
+    "platform-api.yml",
+    "tenant-forwardauth-middleware.yml",
+}
+
+
+def _traefik_dir_writable() -> bool:
+    """Return True if TRAEFIK_DYNAMIC_DIR exists and is writable from this container."""
+    return os.path.isdir(_TRAEFIK_DYNAMIC_DIR) and os.access(_TRAEFIK_DYNAMIC_DIR, os.W_OK)
+
+
 def ensure_tenant_traefik_route(hosting_id: int, dry_run: bool = True) -> dict:
     """
     Creates or updates the Traefik dynamic YAML for a tenant hosting.
 
     Safety contract:
-      - Only works for active hostings with running containers.
-      - Never modifies client files, DNS, Docker Compose, or billing.
+      - Only writes tenant-{hosting_id}.yml; never touches platform-*.yml.
+      - Path traversal is impossible: hosting_id is always an int.
+      - Live write validates directory is mounted writable before touching disk.
       - Backs up existing file before overwriting.
+      - dry_run=True: preview only, no disk access required.
 
     Returns:
-        {"dry_run", "hosting_id", "host", "container_name", "action", "yaml", "file_path"}
-        or {"error": str}
+        {"dry_run", "hosting_id", "host", "container_name", "action", "yaml", "file_path",
+         "repair_available": True}
+        or {"error": str, "code": str, "repair_available": bool}
     """
     from app.infra.db import get_connection, release_connection
 
@@ -726,36 +767,63 @@ def ensure_tenant_traefik_route(hosting_id: int, dry_run: bool = True) -> dict:
         row = cur.fetchone()
     except Exception as exc:
         logger.error("ensure_tenant_route: DB error: %s", exc)
-        return {"error": f"DB error: {exc}"}
+        return {"error": f"DB error: {exc}", "code": "db_error", "repair_available": False}
     finally:
         if conn:
             release_connection(conn)
 
     if not row:
-        return {"error": "Hosting not found"}
+        return {"error": "Hosting not found", "code": "hosting_not_found", "repair_available": False}
 
     h = dict(row)
     if h["status"] != "active":
-        return {"error": f"Hosting status is '{h['status']}', must be 'active'"}
+        return {
+            "error": f"Hosting status is '{h['status']}', must be 'active'",
+            "code": "hosting_not_active",
+            "repair_available": False,
+        }
 
     subdomain = (h.get("subdomain") or "").strip()
     container_name = (h.get("container_name") or "").strip()
     if not subdomain or not container_name:
-        return {"error": "Hosting missing subdomain or container_name"}
+        return {
+            "error": "Hosting missing subdomain or container_name",
+            "code": "hosting_incomplete",
+            "repair_available": False,
+        }
 
     host = normalize_tenant_public_host(subdomain)
 
     container_running = _container_status(container_name)
     if not container_running:
         status_str = "stopped" if container_running is False else "not found"
-        return {"error": f"Container '{container_name}' is {status_str}. Resolve container first."}
+        return {
+            "error": f"Container '{container_name}' is {status_str}. Resolve container first.",
+            "code": "container_not_running",
+            "repair_available": False,
+        }
 
+    # ── Writability pre-check (live write only) ───────────────────────────────
+    # dry_run never touches disk, so skip the check — UI "Simular reparación" must
+    # always work even when the volume is not mounted writable.
+    if not dry_run and not _traefik_dir_writable():
+        return {
+            "error": (
+                "The app container cannot write Traefik dynamic files. "
+                f"Mount {_TRAEFIK_DYNAMIC_DIR} as writable (:rw) in docker-compose, "
+                "or run the host-level repair script instead."
+            ),
+            "code": "traefik_dynamic_path_not_writable",
+            "repair_available": False,
+        }
+
+    # ── Build YAML + safe file path ───────────────────────────────────────────
     router_name = f"tenant-{hosting_id}"
     yaml_content = (
         f"# tenant-{hosting_id}.yml\n"
         f"# Managed by router_health_guard.py — do not edit manually.\n"
         f"# Route: {host} → {container_name}:80\n"
-        f"# ForwardAuth: hg-forwardauth@docker\n\n"
+        f"# ForwardAuth: hg-forwardauth@file (file provider — survives Docker provider failure)\n\n"
         f"http:\n"
         f"  routers:\n"
         f"    {router_name}:\n"
@@ -766,7 +834,7 @@ def ensure_tenant_traefik_route(hosting_id: int, dry_run: bool = True) -> dict:
         f"      tls:\n"
         f"        certResolver: le\n"
         f"      middlewares:\n"
-        f"        - hg-forwardauth@docker\n"
+        f"        - hg-forwardauth@file\n"
         f"      priority: 50\n\n"
         f"  services:\n"
         f"    {router_name}:\n"
@@ -775,8 +843,16 @@ def ensure_tenant_traefik_route(hosting_id: int, dry_run: bool = True) -> dict:
         f"          - url: \"http://{container_name}:80\"\n"
     )
 
-    DYNAMIC_DIR = "/opt/traefik-dynamic"
-    file_path = f"{DYNAMIC_DIR}/{hosting_id}.yml"
+    # hosting_id is always an int (FastAPI type-enforces at the API layer),
+    # so tenant-{hosting_id}.yml can never traverse the path. Explicit guard anyway.
+    filename = f"tenant-{hosting_id}.yml"
+    if filename in _PLATFORM_PROTECTED_FILES or os.sep in filename or filename.startswith("."):
+        return {
+            "error": "Refusing to write: filename collides with protected platform file.",
+            "code": "path_traversal_blocked",
+            "repair_available": False,
+        }
+    file_path = os.path.join(_TRAEFIK_DYNAMIC_DIR, filename)
 
     existing_content = ""
     file_exists = os.path.exists(file_path)
@@ -799,35 +875,47 @@ def ensure_tenant_traefik_route(hosting_id: int, dry_run: bool = True) -> dict:
         "action": action,
         "yaml": yaml_content,
         "file_path": file_path,
+        "repair_available": True,
     }
 
-    if action == "unchanged":
+    if action == "unchanged" or dry_run:
         return result
 
-    if not dry_run:
-        BACKUP_DIR = os.path.join(DYNAMIC_DIR, "backups")
+    # ── Live write ────────────────────────────────────────────────────────────
+    BACKUP_DIR = os.path.join(_TRAEFIK_DYNAMIC_DIR, "backups")
+    try:
         if action == "updated":
             os.makedirs(BACKUP_DIR, exist_ok=True)
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            bak = os.path.join(BACKUP_DIR, f"{hosting_id}.yml.{ts}")
+            bak = os.path.join(BACKUP_DIR, f"tenant-{hosting_id}.yml.{ts}")
             try:
                 with open(bak, "w") as f:
                     f.write(existing_content)
             except OSError as exc:
                 logger.warning("ensure_tenant_route: backup failed %s: %s", bak, exc)
 
-        os.makedirs(DYNAMIC_DIR, exist_ok=True)
+        os.makedirs(_TRAEFIK_DYNAMIC_DIR, exist_ok=True)
         with open(file_path, "w") as f:
             f.write(yaml_content)
+    except OSError as exc:
+        logger.error("ensure_tenant_route: write failed %s: %s", file_path, exc)
+        return {
+            "error": (
+                f"Failed to write {file_path}: {exc}. "
+                f"Ensure {_TRAEFIK_DYNAMIC_DIR} is mounted writable in the app container."
+            ),
+            "code": "traefik_dynamic_path_not_writable",
+            "repair_available": False,
+        }
 
-        logger.info("router_health_guard: tenant route %s %s", action, file_path)
-        _log_audit_event("tenant_router_repaired", {
-            "hosting_id": hosting_id,
-            "host": host,
-            "container_name": container_name,
-            "file_path": file_path,
-            "action": action,
-        })
+    logger.info("router_health_guard: tenant route %s %s", action, file_path)
+    _log_audit_event("tenant_router_repaired", {
+        "hosting_id": hosting_id,
+        "host": host,
+        "container_name": container_name,
+        "file_path": file_path,
+        "action": action,
+    })
 
     return result
 
@@ -858,6 +946,92 @@ def _resolve_tenant_router_incidents(hosting_id: int) -> None:
             logger.info("router_health_guard: resolved %d incident(s) for hosting_id=%s (recovered)", len(keys), hosting_id)
     except Exception as exc:
         logger.warning("router_health_guard: incident resolve failed for hosting_id=%s: %s", hosting_id, exc)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    finally:
+        if conn:
+            release_connection(conn)
+
+
+# ─── Traefik Docker provider health ──────────────────────────────────────────
+
+_TRAEFIK_API_URLS = [
+    "http://traefik:8080/api/providers",
+    "http://traefik:9000/api/providers",
+]
+
+
+def _check_traefik_docker_provider() -> dict:
+    """
+    Try to reach Traefik's internal API and verify Docker provider is present.
+
+    Returns:
+        {"status": "ok"}                 — Docker provider found and functional
+        {"status": "missing"}            — Traefik API up, Docker provider absent
+        {"status": "api_unavailable"}    — Cannot reach Traefik API (not exposed or wrong port)
+        {"status": "api_error", "error"} — API reachable but response unexpected
+    """
+    for api_url in _TRAEFIK_API_URLS:
+        try:
+            req = urllib.request.Request(api_url, headers={"User-Agent": _USER_AGENT})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                raw = resp.read(8192)
+            try:
+                data = json.loads(raw)
+            except Exception:
+                return {"status": "api_error", "error": "non-json response from Traefik API"}
+            if "docker" in data:
+                return {"status": "ok", "providers": list(data.keys())}
+            return {"status": "missing", "providers": list(data.keys())}
+        except urllib.error.URLError:
+            continue
+        except Exception as exc:
+            return {"status": "api_error", "error": str(exc)}
+    return {"status": "api_unavailable"}
+
+
+def _emit_docker_provider_incident(unhealthy_count: int, total_tenants: int, api_status: str) -> None:
+    """Create a system_incidents row when Docker provider appears to have failed."""
+    from app.infra.db import get_connection, release_connection
+    from app.services.incidents.incident_deduper import _upsert_incident
+
+    correlation_key = "router_health:traefik_docker_provider_unhealthy:system"
+    conn = None
+    try:
+        conn = get_connection()
+        _upsert_incident(
+            conn,
+            source_table="router_health_guard",
+            source_id="platform:traefik_docker_provider",
+            source_type="router_health",
+            correlation_key=correlation_key,
+            incident_type="traefik_docker_provider_unhealthy",
+            severity="critical",
+            hosting_id=None,
+            user_id=None,
+            title="Traefik Docker provider no responde — routers de tenants caídos",
+            summary=(
+                f"{unhealthy_count}/{total_tenants} tenants inaccesibles públicamente. "
+                f"Probable fallo del Docker provider de Traefik (API status: {api_status}). "
+                "Verificar versión del socket proxy y reiniciar Traefik."
+            ),
+            evidence={
+                "unhealthy_tenants": unhealthy_count,
+                "total_tenants": total_tenants,
+                "traefik_api_status": api_status,
+                "recommended_fix": (
+                    "Set DOCKER_API_VERSION=1.44 on docker-socket-proxy "
+                    "or upgrade tecnativa/docker-socket-proxy. "
+                    "Then restart Traefik container."
+                ),
+            },
+        )
+        conn.commit()
+    except Exception as exc:
+        logger.error("router_health_guard: docker provider incident failed: %s", exc)
         if conn:
             try:
                 conn.rollback()
@@ -922,6 +1096,30 @@ def router_health_guard_job() -> None:
             )
     except Exception as exc:
         logger.error("router_health_guard: tenant check failed: %s", exc)
+
+    # ── Docker provider heuristic ─────────────────────────────────────────────
+    # If >= 3 tenants fail with "router missing" simultaneously, the Docker provider
+    # is likely down (all tenant routers are defined via Docker labels by default).
+    # Try Traefik API to confirm, then emit a platform-level incident.
+    try:
+        router_missing = [
+            r for r in tenant_results
+            if not r.healthy and r.incident_type == "traefik_router_missing_or_unmatched"
+        ]
+        if len(router_missing) >= 3 and len(tenant_results) > 0:
+            api_status_info = _check_traefik_docker_provider()
+            api_status = api_status_info.get("status", "unknown")
+            # "missing" confirms Docker provider gone; "api_unavailable" is inconclusive
+            # but multiple tenants down is already a strong signal either way.
+            if api_status in ("missing", "api_unavailable", "ok"):
+                logger.warning(
+                    "router_health_guard_job: %d/%d tenants with router_missing — "
+                    "possible Docker provider failure (Traefik API: %s)",
+                    len(router_missing), len(tenant_results), api_status,
+                )
+                _emit_docker_provider_incident(len(router_missing), len(tenant_results), api_status)
+    except Exception as exc:
+        logger.error("router_health_guard: docker provider heuristic failed: %s", exc)
 
     healthy_p = sum(1 for r in platform_results if r.healthy)
     healthy_t = sum(1 for r in tenant_results if r.healthy)

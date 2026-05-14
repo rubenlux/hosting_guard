@@ -122,10 +122,28 @@ def repair_tenant(hosting_id: int, body: RepairBody, _: dict = Depends(require_r
       - hosting status must be 'active'
       - container must be running
       - subdomain must be valid
+      - /opt/traefik-dynamic must be writable (live write only)
+
+    Error codes in response body:
+      traefik_dynamic_path_not_writable — volume not mounted :rw → 409
+      container_not_running             — container down       → 400
+      hosting_not_active                — hosting stopped      → 400
+      path_traversal_blocked            — safety guard         → 400
     """
     from fastapi import HTTPException
     from app.services.router_health_guard import ensure_tenant_traefik_route
     result = ensure_tenant_traefik_route(hosting_id=hosting_id, dry_run=body.dry_run)
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        code = result.get("code", "repair_error")
+        if code == "traefik_dynamic_path_not_writable":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "ok": False,
+                    "code": code,
+                    "message": result["error"],
+                    "repair_available": False,
+                },
+            )
+        raise HTTPException(status_code=400, detail={"ok": False, "code": code, "message": result["error"]})
     return result

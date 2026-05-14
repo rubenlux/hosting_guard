@@ -1151,10 +1151,16 @@ def _cors_headers(request: Request) -> dict:
     Belt-and-suspenders: CORSMiddleware covers most cases, but exception handlers
     that escape ExceptionMiddleware (caught by ServerErrorMiddleware) would bypass
     it. Always injecting here ensures errors always include the header.
+    Access-Control-Allow-Credentials is required when the frontend uses
+    credentials: 'include' — without it the browser blocks the error response body.
     """
     origin = request.headers.get("origin", "")
     if origin in _CORS_ALLOWED_ORIGINS:
-        return {"Access-Control-Allow-Origin": origin, "Vary": "Origin"}
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+        }
     return {}
 
 

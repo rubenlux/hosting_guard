@@ -284,12 +284,20 @@ function PlatformTab() {
 
 // ─── Tenants Tab ──────────────────────────────────────────────────────────────
 
+function _parseRepairError(e) {
+  const detail = e.response?.data?.detail;
+  if (detail && typeof detail === 'object') return detail;
+  if (typeof detail === 'string') return { code: 'repair_error', message: detail };
+  return { code: 'repair_error', message: 'Error al reparar router' };
+}
+
 function TenantRepairButtons({ r, onRepairDone }) {
   const [repairing, setRepairing] = useState(false);
   const [repairResult, setRepairResult] = useState(null);
-  const [repairError, setRepairError] = useState(null);
+  const [repairError, setRepairError] = useState(null); // { code, message, repair_available? }
 
   const canRepair = r.incident_type === 'traefik_router_missing_or_unmatched';
+  const liveDisabled = repairing || repairError?.repair_available === false;
 
   const handleRepair = async (dry_run) => {
     if (!dry_run && !window.confirm(
@@ -306,7 +314,7 @@ function TenantRepairButtons({ r, onRepairDone }) {
       setRepairResult({ ...res, dry_run });
       if (!dry_run) onRepairDone?.();
     } catch (e) {
-      setRepairError(e.response?.data?.detail || 'Error al reparar router');
+      setRepairError(_parseRepairError(e));
     } finally {
       setRepairing(false);
     }
@@ -327,8 +335,12 @@ function TenantRepairButtons({ r, onRepairDone }) {
         </button>
         <button
           onClick={() => handleRepair(false)}
-          disabled={repairing}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e1e24] border border-emerald-500/30 text-xs text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50 transition-colors"
+          disabled={liveDisabled}
+          title={liveDisabled && !repairing ? 'Reparación desde UI no disponible. Ver mensaje de error.' : undefined}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e1e24] border text-xs transition-colors
+            ${liveDisabled
+              ? 'border-white/10 text-gray-600 cursor-not-allowed opacity-50'
+              : 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10'}`}
         >
           {repairing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
           Reparar router
@@ -350,8 +362,20 @@ function TenantRepairButtons({ r, onRepairDone }) {
         </div>
       )}
       {repairError && (
-        <div className="rounded-lg border border-red-500/25 bg-red-500/8 px-3 py-2 text-xs text-red-400">
-          {repairError}
+        <div className="rounded-lg border border-red-500/25 bg-red-500/8 px-3 py-2 text-xs flex flex-col gap-1">
+          {repairError.code === 'traefik_dynamic_path_not_writable' ? (
+            <>
+              <p className="text-amber-400 font-semibold">Reparación desde UI no habilitada</p>
+              <p className="text-gray-400">
+                El contenedor backend no puede escribir rutas Traefik.
+                Montá <code className="text-gray-300">/opt/traefik-dynamic</code> como <code className="text-gray-300">:rw</code> en docker-compose,
+                o ejecutá el script de reparación a nivel host.
+              </p>
+              <p className="text-gray-600 mt-0.5">Simular reparación sigue disponible para previsualizar el YAML.</p>
+            </>
+          ) : (
+            <p className="text-red-400">{repairError.message}</p>
+          )}
         </div>
       )}
     </div>
