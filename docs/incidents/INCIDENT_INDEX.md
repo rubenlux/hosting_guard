@@ -1,7 +1,7 @@
 # Incident Index — HostingGuard
 
-**Total incidents**: 24  
-**Last updated**: 2026-05-14  
+**Total incidents**: 26  
+**Last updated**: 2026-05-15  
 **Runbooks location**: `docs/incidents/runbooks/`  
 **Signatures map**: `docs/incidents/signatures/error_signatures.yml`
 
@@ -35,6 +35,8 @@
 | 22 | COMPOUND_TLD_APEX_MISCLASSIFICATION | medium | confirmed | false | Custom domains with compound TLDs (`.com.ar`, `.co.uk`) have incorrect apex extraction. SSL cert requests and DNS verification target the wrong domain. Fix: use `tldextract`. |
 | 23 | FRONTEND_CHUNK_404_BLANK_SCREEN | high | confirmed | false | After frontend deploy, users with open tabs see blank screen: "Failed to fetch dynamically imported module". Old chunk hashes referenced in cached HTML no longer exist. Fix: set `no-cache` on `index.html`. |
 | 24 | SECURITY_UPLOAD_REJECTION_NOT_LOGGED | medium | confirmed | false | Security module rejects dangerous uploads (PHP shells, double-extension files) but does NOT emit security events. Attacks are blocked but invisible in Security Center and cannot trigger IP-based detection. |
+| 25 | TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID | high | confirmed | false | Cloudflare returns 526 "Invalid SSL certificate" for a tenant subdomain. Origin TLS certificate is expired, missing, or not served correctly. Public route is unreachable. |
+| 26 | TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX | high | confirmed | false | Tenant static nginx container returns HTTP 403 because the webroot (/usr/share/nginx/html) is empty — no index.html exists. Autoindex is off so nginx denies directory listing. |
 
 ---
 
@@ -43,7 +45,7 @@
 | Severity | Count | IDs |
 |---|---|---|
 | critical | 4 | TRAEFIK_DOCKER_PROVIDER_UNHEALTHY, FORWARDAUTH_MIDDLEWARE_DOCKER_MISSING, CONTAINER_WITH_EMPTY_MOUNTS, TRAEFIK_DYNAMIC_DIR_RW_DENIED |
-| high | 6 | TRAEFIK_CLIENT_VERSION_TOO_OLD, FILE_PROVIDER_FORWARDAUTH_MIGRATION, TENANT_PUBLIC_404_ROUTER_MISSING, ROUTER_HEALTH_INCIDENTS_DELETED_BY_SYNC, WP_XMLRPC_EXPOSED_APACHE_RUNTIME, FRONTEND_CHUNK_404_BLANK_SCREEN |
+| high | 8 | TRAEFIK_CLIENT_VERSION_TOO_OLD, FILE_PROVIDER_FORWARDAUTH_MIGRATION, TENANT_PUBLIC_404_ROUTER_MISSING, ROUTER_HEALTH_INCIDENTS_DELETED_BY_SYNC, WP_XMLRPC_EXPOSED_APACHE_RUNTIME, FRONTEND_CHUNK_404_BLANK_SCREEN, TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID, TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX |
 | medium | 11 | WELCOME_TO_NGINX_EMPTY_SITE, ZIP_IMPORT_PERMISSION_DENIED, DASHBOARD_FALSE_100_HEALTH, REPAIR_ENDPOINT_500_WITH_CORS, CUSTOM_DOMAINS_ACTIVITY_REPOSITORY_IMPORT_CRASH, ADMIN_STAFF_CREATED_AT_TS_500, ADMIN_TERMINATE_PIXEL_EVENTS_TYPE_MISMATCH, RESOURCES_MISSING_CONTAINER_BREAKS_COLLECTOR, GITHUB_CRA_OUTPUT_DIRECTORY_MISCONFIG, COMPOUND_TLD_APEX_MISCLASSIFICATION, SECURITY_UPLOAD_REJECTION_NOT_LOGGED |
 | low | 3 | RESOURCE_DISK_DF_OVERREPORT, RESOURCE_WINDOW_TOO_TIGHT_EMPTY_DASHBOARD, CLIENT_DIR_RESIDUAL_AFTER_TERMINATE |
 
@@ -62,6 +64,6 @@ All other incidents require human intervention before any remediation action is 
 
 ## Runbook Coverage
 
-Runbooks exist for incidents 13–24 (this batch). Runbooks for incidents 1–12 are located in the same `runbooks/` directory.
+Runbooks exist for incidents 13–26. Runbooks for incidents 1–12 are located in the same `runbooks/` directory.
 
 To add a new incident, see `docs/incidents/README.md`.

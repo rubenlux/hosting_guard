@@ -78,3 +78,48 @@ safe_actions:
     description: "Ensure every upload rejection emits a security event"
     requires_dry_run_first: false
     requires_human_approval: false
+
+  - id: migrate_tenant_route_docker_labels_to_file
+    description: "Regenerate tenant Traefik YAML using file provider (removes docker_labels source)"
+    requires_dry_run_first: true
+    requires_human_approval: false
+
+  - id: validate_origin_tls_direct_resolve
+    description: "curl -k directly to origin IP to verify TLS cert is served and valid"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: request_letsencrypt_certificate
+    description: "Trigger Let's Encrypt certificate issuance for tenant subdomain via Traefik"
+    requires_dry_run_first: true
+    requires_human_approval: true
+
+  - id: inspect_traefik_acme_logs
+    description: "Read /opt/traefik-dynamic/acme.json and Traefik logs for certificate errors"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: create_placeholder_index_for_empty_static_site
+    description: "Write a minimal index.html to /opt/clients/{name}/ before starting nginx container"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: validate_static_index_exists
+    description: "Check that /opt/clients/{name}/index.html exists before marking hosting active"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: mark_site_pending_content
+    description: "Set hosting status to pending_content when index.html is absent"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: write_placeholder_index_to_host_mount
+    description: "Write placeholder index.html to the host-side mount path (/opt/clients/{name}/)"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: fix_static_file_permissions
+    description: "chown/chmod /opt/clients/{name}/ so nginx can read files (nginx uid 101)"
+    requires_dry_run_first: true
+    requires_human_approval: true

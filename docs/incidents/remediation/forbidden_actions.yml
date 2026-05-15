@@ -79,3 +79,21 @@ forbidden_actions:
     reason: "Restarting all sessions logs out all users — disproportionate impact"
   - id: rollback_frontend_without_testing
     reason: "Frontend rollback must be tested before applying"
+
+  - id: disable_tls_verification
+    reason: "Disabling TLS verification hides certificate problems and exposes users to MITM attacks"
+
+  - id: turn_off_cloudflare_security_globally
+    reason: "Disabling Cloudflare security affects all tenants and removes DDoS protection"
+
+  - id: mark_healthy_on_container_running_only
+    reason: "Container running does not mean public route is reachable — body and status check required"
+
+  - id: write_to_readonly_container_mount
+    reason: "Writing inside a read-only container mount bypasses the host-side source of truth"
+
+  - id: bypass_forwardauth
+    reason: "ForwardAuth is the sole authentication gate for all tenant routes — bypassing it removes auth entirely"
+
+  - id: delete_client_files
+    reason: "Client files are irreplaceable customer data — deletion is always forbidden without explicit client consent and backup confirmation"

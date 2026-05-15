@@ -861,3 +861,59 @@ signatures:
     source: health_guard
     confidence: 0.6
     type: literal
+
+  - id: sig_118
+    pattern: "Read-only file system"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: container_logs
+    confidence: 0.9
+    type: substring
+
+  - id: sig_119
+    pattern: "server: nginx"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: http_response_headers
+    confidence: 0.7
+    type: substring
+
+  - id: sig_120
+    pattern: "can't create /usr/share/nginx/html/index.html"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: container_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_121
+    pattern: "origin directo 403"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: diagnostic_output
+    confidence: 0.95
+    type: substring
+
+  - id: sig_122
+    pattern: "Browser Working"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: cloudflare_page
+    confidence: 0.85
+    type: substring
+
+  - id: sig_123
+    pattern: "Host Error"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: cloudflare_page
+    confidence: 0.85
+    type: substring
+
+  - id: sig_124
+    pattern: "\"router_source\": \"docker_labels\""
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: api_response
+    confidence: 0.7
+    type: substring
+
+  - id: sig_125
+    pattern: "\"status_code\": 526"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: health_guard
+    confidence: 0.99
+    type: substring
