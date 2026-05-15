@@ -421,6 +421,9 @@ function RunbooksSection() {
 
 function SafeActionValidatorSection() {
   const [safeActions, setSafeActions] = useState([]);
+  const [loadingActions, setLoadingActions] = useState(true);
+  const [actionsError, setActionsError] = useState(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [actionId, setActionId] = useState('');
   const [contextText, setContextText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -428,9 +431,14 @@ function SafeActionValidatorSection() {
   const [result, setResult] = useState(null);
 
   useEffect(() => {
+    setLoadingActions(true);
     listKnowledgeSafeActions()
-      .then(data => setSafeActions(data.safe_actions || []))
-      .catch(() => {});
+      .then(data => {
+        setSafeActions(data.safe_actions || []);
+        setActionsError(null);
+      })
+      .catch(err => setActionsError(parseError(err)))
+      .finally(() => setLoadingActions(false));
   }, []);
 
   const handleValidate = async () => {
@@ -465,19 +473,55 @@ function SafeActionValidatorSection() {
         Validador de acción segura
       </h2>
 
+      {actionsError && (
+        <div className="rounded-lg border border-red-500/25 bg-red-500/8 px-3 py-2 text-xs text-red-400 flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          Error cargando acciones: {actionsError}
+        </div>
+      )}
+
       <div className="flex items-center gap-3 flex-wrap">
-        {safeActions.length > 0 ? (
-          <select
-            data-testid="knowledge-safe-action-select"
-            value={actionId}
-            onChange={e => setActionId(e.target.value)}
-            className="flex-1 min-w-[200px] text-xs bg-white/5 border border-white/8 rounded-lg px-2 py-1.5 text-gray-300 focus:outline-none focus:border-blue-500/40"
-          >
-            <option value="">Seleccionar acción…</option>
-            {safeActions.map(a => (
-              <option key={a.action_id} value={a.action_id}>{a.action_id}</option>
-            ))}
-          </select>
+        {loadingActions ? (
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Cargando acciones…
+          </div>
+        ) : safeActions.length > 0 ? (
+          <div className="relative flex-1 min-w-[200px]">
+            <button
+              data-testid="knowledge-safe-action-select"
+              type="button"
+              onClick={() => setDropdownOpen(v => !v)}
+              className="w-full text-left text-xs bg-[#111] border border-white/10 rounded-lg px-3 py-1.5 text-gray-200 flex items-center justify-between gap-2 hover:border-white/20 focus:outline-none focus:border-blue-500/40 transition-colors"
+            >
+              <span className={actionId ? 'text-gray-100 font-mono' : 'text-gray-500'}>
+                {actionId || 'Seleccionar acción…'}
+              </span>
+              <ChevronDown className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+            </button>
+            {dropdownOpen && (
+              <div className="absolute top-full left-0 right-0 mt-1 z-50 rounded-lg border border-white/10 bg-[#111] shadow-xl overflow-auto max-h-56">
+                <button
+                  type="button"
+                  onClick={() => { setActionId(''); setDropdownOpen(false); }}
+                  className="w-full text-left px-3 py-2 text-xs text-gray-500 hover:bg-white/5 border-b border-white/5"
+                >
+                  Seleccionar acción…
+                </button>
+                {safeActions.map(a => (
+                  <button
+                    key={a.action_id}
+                    data-testid={`knowledge-safe-action-option-${a.action_id}`}
+                    type="button"
+                    onClick={() => { setActionId(a.action_id); setDropdownOpen(false); }}
+                    className={`w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/8 transition-colors ${actionId === a.action_id ? 'text-blue-400 bg-blue-500/8' : 'text-gray-200'}`}
+                  >
+                    {a.action_id}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         ) : (
           <input
             data-testid="knowledge-safe-action-select"

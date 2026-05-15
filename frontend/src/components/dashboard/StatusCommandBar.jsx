@@ -77,6 +77,7 @@ export default function StatusCommandBar({ hostings = [], healthData = {}, advis
     criticalCount,
     warnCount,
     unresolvedAlerts,
+    brokenRouteCount,
     isAllHealthy,
     statusLabel,
     statusColor,
@@ -97,25 +98,34 @@ export default function StatusCommandBar({ hostings = [], healthData = {}, advis
       a => !a.resolved && (a.level === 'critical' || a.level === 'error'),
     ).length;
 
-    const allOk = criticals === 0 && warns === 0;
+    // Broken routes: public_reachable=false means router health guard detected a problem
+    // (403 empty nginx, 526, 404 route missing, etc.). This takes precedence over advisories.
+    const brokenRoutes = active.filter(
+      h => healthData[h.hosting_id]?.public_reachable === false,
+    ).length;
+
+    const allOk = criticals === 0 && warns === 0 && brokenRoutes === 0;
 
     const label = allOk
       ? 'Todo operativo'
-      : criticals > 0
-        ? `${criticals} sitio${criticals !== 1 ? 's' : ''} con alerta crítica`
-        : `${warns} sitio${warns !== 1 ? 's' : ''} requiere atención`;
+      : brokenRoutes > 0
+        ? `${brokenRoutes} sitio${brokenRoutes !== 1 ? 's' : ''} con ruta caída`
+        : criticals > 0
+          ? `${criticals} sitio${criticals !== 1 ? 's' : ''} con alerta crítica`
+          : `${warns} sitio${warns !== 1 ? 's' : ''} requiere atención`;
 
-    const color = allOk ? '#22d3a5' : criticals > 0 ? '#ef4444' : '#f59e0b';
+    const color = allOk ? '#22d3a5' : (brokenRoutes > 0 || criticals > 0) ? '#ef4444' : '#f59e0b';
 
     return {
-      avgScore:       avg,
-      activeCount:    active.length,
-      criticalCount:  criticals,
-      warnCount:      warns,
+      avgScore:         avg,
+      activeCount:      active.length,
+      criticalCount:    criticals,
+      warnCount:        warns,
       unresolvedAlerts: unresolved,
-      isAllHealthy:   allOk,
-      statusLabel:    label,
-      statusColor:    color,
+      brokenRouteCount: brokenRoutes,
+      isAllHealthy:     allOk,
+      statusLabel:      label,
+      statusColor:      color,
     };
   }, [hostings, healthData, advisories, alerts]);
 

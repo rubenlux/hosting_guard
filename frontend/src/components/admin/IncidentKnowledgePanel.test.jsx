@@ -224,11 +224,16 @@ describe('Safe action validator section', () => {
     validateKnowledgeSafeAction.mockResolvedValue(mockResult);
     render(<IncidentKnowledgePanel />);
     clickTab('Validar acción');
-    // Wait for safe actions to load (renders as select)
+    // Wait for custom dropdown to appear (loads safe actions first)
     await waitFor(() => screen.getByTestId('knowledge-safe-action-select'));
-    // Select action from dropdown populated by listKnowledgeSafeActions
-    const select = screen.getByTestId('knowledge-safe-action-select');
-    fireEvent.change(select, { target: { value: 'recreate_static_nginx_container_with_mount' } });
+    // Open dropdown and click the option
+    fireEvent.click(screen.getByTestId('knowledge-safe-action-select'));
+    await waitFor(() =>
+      screen.getByTestId('knowledge-safe-action-option-recreate_static_nginx_container_with_mount'),
+    );
+    fireEvent.click(
+      screen.getByTestId('knowledge-safe-action-option-recreate_static_nginx_container_with_mount'),
+    );
     fireEvent.click(screen.getByTestId('knowledge-safe-action-btn'));
     await waitFor(() => expect(screen.getByTestId('knowledge-safe-action-result')).toBeInTheDocument());
   }
@@ -245,5 +250,34 @@ describe('Safe action validator section', () => {
     const result = screen.getByTestId('knowledge-safe-action-result');
     expect(result.textContent).toContain('Denegada');
     expect(result.textContent).toContain('Action is forbidden by policy');
+  });
+
+  it('loads and shows safe actions in the custom dropdown', async () => {
+    render(<IncidentKnowledgePanel />);
+    clickTab('Validar acción');
+    await waitFor(() => screen.getByTestId('knowledge-safe-action-select'));
+    fireEvent.click(screen.getByTestId('knowledge-safe-action-select'));
+    await waitFor(() =>
+      screen.getByTestId('knowledge-safe-action-option-recreate_static_nginx_container_with_mount'),
+    );
+    expect(
+      screen.getByTestId('knowledge-safe-action-option-recreate_static_nginx_container_with_mount'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows error when listKnowledgeSafeActions fails', async () => {
+    listKnowledgeSafeActions.mockRejectedValue({ response: { data: { detail: 'DB error' } } });
+    render(<IncidentKnowledgePanel />);
+    clickTab('Validar acción');
+    await waitFor(() => expect(screen.getByText(/Error cargando acciones/)).toBeInTheDocument());
+  });
+
+  it('shows loading state while fetching safe actions', async () => {
+    let resolve;
+    listKnowledgeSafeActions.mockReturnValue(new Promise(r => { resolve = r; }));
+    render(<IncidentKnowledgePanel />);
+    clickTab('Validar acción');
+    expect(screen.getByText(/Cargando acciones/)).toBeInTheDocument();
+    resolve(MOCK_SAFE_ACTIONS);
   });
 });

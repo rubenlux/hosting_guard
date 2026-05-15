@@ -2048,3 +2048,26 @@ Chaos Testing P0 — 8 casos (C01–C08), suite run_chaos_suite.py. 3 fallos det
 Kali Finding: SPA wildcard 200 — Bloque nginx antes del SPA fallback bloqueando 20+ rutas sensibles, runbook FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS, 7 firmas nuevas, 55 tests. → 55/55 PASS.
 
 Estado general: 1124 tests pasan. Hay 8 fallos en test_upload_zip_validation.py que existían antes de esta sesión (no los toqué).
+
+
+Todo funciona. Resumen de lo hecho:
+
+1. Clipboard — isEditableTarget guard
+
+frontend/src/utils/keyboard.js — helpers isEditableTarget() e isClipboardShortcut()
+frontend/src/components/FileManager.jsx — guard aplicado al handleKeyDown: si el target es editable y el shortcut es clipboard, retorna sin preventDefault
+frontend/src/utils/keyboard.test.js — 20 tests: isEditableTarget para INPUT/TEXTAREA/SELECT/contentEditable, isClipboardShortcut para Ctrl/Cmd+C/V/X/A/Z, y el contrato del handler guardado
+2. Dark select — Validador de acción
+
+frontend/src/components/admin/IncidentKnowledgePanel.jsx — reemplazado <select> nativo por custom dark dropdown con estados loading/error/opciones visibles; data-testid en cada opción
+Tests actualizados para el nuevo interaction pattern + 3 tests nuevos: carga acciones, error backend visible, loading state
+3. Header health contradiction
+
+frontend/src/components/dashboard/StatusCommandBar.jsx — allOk ahora incluye brokenRoutes de healthData[h.hosting_id]?.public_reachable === false; muestra "X sitios con ruta caída" cuando hay 403/526/missing route
+frontend/src/components/dashboard/StatusCommandBar.test.jsx — 7 tests: 403 → degraded, 526 → degraded, container running solo no alcanza, tenant inactivo no cuenta
+4. Runbooks
+
+docs/incidents/runbooks/TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID.md — runbook completo con diferencia 526 vs 525/522/523, diagnóstico, safe/forbidden actions
+docs/incidents/runbooks/TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX.md — ya existía de la sesión anterior
+Firmas sig_109–117 para 526 y sig_100–108 para 403 en error_signatures.yml
+Estado final: 44 tests frontend + 201 tests backend, todos pasan.

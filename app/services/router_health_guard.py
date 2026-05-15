@@ -223,10 +223,17 @@ def _context_hash(host: str, hosting_id: Optional[int], incident_type: str, cont
 
 
 _NGINX_DEFAULT_MARKERS = (b"Welcome to nginx!", b"nginx default page")
+_NGINX_403_MARKERS = (b"403 Forbidden", b"<center>nginx</center>", b"<center>nginx/")
 
 
 def _is_nginx_default_page(body: bytes) -> bool:
     return any(marker in body for marker in _NGINX_DEFAULT_MARKERS)
+
+
+def _is_nginx_403_empty_dir(body: bytes) -> bool:
+    """True when nginx returns its own 403 page (empty/missing index.html).
+    Distinguishes from ForwardAuth 403 which has a different body."""
+    return all(marker in body for marker in (b"403 Forbidden", b"nginx"))
 
 
 def _http_check(url: str, timeout: int = _HTTP_TIMEOUT) -> tuple:
@@ -257,13 +264,15 @@ def _http_check(url: str, timeout: int = _HTTP_TIMEOUT) -> tuple:
         return 0, "", b""
 
 
-def _classify_failure(status_code: int, content_type: str) -> str:
+def _classify_failure(status_code: int, content_type: str, body: bytes = b"") -> str:
     if status_code == -2:
         return "tls_or_certificate_issue"
     if status_code in (-1, 0):
         return "public_route_timeout"
     if status_code == 404:
         return "traefik_router_missing_or_unmatched"
+    if status_code == 403 and _is_nginx_403_empty_dir(body):
+        return "nginx_403_empty_index"
     if status_code in (502, 503, 504):
         return "traefik_backend_unreachable"
     return "traefik_backend_unreachable"
@@ -564,7 +573,9 @@ def _check_tenant_hosting(h: dict) -> "RouterHealthResult":
             else f"{host} — contenedor '{container_name}' no encontrado"
         )
     else:
-        # ForwardAuth returns 401/302 for unauthenticated users — all are valid signs the route works
+        # ForwardAuth returns 401/302 for unauthenticated users — all are valid signs the route works.
+        # 403 is accepted here but post-checked below: nginx 403 (empty dir) is unhealthy,
+        # ForwardAuth 403 (auth required) is healthy.
         expected_statuses = [200, 301, 302, 401, 403]
         status_code, content_type, body = _http_check(f"https://{host}/")
         evidence["status_code"] = status_code
@@ -572,8 +583,11 @@ def _check_tenant_hosting(h: dict) -> "RouterHealthResult":
         evidence["body_size"] = len(body)
 
         if status_code not in expected_statuses:
-            incident_type = _classify_failure(status_code, content_type)
+            incident_type = _classify_failure(status_code, content_type, body)
             summary = f"{host} → HTTP {status_code} ({incident_type})"
+        elif status_code == 403 and _is_nginx_403_empty_dir(body):
+            incident_type = "nginx_403_empty_index"
+            summary = f"{host} → HTTP 403 nginx directorio vacío (tenant empty content — NO index.html)"
         elif status_code == 200 and _is_nginx_default_page(body):
             incident_type = "misconfigured_site_content"
             summary = f"{host} → HTTP 200 pero sirve página nginx por defecto (sin contenido)"

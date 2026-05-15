@@ -81,11 +81,21 @@ pass() { local msg="$*"; log "PASS: ${msg}"; STEP_LOG+=("PASS: ${msg}"); }
 fail() { local msg="$*"; log "FAIL: ${msg}"; STEP_LOG+=("FAIL: ${msg}"); ERROR_DETAILS="${msg}"; }
 step() { log "--- STEP: $* ---"; }
 
-# curl with consistent flags
+# curl with consistent flags.
+# The API uses cookie-based JWT auth (access_token cookie), NOT Bearer tokens.
+# --TOKEN is the raw JWT value; it is sent as the access_token cookie.
 api_get() {
   local path="$1"
   curl --max-time 10 --silent \
-    -H "Authorization: Bearer ${TOKEN}" \
+    -b "access_token=${TOKEN}" \
+    "${API_BASE}${path}"
+}
+
+api_get_status() {
+  # Like api_get but also returns the HTTP status code on stderr for debug
+  local path="$1"
+  curl --max-time 10 --silent --write-out "\nHTTP_STATUS:%{http_code}" \
+    -b "access_token=${TOKEN}" \
     "${API_BASE}${path}"
 }
 
@@ -94,7 +104,7 @@ api_post() {
   local body="$2"
   curl --max-time 10 --silent \
     -X POST \
-    -H "Authorization: Bearer ${TOKEN}" \
+    -b "access_token=${TOKEN}" \
     -H "Content-Type: application/json" \
     -d "${body}" \
     "${API_BASE}${path}"
@@ -299,34 +309,84 @@ if [[ -z "${TOKEN}" ]]; then
   exit 1
 fi
 
-TENANT_RESPONSE=$(api_get "/admin/hostings" || echo "")
-if [[ -z "${TENANT_RESPONSE}" ]]; then
-  echo "[E2E] SAFETY GATE FAILED: Could not reach ${API_BASE}/admin/hostings — is the API running?" >&2
-  exit 1
-fi
+# Strategy 1: direct single-tenant endpoint (added in P0.2)
+log "Trying direct tenant lookup: GET /admin/hostings/${TENANT_ID} ..."
+DIRECT_RESPONSE=$(api_get_status "/admin/hostings/${TENANT_ID}" 2>/dev/null || echo "")
 
-# Extract the specific hosting record for our tenant_id using python3
-TENANT_JSON=$(echo "${TENANT_RESPONSE}" | python3 -c "
+# Extract HTTP status from response
+DIRECT_HTTP_STATUS=$(echo "${DIRECT_RESPONSE}" | grep -o 'HTTP_STATUS:[0-9]*' | cut -d: -f2 || echo "0")
+DIRECT_BODY=$(echo "${DIRECT_RESPONSE}" | sed '/HTTP_STATUS:/d')
+
+log "Direct lookup HTTP status: ${DIRECT_HTTP_STATUS}"
+
+if [[ "${DIRECT_HTTP_STATUS}" == "200" ]]; then
+  TENANT_JSON="${DIRECT_BODY}"
+  log "Tenant found via direct endpoint."
+elif [[ "${DIRECT_HTTP_STATUS}" == "401" || "${DIRECT_HTTP_STATUS}" == "422" ]]; then
+  echo "[E2E] SAFETY GATE FAILED: Auth error (HTTP ${DIRECT_HTTP_STATUS}) — is --token a valid admin JWT?" >&2
+  echo "[E2E] The API uses cookie auth. --token must be the raw JWT value of the access_token cookie." >&2
+  echo "[E2E] Extract it from browser: DevTools → Application → Cookies → access_token → Copy Value" >&2
+  exit 1
+elif [[ "${DIRECT_HTTP_STATUS}" == "403" ]]; then
+  echo "[E2E] SAFETY GATE FAILED: Forbidden (HTTP 403) — token valid but not admin role." >&2
+  exit 1
+else
+  # Strategy 2: fallback to list endpoint
+  log "Direct endpoint returned HTTP ${DIRECT_HTTP_STATUS}. Falling back to list endpoint..."
+  LIST_RESPONSE=$(api_get_status "/admin/hostings?limit=1000" 2>/dev/null || echo "")
+  LIST_HTTP_STATUS=$(echo "${LIST_RESPONSE}" | grep -o 'HTTP_STATUS:[0-9]*' | cut -d: -f2 || echo "0")
+  LIST_BODY=$(echo "${LIST_RESPONSE}" | sed '/HTTP_STATUS:/d')
+
+  log "List endpoint HTTP status: ${LIST_HTTP_STATUS}"
+
+  if [[ "${LIST_HTTP_STATUS}" == "401" || "${LIST_HTTP_STATUS}" == "422" ]]; then
+    echo "[E2E] SAFETY GATE FAILED: Auth error (HTTP ${LIST_HTTP_STATUS}) — is --token a valid admin JWT?" >&2
+    echo "[E2E] Token format: raw JWT value of access_token cookie, NOT Bearer prefix." >&2
+    exit 1
+  fi
+
+  if [[ -z "${LIST_BODY}" || "${LIST_HTTP_STATUS}" != "200" ]]; then
+    echo "[E2E] SAFETY GATE FAILED: Could not reach ${API_BASE}/admin/hostings (HTTP ${LIST_HTTP_STATUS:-timeout})" >&2
+    exit 1
+  fi
+
+  # Log response shape for debugging
+  ITEM_COUNT=$(echo "${LIST_BODY}" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-# /admin/hostings may return a list or a dict with 'hostings' key
+if isinstance(data, list): print(len(data))
+elif isinstance(data, dict): print(len(data.get('hostings', data.get('results', []))))
+else: print(0)
+" 2>/dev/null || echo "?")
+  log "List response: ${ITEM_COUNT} hostings found."
+
+  TENANT_JSON=$(echo "${LIST_BODY}" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
 if isinstance(data, list):
     hostings = data
 elif isinstance(data, dict):
-    hostings = data.get('hostings', data.get('results', []))
+    hostings = data.get('hostings', data.get('results', data.get('items', [])))
 else:
     hostings = []
 tid = int('${TENANT_ID}')
 for h in hostings:
-    if h.get('hosting_id') == tid:
+    if int(h.get('hosting_id', -1)) == tid:
         print(json.dumps(h))
         sys.exit(0)
-print('null')
-" 2>/dev/null || echo "null")
+# Log all IDs for debugging
+ids = [h.get('hosting_id') for h in hostings[:20]]
+print('null', file=sys.stderr)
+print(f'Available IDs (first 20): {ids}', file=sys.stderr)
+" 2>/tmp/e2e_debug.txt || echo "null")
 
-if [[ "${TENANT_JSON}" == "null" || -z "${TENANT_JSON}" ]]; then
-  echo "[E2E] SAFETY GATE FAILED: Tenant ${TENANT_ID} not found in /admin/hostings." >&2
-  exit 1
+  if [[ "${TENANT_JSON}" == "null" || -z "${TENANT_JSON}" ]]; then
+    echo "[E2E] SAFETY GATE FAILED: Tenant ${TENANT_ID} not found." >&2
+    echo "[E2E] Debug info:" >&2
+    cat /tmp/e2e_debug.txt 2>/dev/null >&2 || true
+    echo "[E2E] Check that hosting_id=${TENANT_ID} exists and status != 'deleted'." >&2
+    exit 1
+  fi
 fi
 
 # Extract plan and subdomain from the tenant record

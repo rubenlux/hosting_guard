@@ -347,6 +347,19 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
         host_site_dir = f"/opt/clients/{container_name}"
         os.makedirs(host_site_dir, exist_ok=True)
 
+        # Provisioning gate: ensure index.html exists before starting the container.
+        # Without it, nginx serves an empty directory and returns 403 Forbidden.
+        placeholder_index = os.path.join(host_site_dir, "index.html")
+        if not os.path.exists(placeholder_index):
+            with open(placeholder_index, "w", encoding="utf-8") as _f:
+                _f.write(
+                    "<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'>"
+                    "<title>Sitio en configuración — HostingGuard</title></head><body>"
+                    "<h1>Sitio en configuración</h1>"
+                    "<p>Sube tu contenido desde el panel de HostingGuard.</p>"
+                    "</body></html>"
+                )
+
         command = [
             "run", "-d",
             "--name",     container_name,

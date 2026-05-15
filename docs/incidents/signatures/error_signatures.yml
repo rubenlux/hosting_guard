@@ -731,3 +731,133 @@ signatures:
     source: gobuster
     confidence: 0.95
     type: literal
+
+  # ── TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX ──────────────────────────────────
+
+  - id: sig_100
+    pattern: "HTTP/2 403"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: curl_output
+    confidence: 0.8
+    type: literal
+
+  - id: sig_101
+    pattern: "403 Forbidden"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: nginx_body
+    confidence: 0.75
+    type: literal
+
+  - id: sig_102
+    pattern: "NO index.html"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: diagnostic_output
+    confidence: 0.95
+    type: literal
+
+  - id: sig_103
+    pattern: "/usr/share/nginx/html vacío"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: diagnostic_output
+    confidence: 0.98
+    type: literal
+
+  - id: sig_104
+    pattern: "tenant empty content"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: health_guard
+    confidence: 0.95
+    type: literal
+
+  - id: sig_105
+    pattern: "nginx directory index forbidden"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: log_output
+    confidence: 0.98
+    type: literal
+
+  - id: sig_106
+    pattern: "nginx_403_empty_index"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: health_guard
+    confidence: 1.0
+    type: literal
+
+  - id: sig_107
+    pattern: "empty static site"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: health_guard
+    confidence: 0.9
+    type: literal
+
+  - id: sig_108
+    pattern: "nginx 403 empty"
+    incident_id: TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX
+    source: health_guard
+    confidence: 0.95
+    type: literal
+
+  # ── TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID ─────────────────────────────────
+
+  - id: sig_109
+    pattern: "HTTP/2 526"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: curl_output
+    confidence: 0.99
+    type: literal
+
+  - id: sig_110
+    pattern: "error code: 526"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: cloudflare_page
+    confidence: 0.99
+    type: literal
+
+  - id: sig_111
+    pattern: "Invalid SSL certificate"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: cloudflare_page
+    confidence: 0.98
+    type: literal
+
+  - id: sig_112
+    pattern: "Cloudflare 526"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: diagnostic_output
+    confidence: 0.99
+    type: literal
+
+  - id: sig_113
+    pattern: "status_code 526"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: health_guard
+    confidence: 0.99
+    type: literal
+
+  - id: sig_114
+    pattern: "cloudflare_526"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: health_guard
+    confidence: 1.0
+    type: literal
+
+  - id: sig_115
+    pattern: "526 origin tls"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: diagnostic_output
+    confidence: 0.98
+    type: literal
+
+  - id: sig_116
+    pattern: "origin tls invalid"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: diagnostic_output
+    confidence: 0.97
+    type: literal
+
+  - id: sig_117
+    pattern: "router_source docker_labels"
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: health_guard
+    confidence: 0.6
+    type: literal

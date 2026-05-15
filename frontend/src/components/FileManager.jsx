@@ -4,6 +4,7 @@ import {
   Loader, AlertCircle, Home, ArrowLeft, RefreshCw,
 } from 'lucide-react';
 import { listFiles, readFile, saveFile } from '../services/api';
+import { isEditableTarget, isClipboardShortcut } from '../utils/keyboard';
 
 // Extensiones que reciben resaltado de color en el árbol
 const EXT_COLOR = {
@@ -158,6 +159,8 @@ export default function FileManager({ hosting, onClose }) {
   };
 
   const handleKeyDown = (e) => {
+    // Never intercept clipboard shortcuts (Ctrl+C/V/X/A/Z) on editable elements.
+    if (isEditableTarget(e.target) && isClipboardShortcut(e)) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
       handleSave();
