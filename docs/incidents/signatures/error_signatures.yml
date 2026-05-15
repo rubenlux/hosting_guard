@@ -691,15 +691,43 @@ signatures:
     type: literal
 
   - id: sig_094
-    pattern: "random route 200"
+    pattern: "ROOT_RANDOM"
     incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
     source: scanner_output
     confidence: 0.9
     type: literal
 
   - id: sig_095
-    pattern: "unknown path returns index.html"
+    pattern: "SPA wildcard"
     incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
     source: scanner_output
     confidence: 0.9
+    type: literal
+
+  - id: sig_096
+    pattern: "index.html length 919"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: scanner_output
+    confidence: 0.9
+    type: literal
+
+  - id: sig_097
+    pattern: "wildcard 200 length 919"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: scanner_output
+    confidence: 0.95
+    type: literal
+
+  - id: sig_098
+    pattern: "non-existing frontend route"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: scanner_output
+    confidence: 0.9
+    type: literal
+
+  - id: sig_099
+    pattern: "wildcard 200 Length: 919"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: gobuster
+    confidence: 0.95
     type: literal
