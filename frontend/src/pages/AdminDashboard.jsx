@@ -11,7 +11,7 @@ import {
   Terminal, RotateCcw, Play, Square, KeyRound,
   Crown, Infinity, CalendarClock, ShieldOff, TrendingUp as Upgrade, X,
   Database, Cpu, MemoryStick, HardDrive, Trash, Gauge, Wifi, WifiOff,
-  Sparkles, Mail, Send, BellRing, Monitor,
+  Sparkles, Mail, Send, BellRing, Monitor, BookOpen,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
@@ -38,6 +38,7 @@ import ActivityTimeline from '../components/admin/ActivityTimeline';
 import SecurityCenter from '../components/admin/SecurityCenter';
 import SentinelPanel from '../components/admin/SentinelPanel';
 import RouterHealthPanel from '../components/admin/RouterHealthPanel';
+import IncidentKnowledgePanel from '../components/admin/IncidentKnowledgePanel';
 import SecurityStatusBeacon from '../components/admin/SecurityStatusBeacon';
 import ResourceUsage from '../components/admin/ResourceUsage';
 import UnitEconomics from '../components/admin/UnitEconomics';
@@ -82,6 +83,7 @@ const NAV = [
   { id: 'notifications', label: 'Notificaciones',   icon: BellRing },
   { id: 'equipo',        label: 'Equipo',           icon: UserCog },
   { id: 'router-health', label: 'Router Health',    icon: Globe },
+  { id: 'knowledge',     label: 'Base de Incidentes', icon: BookOpen },
   { id: 'audit',         label: 'Audit Log',        icon: FileText },
   { id: 'settings',      label: 'Settings',         icon: Settings },
 ];
@@ -1243,6 +1245,7 @@ export default function AdminDashboard() {
             {section === 'security' && <SecurityCenter />}
             {section === 'sentinel' && <SentinelPanel />}
             {section === 'router-health' && <RouterHealthPanel />}
+            {section === 'knowledge' && <IncidentKnowledgePanel />}
 
             {/* ══ ONLINE USERS / PRESENCE ══ */}
             {section === 'presence' && <OnlineUsersCard />}

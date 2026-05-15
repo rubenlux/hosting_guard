@@ -1090,3 +1090,30 @@ export const staticRepairRouterHealthTenant = async (hosting_id, dry_run = true)
   const response = await api.post(`/admin/router-health/tenants/${hosting_id}/static-repair`, { dry_run });
   return response.data;
 };
+
+// ── Incident Knowledge (P0.2) ─────────────────────────────────────────────────
+
+export const listKnowledgeRunbooks = async () => {
+  const response = await api.get('/admin/knowledge/runbooks');
+  return response.data;
+};
+
+export const getKnowledgeRunbook = async (incident_id) => {
+  const response = await api.get(`/admin/knowledge/runbooks/${incident_id}`);
+  return response.data;
+};
+
+export const matchKnowledgeIncident = async (text, incident_type = null, hosting_id = null, domain = null) => {
+  const response = await api.post('/admin/knowledge/match', { text, incident_type, hosting_id, domain });
+  return response.data;
+};
+
+export const validateKnowledgeSafeAction = async (action_id, context = null) => {
+  const response = await api.post('/admin/knowledge/safe-actions/validate', { action_id, context });
+  return response.data;
+};
+
+export const listKnowledgeSafeActions = async () => {
+  const response = await api.get('/admin/knowledge/safe-actions');
+  return response.data;
+};

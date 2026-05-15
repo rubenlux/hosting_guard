@@ -580,6 +580,43 @@ function TenantsTab() {
                       {fmtDate(r.checked_at)}
                     </div>
                   )}
+                  {/* Runbook enrichment from evidence */}
+                  {r.evidence?.matched_runbook_id ? (
+                    <div className="mt-2 rounded-lg border border-blue-500/20 bg-blue-500/6 px-3 py-2 flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-blue-400 font-medium text-[11px]">Runbook asociado</span>
+                        <span className="font-mono text-[11px] text-white">{r.evidence.matched_runbook_id}</span>
+                        {r.evidence.runbook_confidence && (
+                          <span className="text-gray-500 text-[10px]">{Math.round(r.evidence.runbook_confidence * 100)}% confianza</span>
+                        )}
+                        {r.evidence.auto_repair_allowed !== undefined && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${r.evidence.auto_repair_allowed ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/8' : 'text-gray-400 border-white/10'}`}>
+                            {r.evidence.auto_repair_allowed ? 'Auto-repair OK' : 'Requiere aprobación'}
+                          </span>
+                        )}
+                      </div>
+                      {r.evidence.safe_actions?.length > 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-gray-500 text-[10px]">Acciones seguras:</span>
+                          {r.evidence.safe_actions.map(a => (
+                            <span key={a} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-mono">{a}</span>
+                          ))}
+                        </div>
+                      )}
+                      {r.evidence.forbidden_actions?.length > 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-gray-500 text-[10px]">Prohibido:</span>
+                          {r.evidence.forbidden_actions.map(a => (
+                            <span key={a} className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 font-mono">{a}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    r.incident_type && (
+                      <p className="text-[10px] text-gray-600 mt-1">Sin runbook asociado</p>
+                    )
+                  )}
                   <TenantRepairButtons r={r} onRepairDone={load} />
                   <StaticRepairButtons r={r} onRepairDone={load} />
                 </div>
