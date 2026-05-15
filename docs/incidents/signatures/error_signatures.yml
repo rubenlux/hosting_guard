@@ -682,3 +682,24 @@ signatures:
     source: nginx_access_log
     confidence: 0.9
     type: literal
+
+  - id: sig_093
+    pattern: "__hg_audit_random"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: nginx_access_log
+    confidence: 1.0
+    type: literal
+
+  - id: sig_094
+    pattern: "random route 200"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: scanner_output
+    confidence: 0.9
+    type: literal
+
+  - id: sig_095
+    pattern: "unknown path returns index.html"
+    incident_id: FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS
+    source: scanner_output
+    confidence: 0.9
+    type: literal

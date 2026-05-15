@@ -7,10 +7,12 @@ validated: true
 auto_repair_allowed: false
 safe_actions:
   - add_nginx_sensitive_path_block
+  - add_nginx_spa_route_allowlist
 forbidden_actions:
   - disable_spa_fallback_entirely
   - return_200_on_sensitive_paths
   - expose_api_docs_publicly
+  - add_unknown_routes_to_spa_allowlist
 signatures:
   - "random path 200 length=index.html"
   - "GET /server-status HTTP/1.1\" 200"
@@ -20,6 +22,9 @@ signatures:
   - "GET /redoc HTTP/1.1\" 200"
   - "Gobuster aborts wildcard 200"
   - "sensitive frontend path returns index.html"
+  - "__hg_audit_random"
+  - "random route 200"
+  - "unknown path returns index.html"
 ---
 
 # FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS

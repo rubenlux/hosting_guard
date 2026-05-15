@@ -2036,3 +2036,15 @@ Pendiente:
   - `Mounts=[]`
   - `invalid_container_mount`
   - `static-repair`
+
+  Esta sesión:
+
+Fix tests router_health_guard — 3 tests fallando por firma incorrecta de _classify_failure y aserción de mounts. → 68/68 pass.
+
+Incident Knowledge Base + RAG operacional — 24 runbooks, error_signatures.yml (92 firmas), incident_knowledge_service.py, safe_actions_validator.py, integración en Router Health y Dashboard, endpoints /admin/knowledge/, 32 tests.
+
+Chaos Testing P0 — 8 casos (C01–C08), suite run_chaos_suite.py. 3 fallos detectados y corregidos (firmas faltantes, forbidden_action faltante). → 8/8 PASS, Kali-ready.
+
+Kali Finding: SPA wildcard 200 — Bloque nginx antes del SPA fallback bloqueando 20+ rutas sensibles, runbook FRONTEND_SPA_WILDCARD_200_SENSITIVE_PATHS, 7 firmas nuevas, 55 tests. → 55/55 PASS.
+
+Estado general: 1124 tests pasan. Hay 8 fallos en test_upload_zip_validation.py que existían antes de esta sesión (no los toqué).
