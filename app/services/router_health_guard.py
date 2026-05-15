@@ -614,9 +614,13 @@ def _check_tenant_hosting(h: dict) -> "RouterHealthResult":
     if not healthy:
         _emit_tenant_incident(result, user_id)
     else:
-        # Resolve any open router health incidents for this tenant (recovery)
         try:
-            _resolve_tenant_router_incidents(hosting_id)
+            _resolve_tenant_router_incidents(
+                hosting_id,
+                status_code_after=evidence.get("status_code"),
+                container_running=container_running,
+                router_source=router_source,
+            )
         except Exception:
             pass
 
@@ -1010,32 +1014,61 @@ def ensure_tenant_traefik_route(hosting_id: int, dry_run: bool = True) -> dict:
     return result
 
 
-def _resolve_tenant_router_incidents(hosting_id: int) -> None:
-    """Resolve open router_health_guard incidents for a tenant that is now healthy."""
+def _resolve_tenant_router_incidents(
+    hosting_id: int,
+    *,
+    status_code_after: Optional[int] = None,
+    container_running: Optional[bool] = None,
+    router_source: Optional[str] = None,
+) -> None:
+    """
+    Resolve all open router_health incidents for a tenant that is now healthy.
+
+    Uses _query() (returns list[dict]) to avoid KeyError(0) on RealDictCursor rows.
+    Filters by source_type='router_health' (set by all _emit_*_incident callers).
+    """
     from app.infra.db import get_connection, release_connection
-    from app.services.incidents.incident_deduper import _resolve_incident
+    from app.services.incidents.incident_deduper import _resolve_incident, _query
+
+    recovery_evidence: dict = {
+        "resolved_reason": "router_health_recovered",
+        "recovered_at": _now_iso(),
+    }
+    if status_code_after is not None:
+        recovery_evidence["status_code_after"] = status_code_after
+    if container_running is not None:
+        recovery_evidence["container_running_after"] = container_running
+    if router_source is not None:
+        recovery_evidence["route_source_after"] = router_source
 
     conn = None
     try:
         conn = get_connection()
-        cur = conn.cursor()
-        cur.execute(
+        rows = _query(
+            conn,
             """
             SELECT correlation_key FROM system_incidents
-            WHERE source_table = 'router_health_guard'
+            WHERE source_type = 'router_health'
               AND status = 'open'
               AND hosting_id = %s
             """,
             (hosting_id,),
         )
-        keys = [r[0] for r in cur.fetchall()]
-        for key in keys:
-            _resolve_incident(conn, key, extra_evidence={"resolved_reason": "router_health_recovered"})
-        if keys:
+        resolved = 0
+        for row in rows:
+            if _resolve_incident(conn, row["correlation_key"], extra_evidence=recovery_evidence):
+                resolved += 1
+        if resolved:
             conn.commit()
-            logger.info("router_health_guard: resolved %d incident(s) for hosting_id=%s (recovered)", len(keys), hosting_id)
+            logger.info(
+                "router_health_guard: resolved %d incident(s) for hosting_id=%s (recovered)",
+                resolved, hosting_id,
+            )
     except Exception as exc:
-        logger.warning("router_health_guard: incident resolve failed for hosting_id=%s: %s", hosting_id, exc)
+        logger.warning(
+            "router_health_guard: incident resolve failed for hosting_id=%s: %s",
+            hosting_id, exc,
+        )
         if conn:
             try:
                 conn.rollback()

@@ -79,6 +79,7 @@ ERROR_DETAILS=""
 log()  { echo "[E2E $(date +%H:%M:%S)] $*"; }
 pass() { local msg="$*"; log "PASS: ${msg}"; STEP_LOG+=("PASS: ${msg}"); }
 fail() { local msg="$*"; log "FAIL: ${msg}"; STEP_LOG+=("FAIL: ${msg}"); ERROR_DETAILS="${msg}"; }
+warn() { local msg="$*"; log "WARN: ${msg}"; STEP_LOG+=("WARN: ${msg}"); }
 step() { log "--- STEP: $* ---"; }
 
 # curl with consistent flags.
@@ -123,6 +124,8 @@ emit_report() {
     local status result_text
     if [[ "${entry}" == PASS:* ]]; then
       status="pass"; result_text="${entry#PASS: }"
+    elif [[ "${entry}" == WARN:* ]]; then
+      status="warn"; result_text="${entry#WARN: }"
     else
       status="fail"; result_text="${entry#FAIL: }"
     fi
@@ -132,7 +135,7 @@ emit_report() {
   done
   steps_json+="]"
 
-  # Determine overall pass/fail
+  # Determine overall pass/fail — WARN entries are non-fatal
   local overall="PASSED"
   for entry in "${STEP_LOG[@]:-}"; do
     if [[ "${entry}" == FAIL:* ]]; then overall="FAILED"; break; fi
@@ -205,6 +208,8 @@ JSON
     for entry in "${STEP_LOG[@]:-}"; do
       if [[ "${entry}" == PASS:* ]]; then
         echo "- [x] ${entry#PASS: }"
+      elif [[ "${entry}" == WARN:* ]]; then
+        echo "- [~] **WARN** ${entry#WARN: }"
       else
         echo "- [ ] **FAIL** ${entry#FAIL: }"
       fi
@@ -492,17 +497,23 @@ print(rb.get('incident_id', d.get('matched_runbook_id', '')))" 2>/dev/null || ec
   # Short propagation wait
   sleep 3
 
-  # ── Step 3: verify broken curl ───────────────────────────────────────────────
-  step "3/7  Verify curl returns 'Welcome to nginx'"
-  CURL_BODY=$(curl --max-time 10 --silent "http://${DOMAIN}" 2>/dev/null || echo "")
-  CURL_STATUS_BROKEN=$(curl --max-time 10 --silent -o /dev/null -w "%{http_code}" "http://${DOMAIN}" 2>/dev/null || echo "0")
+  # ── Step 3: public curl check (informational) ────────────────────────────────
+  # Cloudflare may return 301/redirect/cached page instead of the origin body.
+  # This step is non-fatal: API-level detection (steps 4-6) is the authoritative signal.
+  step "3/7  Public curl check (informational — Cloudflare may intercept)"
+  CURL_BODY=$(curl --max-time 10 --silent -L "https://${DOMAIN}" 2>/dev/null \
+    || curl --max-time 10 --silent -L "http://${DOMAIN}" 2>/dev/null \
+    || echo "")
+  CURL_STATUS_BROKEN=$(curl --max-time 10 --silent -L -o /dev/null -w "%{http_code}" "https://${DOMAIN}" 2>/dev/null || echo "0")
 
   if echo "${CURL_BODY}" | grep -qi "welcome to nginx"; then
-    pass "curl http://${DOMAIN} returns 'Welcome to nginx' body (HTTP ${CURL_STATUS_BROKEN})"
+    pass "Public curl https://${DOMAIN} → 'Welcome to nginx' confirmed (HTTP ${CURL_STATUS_BROKEN})"
+  elif [[ "${CURL_STATUS_BROKEN}" =~ ^(200|301|302|303|307|308)$ ]]; then
+    warn "Public curl returned HTTP ${CURL_STATUS_BROKEN} but no 'Welcome to nginx' body — Cloudflare may be caching/redirecting origin. API-level detection in step 4 is authoritative."
+  elif [[ "${CURL_STATUS_BROKEN}" == "0" ]]; then
+    warn "Public curl timed out or connection refused for ${DOMAIN}. Domain may not be routed locally. Continuing to API-level detection."
   else
-    fail "curl did not return 'Welcome to nginx'. Body (first 200 chars): ${CURL_BODY:0:200}"
-    # Non-fatal — local container may not be exposed via domain yet; continue to API detection
-    log "NOTE: Domain routing may not be configured for local test — continuing to API-level detection"
+    warn "Public curl returned HTTP ${CURL_STATUS_BROKEN}. Body: ${CURL_BODY:0:150}. Continuing to API-level detection."
   fi
 
   # ── Step 4: poll router health until unhealthy ───────────────────────────────
@@ -824,13 +835,42 @@ esac
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 log "========== RESULT SUMMARY =========="
+
+# OVERALL is gate-based for welcome_to_nginx:
+#   Gate 1: incident_detected=true
+#   Gate 2: matched_runbook_id=WELCOME_TO_NGINX_EMPTY_SITE
+#   Gate 3: dashboard_unhealthy > 0 during incident
+#   Gate 4: repair_successful=true
+#   Gate 5: recovery confirmed (included in repair_successful)
+# Public curl (step 3) is informational — a 301 from Cloudflare is NOT a failure.
+#
+# For other cases (empty_mounts, delete_route): fall back to step-log scan.
+
 OVERALL_PASS=true
+
+# Step-log scan: any FAIL entry fails the run (WARN entries are non-fatal)
 for entry in "${STEP_LOG[@]:-}"; do
   if [[ "${entry}" == FAIL:* ]]; then
     OVERALL_PASS=false
     break
   fi
 done
+
+if [[ "${CASE}" == "welcome_to_nginx" && "${OVERALL_PASS}" == "true" ]]; then
+  # Explicit gate validation (authoritative for this case)
+  GATE_FAIL=""
+  [[ "${INCIDENT_DETECTED}" != "true" ]] && GATE_FAIL="gate1_incident_not_detected"
+  [[ -z "${GATE_FAIL}" && "${MATCHED_RUNBOOK_ID}" != "WELCOME_TO_NGINX_EMPTY_SITE" ]] && GATE_FAIL="gate2_runbook_mismatch(got=${MATCHED_RUNBOOK_ID:-none})"
+  if [[ -z "${GATE_FAIL}" ]]; then
+    ds="${DASHBOARD_SCORE_DURING_INCIDENT:-0}"
+    [[ "${ds}" == "null" || "${ds}" -eq 0 ]] 2>/dev/null && GATE_FAIL="gate3_dashboard_not_degraded"
+  fi
+  [[ -z "${GATE_FAIL}" && "${REPAIR_SUCCESSFUL}" != "true" ]] && GATE_FAIL="gate4_repair_not_successful"
+  if [[ -n "${GATE_FAIL}" ]]; then
+    OVERALL_PASS=false
+    log "GATE FAIL: ${GATE_FAIL}"
+  fi
+fi
 
 if [[ "${OVERALL_PASS}" == "true" ]]; then
   log "OVERALL: PASSED"
