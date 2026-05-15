@@ -1284,7 +1284,7 @@ async def upload_zip(
     except Exception:
         pass
 
-    site_dir = f"/opt/clients/{container_name}"
+    site_dir = os.path.join("/opt/clients", container_name)
     # Record BEFORE makedirs — bind-mount only if dir already existed
     has_host_mount = os.path.isdir(site_dir)
     os.makedirs(site_dir, exist_ok=True)
