@@ -410,6 +410,62 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
             ip_address=ip_address
         )
 
+        # ── Provisioning Gate ────────────────────────────────────────────────
+        # Create Traefik File Provider YAML (official routing model)
+        try:
+            from app.services.traefik_file_provider import create_tenant_file_provider
+            create_tenant_file_provider(hosting_id, container_name, subdomain)
+        except Exception as _fp_exc:
+            logger.warning(
+                "create_hosting: file provider creation failed for hosting_id=%s: %s",
+                hosting_id, _fp_exc,
+            )
+
+        # Run provisioning gate (skip HTTP checks — cert/routing not ready yet)
+        _gate_status = "active_with_placeholder"
+        _gate_reason = "gate not run"
+        try:
+            from app.services.provisioning_gate import validate_static_tenant_provisioning
+            _gate_result = validate_static_tenant_provisioning(
+                hosting_id, container_name, subdomain, check_http=False
+            )
+            _gate_status = _gate_result.status
+            _gate_reason = _gate_result.reason
+        except Exception as _gate_exc:
+            logger.warning(
+                "create_hosting: provisioning gate failed for hosting_id=%s: %s",
+                hosting_id, _gate_exc,
+            )
+
+        # Update hosting status to provisioning gate result (DB was set to 'active' by default)
+        if _gate_status != "active":
+            try:
+                hosting_repo.update_hosting_status(hosting_id, _gate_status)
+            except Exception as _upd_exc:
+                logger.warning(
+                    "create_hosting: status update failed for hosting_id=%s: %s",
+                    hosting_id, _upd_exc,
+                )
+
+        try:
+            from app.services.activity_service import log_event as _log
+            _log(
+                user_id=user_id, hosting_id=hosting_id,
+                event_type=(
+                    "hosting.provisioning.gate_passed"
+                    if _gate_status in ("active", "active_with_placeholder")
+                    else "hosting.provisioning.gate_failed"
+                ),
+                category="hosting",
+                severity="info" if _gate_status in ("active", "active_with_placeholder") else "warning",
+                title=f"Provisioning gate: {_gate_status}",
+                message=_gate_reason,
+                source="provisioning",
+            )
+        except Exception:
+            pass
+        # ── end Provisioning Gate ────────────────────────────────────────────
+
         notify(
             user_id or 0,
             f"Sitio creado: {data.name}",
@@ -427,11 +483,12 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
             pass
 
         return {
-            "status":     "created",
-            "hosting_id": hosting_id,
-            "user_id":    user_id,
-            "url":        f"https://{subdomain}",
-            "container":  container_name
+            "status":              "created",
+            "provisioning_status": _gate_status,
+            "hosting_id":          hosting_id,
+            "user_id":             user_id,
+            "url":                 f"https://{subdomain}",
+            "container":           container_name,
         }
 
     except HTTPException:

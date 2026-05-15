@@ -6,7 +6,12 @@ from app.infra.db import get_connection, release_connection, SQL_MINUTES_SINCE_C
 
 logger = logging.getLogger(__name__)
 
-VALID_STATUSES = {"active", "stopped", "expired", "error", "starting", "expiring", "deleted", "zombie"}
+VALID_STATUSES = {
+    "active", "stopped", "expired", "error", "starting", "expiring", "deleted", "zombie",
+    # Provisioning Gate states
+    "active_with_placeholder", "pending_content",
+    "provisioning_failed", "routing_failed", "routing_degraded",
+}
 
 class HostingRepository:
     """Implementación PostgreSQL limpia para Hostings."""
