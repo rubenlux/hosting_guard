@@ -917,3 +917,17 @@ signatures:
     source: health_guard
     confidence: 0.99
     type: substring
+
+  - id: sig_126
+    pattern: 'status_code": 526'
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: health_guard
+    confidence: 0.99
+    type: substring
+
+  - id: sig_127
+    pattern: 'router_source": "docker_labels"'
+    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    source: health_guard
+    confidence: 0.7
+    type: substring

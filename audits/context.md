@@ -2071,3 +2071,13 @@ docs/incidents/runbooks/TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID.md — runbook 
 docs/incidents/runbooks/TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX.md — ya existía de la sesión anterior
 Firmas sig_109–117 para 526 y sig_100–108 para 403 en error_signatures.yml
 Estado final: 44 tests frontend + 201 tests backend, todos pasan.
+
+All four files updated. Summary of what was done:
+
+error_signatures.yml: Added sig_118–sig_125 — "Read-only file system", "server: nginx", "can't create .../index.html", "origin directo 403" for TENANT_NGINX_403, and "Browser Working", "Host Error", "router_source": "docker_labels", "status_code": 526 for TENANT_CLOUDFLARE_526.
+
+safe_actions.yml: Added 9 new actions: migrate_tenant_route_docker_labels_to_file, validate_origin_tls_direct_resolve, request_letsencrypt_certificate, inspect_traefik_acme_logs, create_placeholder_index_for_empty_static_site, validate_static_index_exists, mark_site_pending_content, write_placeholder_index_to_host_mount, fix_static_file_permissions.
+
+forbidden_actions.yml: Added 6 new entries: disable_tls_verification, turn_off_cloudflare_security_globally, mark_healthy_on_container_running_only, write_to_readonly_container_mount, bypass_forwardauth, delete_client_files.
+
+INCIDENT_INDEX.md: Updated to 26 incidents, added rows 25 and 26, bumped high severity count from 6 to 8, updated coverage note.
