@@ -2297,3 +2297,32 @@ RAG asocia runbook correcto ✅
 Auto-resolve funciona ✅
 Live E2E real pasó ✅
 Reporte E2E generado ✅
+
+1221 passed, 0 regressions.
+
+Root cause: site_dir was built with an f-string (f"/opt/clients/{container_name}"), bypassing the test fixture's os.path.join patch. os.makedirs was correctly redirected to tmp_path, but os.access(site_dir, os.W_OK) still received the original /opt/clients/… path — which doesn't exist in any test environment — returning False and raising 503 before any zip validation could run.
+
+Fix (2 lines):
+
+hosting.py:1287 — os.path.join("/opt/clients", container_name) so the fixture's join patch redirects site_dir to tmp_path.
+test_upload_zip_validation.py:208 — AsyncMock(return_value=(0, "", "")) since run_docker_command_async is now actually awaited in the valid-zip path.
+
+1229 passed (+8 new), 0 regressions.
+
+Summary of all changes:
+
+Root cause: get_hosting(id, user_id) filters WHERE hosting_id = %s AND user_id = %s. Admin tokens carry their own user_id which differs from the hosting owner's → 404.
+
+app/api/routes/hosting.py:
+
+Authorization: replaced get_hosting with get_hosting_any + explicit ownership check. Admin bypasses ownership. Non-owner → 403 (not misleading 404). Deleted hosting → 409.
+New _BLOCKED_EXTENSIONS set — .php, .py, .sh, .exe, etc. checked per-file in _safe_extract_zip.
+Empty ZIP check → 400 zip_empty.
+index.html required at serve root → 400 missing_index_html.
+_SWAP_SKIP + atomic swap for host-mount deployments: stage in _new/, backup to _backup/, move into place, roll back on failure → 503 upload_atomic_swap_failed.
+Normalized file.filename or "" → no more str | None type errors.
+Structured success response: {status, hosting_id, subdomain, url, files_applied, index_html, target_dir}.
+tests/test_upload_zip_validation.py:
+
+Fixture: added user_id: 2, status: "active" to mock hosting dict; set both get_hosting.return_value and get_hosting_any.return_value.
+8 new regression tests covering the primary 404 bug, admin access, owner access, 403 for non-owner, 404 for missing, 409 for deleted, structured response, and missing_index_html.

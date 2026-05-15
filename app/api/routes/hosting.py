@@ -66,6 +66,18 @@ class _ZipValidationError(Exception):
         super().__init__(detail)
 
 
+_BLOCKED_EXTENSIONS = frozenset({
+    ".php", ".php3", ".php4", ".php5", ".phtml",
+    ".py", ".pyc", ".pyo", ".pyw",
+    ".rb", ".pl", ".cgi",
+    ".sh", ".bash", ".zsh", ".fish", ".cmd", ".bat", ".ps1",
+    ".exe", ".com", ".bin", ".dll", ".so", ".dylib",
+    ".asp", ".aspx", ".jsp", ".jspx",
+})
+
+_SWAP_SKIP = frozenset({"_upload.zip", "_extracted", "_new", "_backup", ".git"})
+
+
 def _log_static_upload_rejection(
     request, user_id: Optional[int], hosting_id: int,
     filename: str, size_bytes: int, reason: str,
@@ -104,6 +116,12 @@ def _safe_extract_zip(zf: zipfile.ZipFile, extracted_dir: Path) -> None:
             raise _ZipValidationError("ZIP contiene entradas .git", "git_entry_blocked")
         if stat.S_ISLNK(member.external_attr >> 16):
             raise _ZipValidationError("ZIP contiene enlaces simbólicos", "symlink_detected")
+        if not name.endswith("/"):
+            ext = Path(name).suffix.lower()
+            if ext in _BLOCKED_EXTENSIONS:
+                raise _ZipValidationError(
+                    f"Tipo de archivo no permitido: {ext}", "disallowed_file_type"
+                )
         target = (base / name).resolve()
         if not str(target).startswith(str(base) + os.sep) and str(target) != str(base):
             raise _ZipValidationError(
@@ -1263,12 +1281,20 @@ async def upload_zip(
     en el contenedor Nginx del hosting sin reiniciar el contenedor completo.
     """
     user_id = user.get("user_id")
-    hosting = hosting_repo.get_hosting(hosting_id, user_id)
+    is_admin = user.get("role") == "admin"
+
+    hosting = hosting_repo.get_hosting_any(hosting_id)
     if not hosting:
         raise HTTPException(status_code=404, detail="Hosting not found")
+    if not is_admin and str(hosting.get("user_id")) != str(user_id):
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+    if hosting.get("status") == "deleted":
+        raise HTTPException(status_code=409, detail="hosting_deleted")
+
+    filename = file.filename or ""
 
     # Validar que sea un ZIP
-    if not file.filename.endswith(".zip"):
+    if not filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Solo se aceptan archivos .zip")
 
     container_name = hosting["container_name"]
@@ -1278,9 +1304,9 @@ async def upload_zip(
         _log(user_id=user_id, hosting_id=hosting_id,
              event_type="static_zip_upload_started", category="hosting", severity="info",
              title=f"ZIP upload iniciado: {hosting.get('name') or hosting_id}",
-             message=file.filename,
+             message=filename,
              ip=request.client.host if request.client else None, source="dashboard",
-             metadata={"filename": file.filename})
+             metadata={"filename": filename})
     except Exception:
         pass
 
@@ -1313,7 +1339,7 @@ async def upload_zip(
                 total += len(chunk)
                 if total > MAX_ZIP_SIZE:
                     _log_static_upload_rejection(
-                        request, user_id, hosting_id, file.filename, total, "zip_too_large"
+                        request, user_id, hosting_id, filename, total,"zip_too_large"
                     )
                     raise HTTPException(
                         status_code=400,
@@ -1326,7 +1352,7 @@ async def upload_zip(
             header = fh.read(4)
         if header != b"PK\x03\x04":
             _log_static_upload_rejection(
-                request, user_id, hosting_id, file.filename, total, "invalid_zip_magic"
+                request, user_id, hosting_id, filename, total,"invalid_zip_magic"
             )
             raise HTTPException(status_code=400, detail="El archivo no es un ZIP válido o está corrupto.")
 
@@ -1340,7 +1366,7 @@ async def upload_zip(
                 total_size = sum(info.file_size for info in zf.infolist())
                 if total_size > MAX_EXTRACTED_SIZE:
                     _log_static_upload_rejection(
-                        request, user_id, hosting_id, file.filename, total, "extracted_size_limit_exceeded"
+                        request, user_id, hosting_id, filename, total,"extracted_size_limit_exceeded"
                     )
                     raise HTTPException(
                         status_code=400,
@@ -1349,12 +1375,12 @@ async def upload_zip(
                 _safe_extract_zip(zf, Path(extracted_dir))
         except _ZipValidationError as exc:
             _log_static_upload_rejection(
-                request, user_id, hosting_id, file.filename, total, exc.reason
+                request, user_id, hosting_id, filename, total,exc.reason
             )
             raise HTTPException(status_code=400, detail=exc.detail)
         except zipfile.BadZipFile:
             _log_static_upload_rejection(
-                request, user_id, hosting_id, file.filename, total, "bad_zip_file"
+                request, user_id, hosting_id, filename, total,"bad_zip_file"
             )
             raise HTTPException(status_code=400, detail="El archivo no es un ZIP válido o está corrupto.")
 
@@ -1368,6 +1394,26 @@ async def upload_zip(
         # 4. Detectar subdirectorio de build si existe (dist/, build/, public/, etc.)
         serve_dir = _find_serve_dir(serve_root)
 
+        # Reject empty archives
+        if not any(True for _ in os.scandir(serve_dir)):
+            _log_static_upload_rejection(
+                request, user_id, hosting_id, filename, total,"zip_empty"
+            )
+            raise HTTPException(status_code=400, detail="El ZIP no contiene archivos.")
+
+        # Require index.html at the serve root
+        if not os.path.isfile(os.path.join(serve_dir, "index.html")):
+            _log_static_upload_rejection(
+                request, user_id, hosting_id, filename, total,"missing_index_html"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="El ZIP debe contener index.html en la raíz del sitio.",
+            )
+
+        files_applied = sum(len(ff) for _, _, ff in os.walk(serve_dir))
+        index_html_present = True
+
         # 5. Estrategia dual según tipo de contenedor:
         #    - Contenedores con bind-mount (GitHub deploy): actualizar archivos en el HOST
         #      ya que /opt/clients/{container}/ es el directorio montado como read-only.
@@ -1375,26 +1421,61 @@ async def upload_zip(
 
         deployed_via_host = False
 
-        # F. Usar has_host_mount (evaluado ANTES de makedirs) para detectar bind-mount real
+        # F. Atomic swap: stage new content, backup old, move in new, restore on failure
         if has_host_mount:
-            for item in os.listdir(site_dir):
-                item_path = os.path.join(site_dir, item)
-                if item in ("_upload.zip", "_extracted", ".git"):
-                    continue
-                if os.path.isdir(item_path):
-                    shutil.rmtree(item_path)
-                else:
-                    os.remove(item_path)
-
-            for item in os.listdir(serve_dir):
-                src = os.path.join(serve_dir, item)
-                dst = os.path.join(site_dir, item)
-                if os.path.isdir(src):
-                    shutil.copytree(src, dst, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(src, dst)
-
-            deployed_via_host = True
+            _backup_dir = os.path.join(site_dir, "_backup")
+            _new_dir = os.path.join(site_dir, "_new")
+            try:
+                for _d in (_backup_dir, _new_dir):
+                    if os.path.exists(_d):
+                        shutil.rmtree(_d)
+                shutil.copytree(serve_dir, _new_dir)
+                os.makedirs(_backup_dir, exist_ok=True)
+                for item in os.listdir(site_dir):
+                    if item in _SWAP_SKIP:
+                        continue
+                    shutil.move(os.path.join(site_dir, item), os.path.join(_backup_dir, item))
+                for item in os.listdir(_new_dir):
+                    shutil.move(os.path.join(_new_dir, item), os.path.join(site_dir, item))
+                deployed_via_host = True
+                shutil.rmtree(_backup_dir, ignore_errors=True)
+                shutil.rmtree(_new_dir, ignore_errors=True)
+            except Exception as _swap_exc:
+                logger.warning("upload_zip: swap failed, rolling back: %s", _swap_exc)
+                try:
+                    for item in os.listdir(site_dir):
+                        if item in _SWAP_SKIP:
+                            continue
+                        _p = os.path.join(site_dir, item)
+                        if os.path.isdir(_p):
+                            shutil.rmtree(_p, ignore_errors=True)
+                        else:
+                            try:
+                                os.remove(_p)
+                            except OSError:
+                                pass
+                    if os.path.exists(_backup_dir):
+                        for item in os.listdir(_backup_dir):
+                            shutil.move(
+                                os.path.join(_backup_dir, item),
+                                os.path.join(site_dir, item),
+                            )
+                except Exception as _rb_exc:
+                    logger.error("upload_zip: rollback error: %s", _rb_exc)
+                finally:
+                    shutil.rmtree(_backup_dir, ignore_errors=True)
+                    shutil.rmtree(_new_dir, ignore_errors=True)
+                _log_static_upload_rejection(
+                    request, user_id, hosting_id, filename, total,"upload_atomic_swap_failed"
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "ok": False,
+                        "code": "upload_atomic_swap_failed",
+                        "message": "No se pudo aplicar el ZIP. El contenido anterior fue restaurado.",
+                    },
+                )
 
         # Siempre intentar docker cp (cubre contenedores sin bind-mount)
         cp_code, _, cp_err = await run_docker_command_async(
@@ -1418,14 +1499,17 @@ async def upload_zip(
         _log(user_id=user_id, hosting_id=hosting_id,
              event_type="static_zip_upload_completed", category="hosting",
              title=f"Sitio desplegado vía ZIP: {hosting.get('name') or hosting_id}",
-             message=f"Archivo: {file.filename}, tamaño: {total} bytes",
+             message=f"Archivo: {filename}, tamaño: {total} bytes",
              ip=request.client.host if request.client else None, source="dashboard",
-             metadata={"filename": file.filename, "size_bytes": total})
+             metadata={"filename": filename, "size_bytes": total})
         return {
-            "status": "deployed",
+            "status": "ok",
             "hosting_id": hosting_id,
+            "subdomain": hosting["subdomain"],
             "url": f"https://{hosting['subdomain']}",
-            "message": "Sitio desplegado correctamente. Activo en segundos."
+            "files_applied": files_applied,
+            "index_html": index_html_present,
+            "target_dir": site_dir,
         }
 
     except HTTPException:
@@ -1435,7 +1519,7 @@ async def upload_zip(
                  event_type="static_zip_upload_failed", category="hosting", severity="warning",
                  title=f"ZIP rechazado: {hosting.get('name') or hosting_id}",
                  ip=request.client.host if request.client else None, source="dashboard",
-                 metadata={"filename": file.filename})
+                 metadata={"filename": filename})
         except Exception:
             pass
         raise
@@ -1447,7 +1531,7 @@ async def upload_zip(
                  title=f"Error desplegando ZIP: {hosting.get('name') or hosting_id}",
                  message=str(e)[:200],
                  ip=request.client.host if request.client else None, source="dashboard",
-                 metadata={"filename": file.filename})
+                 metadata={"filename": filename})
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=str(e))
