@@ -2523,7 +2523,7 @@ For active_with_placeholder without --check-http: shows [STRUCTURAL PASS — run
 Checks yaml_structure_valid=False explicitly and emits a [YAML INVALID] fail before the status check
 routing_failed results are labelled [RUNTIME FAIL]
 BUG 4 — Signature
-
+1
 sig_134 "Docker Provider route only" → TENANT_ROUTE_DOCKER_LABELS_ONLY was already added in the previous session.
 
 New tests added (6):

@@ -1042,6 +1042,83 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_remediations_status     ON remediation_executions(status, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_remediations_expires_at ON remediation_executions(expires_at) WHERE expires_at IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_remediations_rule_id    ON remediation_executions(rule_id) WHERE rule_id IS NOT NULL",
+
+    # ── P3A: Tenant Backups — local storage, plan-gated, latest-only retention ──
+    """CREATE TABLE IF NOT EXISTS tenant_backups (
+        backup_id           BIGSERIAL PRIMARY KEY,
+        hosting_id          INTEGER NOT NULL REFERENCES hostings(hosting_id) ON DELETE CASCADE,
+        user_id             INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        backup_type         TEXT NOT NULL DEFAULT 'full',
+        status              TEXT NOT NULL DEFAULT 'pending',
+        trigger             TEXT NOT NULL DEFAULT 'manual',
+        storage_driver      TEXT NOT NULL DEFAULT 'local',
+        retention_policy    TEXT NOT NULL DEFAULT 'manual_limited',
+        local_path          TEXT,
+        files_path          TEXT,
+        database_path       TEXT,
+        manifest_path       TEXT,
+        files_size_bytes    BIGINT DEFAULT 0,
+        database_size_bytes BIGINT DEFAULT 0,
+        total_size_bytes    BIGINT DEFAULT 0,
+        sha256_files        TEXT,
+        sha256_database     TEXT,
+        sha256_manifest     TEXT,
+        container_name      TEXT,
+        db_container_name   TEXT,
+        subdomain           TEXT,
+        started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        finished_at         TIMESTAMPTZ,
+        expires_at          TIMESTAMPTZ,
+        error_code          TEXT,
+        error_message       TEXT,
+        metadata_json       JSONB DEFAULT '{}'
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_tenant_backups_hosting    ON tenant_backups(hosting_id, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_tenant_backups_status     ON tenant_backups(status, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_tenant_backups_trigger    ON tenant_backups(trigger, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_tenant_backups_expires_at ON tenant_backups(expires_at) WHERE expires_at IS NOT NULL",
+
+    # ── P3B: protected flag on tenant_backups ────────────────────────────────
+    "ALTER TABLE tenant_backups ADD COLUMN IF NOT EXISTS protected BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE tenant_backups ADD COLUMN IF NOT EXISTS protected_reason TEXT",
+
+    # ── P3B: per-hosting backup policy (admin override) ──────────────────────
+    """CREATE TABLE IF NOT EXISTS tenant_backup_policies (
+        policy_id               BIGSERIAL PRIMARY KEY,
+        hosting_id              INTEGER NOT NULL UNIQUE REFERENCES hostings(hosting_id) ON DELETE CASCADE,
+        user_id                 INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        automatic_backup_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        manual_backup_enabled   BOOLEAN NOT NULL DEFAULT FALSE,
+        backup_frequency        TEXT NOT NULL DEFAULT 'none',
+        retention_policy        TEXT NOT NULL DEFAULT 'manual_limited',
+        automatic_ttl_hours     INTEGER NOT NULL DEFAULT 24,
+        max_manual_backups      INTEGER NOT NULL DEFAULT 2,
+        max_backup_storage_mb   INTEGER NOT NULL DEFAULT 2048,
+        max_total_backup_mb     INTEGER NOT NULL DEFAULT 2048,
+        admin_override          BOOLEAN NOT NULL DEFAULT FALSE,
+        addon_active            BOOLEAN NOT NULL DEFAULT FALSE,
+        included_in_plan        BOOLEAN NOT NULL DEFAULT FALSE,
+        paused                  BOOLEAN NOT NULL DEFAULT FALSE,
+        paused_reason           TEXT,
+        created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_by_user_id      INTEGER REFERENCES users(user_id),
+        metadata_json           JSONB DEFAULT '{}'
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_tbp_hosting ON tenant_backup_policies(hosting_id)",
+
+    # ── P3B: policy change history ───────────────────────────────────────────
+    """CREATE TABLE IF NOT EXISTS tenant_backup_policy_history (
+        history_id              BIGSERIAL PRIMARY KEY,
+        policy_id               BIGINT NOT NULL REFERENCES tenant_backup_policies(policy_id) ON DELETE CASCADE,
+        hosting_id              INTEGER NOT NULL,
+        previous_policy_json    JSONB NOT NULL DEFAULT '{}',
+        new_policy_json         JSONB NOT NULL DEFAULT '{}',
+        changed_by_user_id      INTEGER,
+        change_reason           TEXT,
+        created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_tbph_hosting ON tenant_backup_policy_history(hosting_id, created_at DESC)",
 ]
 
 def ensure_monthly_partitions(cursor):

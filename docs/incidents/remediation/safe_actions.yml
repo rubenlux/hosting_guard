@@ -123,3 +123,40 @@ safe_actions:
     description: "chown/chmod /opt/clients/{name}/ so nginx can read files (nginx uid 101)"
     requires_dry_run_first: true
     requires_human_approval: true
+
+  # ── P3A Backup safe actions ──────────────────────────────────────────────────
+
+  - id: retry_backup
+    description: "Re-trigger backup for a tenant after transient failure"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: run_files_backup_only
+    description: "Run files-only backup (backup_type=files) when DB dump is failing"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: inspect_db_container_env
+    description: "docker inspect env vars of DB container to verify MYSQL_USER/DATABASE are set (never log MYSQL_PASSWORD)"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: cleanup_expired_backups
+    description: "Run cleanup_backup_retention() to delete TTL-expired and excess backups"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: verify_backup_local_dir_permissions
+    description: "Verify /opt/hostingguard-backups exists, is writable by app user, and has sufficient space"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: reduce_backup_retention
+    description: "Lower BACKUP_MAX_MANUAL_BACKUPS_PER_TENANT env var to free disk"
+    requires_dry_run_first: true
+    requires_human_approval: true
+
+  - id: delete_old_manual_backups
+    description: "Identify and delete oldest manual backups via DELETE /hosting/hostings/{id}/backups/{bid}"
+    requires_dry_run_first: true
+    requires_human_approval: true

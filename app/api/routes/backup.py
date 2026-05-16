@@ -2,9 +2,11 @@
 import asyncio
 import logging
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.api.rate_limit import limiter
 from app.api.security import verify_token
@@ -15,6 +17,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/hosting", tags=["Backup"])
 
 _hosting_repo = HostingRepository()
+
+
+# ── P3A Tenant Backup endpoints ───────────────────────────────────────────────
+
+class TenantBackupRequest(BaseModel):
+    backup_type: str = "full"  # full | files | database
 
 
 @router.post("/hostings/{hosting_id}/backup")
@@ -170,4 +178,117 @@ def delete_backup(backup_id: int, user: dict = Depends(verify_token)):
                   metadata={"backup_id": backup_id, "status_was": backup["status"]})
     except Exception:
         pass
+    return {"status": "deleted", "backup_id": backup_id}
+
+
+# ── P3A: tenant_backups endpoints ─────────────────────────────────────────────
+
+@router.post("/hostings/{hosting_id}/backups")
+@limiter.limit("6/hour")
+async def create_tenant_backup(
+    request: Request,
+    hosting_id: int,
+    body: TenantBackupRequest = Body(default=TenantBackupRequest()),
+    user: dict = Depends(verify_token),
+):
+    """Trigger a manual backup for a hosting (plan-gated)."""
+    user_id = int(user["user_id"])
+    is_admin = user.get("role") == "admin"
+
+    # Ownership check (admin bypasses)
+    if not is_admin:
+        hosting = _hosting_repo.get_hosting(hosting_id, user_id)
+        if not hosting:
+            raise HTTPException(status_code=404, detail="Hosting not found")
+    else:
+        hosting = _hosting_repo.get_hosting_any(hosting_id)
+        if not hosting:
+            raise HTTPException(status_code=404, detail="Hosting not found")
+
+    if body.backup_type not in ("full", "files", "database"):
+        raise HTTPException(status_code=400, detail="backup_type must be full, files, or database")
+
+    from app.services.tenant_backup_service import create_tenant_backup as _create
+    result = await asyncio.get_running_loop().run_in_executor(
+        None,
+        lambda: _create(
+            hosting_id,
+            backup_type=body.backup_type,
+            trigger="manual",
+            requested_by_user_id=user_id,
+            admin_override=is_admin,
+        ),
+    )
+
+    status = result.get("status")
+    if status == "denied":
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code": result.get("error_code"),
+                "message": result.get("error_message"),
+                "upgrade_required": result.get("upgrade_required", False),
+                "recommended_plan": result.get("recommended_plan"),
+                "addon": result.get("addon"),
+            },
+        )
+    if status == "failed":
+        raise HTTPException(
+            status_code=500,
+            detail={"code": result.get("error_code"), "message": result.get("error_message")},
+        )
+    if status == "skipped":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": result.get("error_code"), "message": result.get("error_message")},
+        )
+    return result
+
+
+@router.get("/hostings/{hosting_id}/backups")
+def list_tenant_backups(hosting_id: int, user: dict = Depends(verify_token)):
+    """List backups for a hosting (owner or admin)."""
+    user_id = int(user["user_id"])
+    is_admin = user.get("role") == "admin"
+
+    if not is_admin:
+        hosting = _hosting_repo.get_hosting(hosting_id, user_id)
+        if not hosting:
+            raise HTTPException(status_code=404, detail="Hosting not found")
+
+    from app.services.tenant_backup_service import list_tenant_backups as _list
+    items = _list(hosting_id, user_id=user_id if not is_admin else None, admin=is_admin)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/hostings/{hosting_id}/backups/{backup_id}")
+def get_tenant_backup(hosting_id: int, backup_id: int, user: dict = Depends(verify_token)):
+    """Get backup detail (owner or admin)."""
+    user_id = int(user["user_id"])
+    is_admin = user.get("role") == "admin"
+
+    from app.services.tenant_backup_service import get_tenant_backup as _get
+    backup = _get(backup_id, user_id=user_id if not is_admin else None, admin=is_admin)
+    if not backup or backup.get("hosting_id") != hosting_id:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return backup
+
+
+@router.delete("/hostings/{hosting_id}/backups/{backup_id}")
+def delete_tenant_backup(hosting_id: int, backup_id: int, user: dict = Depends(verify_token)):
+    """Delete a backup (owner or admin). Removes files from disk."""
+    user_id = int(user["user_id"])
+    is_admin = user.get("role") == "admin"
+
+    from app.services.tenant_backup_service import get_tenant_backup as _get, delete_tenant_backup as _del
+    backup = _get(backup_id, user_id=user_id if not is_admin else None, admin=is_admin)
+    if not backup or backup.get("hosting_id") != hosting_id:
+        raise HTTPException(status_code=404, detail="Backup not found")
+
+    if backup.get("status") in ("running", "pending"):
+        raise HTTPException(status_code=409, detail="Cannot delete a backup in progress")
+
+    ok = _del(backup_id, user_id=user_id if not is_admin else None, admin=is_admin)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Backup not found")
     return {"status": "deleted", "backup_id": backup_id}

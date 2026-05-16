@@ -1,7 +1,7 @@
 # Incident Index — HostingGuard
 
-**Total incidents**: 27  
-**Last updated**: 2026-05-15  
+**Total incidents**: 32  
+**Last updated**: 2026-05-16  
 **Runbooks location**: `docs/incidents/runbooks/`  
 **Signatures map**: `docs/incidents/signatures/error_signatures.yml`
 
@@ -38,6 +38,11 @@
 | 25 | TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID | high | confirmed | false | Cloudflare returns 526 "Invalid SSL certificate" for a tenant subdomain. Origin TLS certificate is expired, missing, or not served correctly. Public route is unreachable. |
 | 26 | TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX | high | confirmed | false | Tenant static nginx container returns HTTP 403 because the webroot (/usr/share/nginx/html) is empty — no index.html exists. Autoindex is off so nginx denies directory listing. |
 | 27 | TENANT_ROUTE_DOCKER_LABELS_ONLY | high | confirmed | false | Tenant route is served via Traefik Docker labels only — the File Provider YAML (`/opt/traefik-dynamic/tenant-{id}.yml`) is missing. If the Docker provider fails or a version mismatch occurs, the tenant becomes unreachable. Safe actions: `regenerate_tenant_file_provider_route`, `migrate_tenant_route_docker_labels_to_file`, `validate_traefik_dynamic_yaml`, `verify_forwardauth_file_middleware`. Forbidden: `rely_on_docker_provider_only`, `bypass_forwardauth`, `mark_healthy_without_file_provider_route`, `disable_router_health_check`. |
+| 28 | TENANT_BACKUP_FILES_PATH_MISSING | medium | confirmed | false | Backup job cannot find `/opt/clients/<container_name>`. Host directory missing, deleted, or container was renamed. Safe actions: `verify_backup_local_dir_permissions`, `run_files_backup_only`. Forbidden: `overwrite_live_files_without_snapshot`. |
+| 29 | TENANT_BACKUP_DATABASE_DUMP_FAILED | medium | confirmed | false | MariaDB/MySQL dump via `docker exec mariadb-dump` failed. Container stopped, dump tool missing, or credentials wrong. Safe actions: `inspect_db_container_env`, `run_files_backup_only`. Forbidden: `log_database_password`, `disable_backups_silently`. |
+| 30 | TENANT_BACKUP_LOCAL_STORAGE_FULL | high | confirmed | false | Local backup storage `/opt/hostingguard-backups` has insufficient disk space. Old backups not being cleaned up. Safe actions: `cleanup_expired_backups`, `reduce_backup_retention`, `delete_old_manual_backups`. Forbidden: `delete_last_successful_backup`, `chmod_777_backup_dir`. |
+| 31 | TENANT_BACKUP_RETENTION_CLEANUP_FAILED | medium | confirmed | false | Periodic backup retention cleanup job failed. Old backups accumulating, disk growing. Safe actions: `cleanup_expired_backups`, `verify_backup_local_dir_permissions`. Forbidden: `delete_last_successful_backup`. |
+| 32 | TENANT_BACKUP_NOT_CONFIGURED | low | confirmed | false | `BACKUP_ENABLED=false` — backup feature is disabled. No tenant_backups records being created. Safe actions: set `BACKUP_ENABLED=true` in env. |
 
 ---
 
@@ -46,9 +51,9 @@
 | Severity | Count | IDs |
 |---|---|---|
 | critical | 4 | TRAEFIK_DOCKER_PROVIDER_UNHEALTHY, FORWARDAUTH_MIDDLEWARE_DOCKER_MISSING, CONTAINER_WITH_EMPTY_MOUNTS, TRAEFIK_DYNAMIC_DIR_RW_DENIED |
-| high | 9 | TRAEFIK_CLIENT_VERSION_TOO_OLD, FILE_PROVIDER_FORWARDAUTH_MIGRATION, TENANT_PUBLIC_404_ROUTER_MISSING, ROUTER_HEALTH_INCIDENTS_DELETED_BY_SYNC, WP_XMLRPC_EXPOSED_APACHE_RUNTIME, FRONTEND_CHUNK_404_BLANK_SCREEN, TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID, TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX, TENANT_ROUTE_DOCKER_LABELS_ONLY |
-| medium | 11 | WELCOME_TO_NGINX_EMPTY_SITE, ZIP_IMPORT_PERMISSION_DENIED, DASHBOARD_FALSE_100_HEALTH, REPAIR_ENDPOINT_500_WITH_CORS, CUSTOM_DOMAINS_ACTIVITY_REPOSITORY_IMPORT_CRASH, ADMIN_STAFF_CREATED_AT_TS_500, ADMIN_TERMINATE_PIXEL_EVENTS_TYPE_MISMATCH, RESOURCES_MISSING_CONTAINER_BREAKS_COLLECTOR, GITHUB_CRA_OUTPUT_DIRECTORY_MISCONFIG, COMPOUND_TLD_APEX_MISCLASSIFICATION, SECURITY_UPLOAD_REJECTION_NOT_LOGGED |
-| low | 3 | RESOURCE_DISK_DF_OVERREPORT, RESOURCE_WINDOW_TOO_TIGHT_EMPTY_DASHBOARD, CLIENT_DIR_RESIDUAL_AFTER_TERMINATE |
+| high | 10 | TRAEFIK_CLIENT_VERSION_TOO_OLD, FILE_PROVIDER_FORWARDAUTH_MIGRATION, TENANT_PUBLIC_404_ROUTER_MISSING, ROUTER_HEALTH_INCIDENTS_DELETED_BY_SYNC, WP_XMLRPC_EXPOSED_APACHE_RUNTIME, FRONTEND_CHUNK_404_BLANK_SCREEN, TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID, TENANT_NGINX_403_EMPTY_OR_MISSING_INDEX, TENANT_ROUTE_DOCKER_LABELS_ONLY, TENANT_BACKUP_LOCAL_STORAGE_FULL |
+| medium | 13 | WELCOME_TO_NGINX_EMPTY_SITE, ZIP_IMPORT_PERMISSION_DENIED, DASHBOARD_FALSE_100_HEALTH, REPAIR_ENDPOINT_500_WITH_CORS, CUSTOM_DOMAINS_ACTIVITY_REPOSITORY_IMPORT_CRASH, ADMIN_STAFF_CREATED_AT_TS_500, ADMIN_TERMINATE_PIXEL_EVENTS_TYPE_MISMATCH, RESOURCES_MISSING_CONTAINER_BREAKS_COLLECTOR, GITHUB_CRA_OUTPUT_DIRECTORY_MISCONFIG, COMPOUND_TLD_APEX_MISCLASSIFICATION, SECURITY_UPLOAD_REJECTION_NOT_LOGGED, TENANT_BACKUP_FILES_PATH_MISSING, TENANT_BACKUP_DATABASE_DUMP_FAILED, TENANT_BACKUP_RETENTION_CLEANUP_FAILED |
+| low | 4 | RESOURCE_DISK_DF_OVERREPORT, RESOURCE_WINDOW_TOO_TIGHT_EMPTY_DASHBOARD, CLIENT_DIR_RESIDUAL_AFTER_TERMINATE, TENANT_BACKUP_NOT_CONFIGURED |
 
 ---
 
@@ -65,6 +70,6 @@ All other incidents require human intervention before any remediation action is 
 
 ## Runbook Coverage
 
-Runbooks exist for incidents 13–26. Runbooks for incidents 1–12 are located in the same `runbooks/` directory.
+Runbooks exist for incidents 13–32. Runbooks for incidents 1–12 are located in the same `runbooks/` directory.
 
 To add a new incident, see `docs/incidents/README.md`.

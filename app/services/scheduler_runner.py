@@ -80,6 +80,7 @@ async def _main() -> None:
     from app.services.prometheus_alert_poller import poll_prometheus_alerts
     from app.services.ssl_checker import check_ssl_for_all_hostings
     from app.services.backup_service import auto_backup_all, cleanup_stale_backups
+    from app.services.tenant_backup_service import backup_tenants_job, cleanup_backup_retention
     from app.infra.audit.session_repository import cleanup_sessions
     from app.services.detect_security_anomalies import detect_security_anomalies
     from app.services.collect_resource_usage import collect_resource_usage
@@ -129,13 +130,15 @@ async def _main() -> None:
     schedule_job(check_and_expire_free_hostings, interval=43200)   # 12 h
     # ── Daily ────────────────────────────────────────────────────────────────
     schedule_job(check_ssl_for_all_hostings,     interval=86400)   # 24 h
-    schedule_job(auto_backup_all,                interval=86400)   # 24 h
+    schedule_job(auto_backup_all,                interval=86400)   # 24 h — legacy WP backups
+    schedule_job(backup_tenants_job,             interval=86400, initial_delay=1800)  # 24 h — P3A plan-gated
     schedule_job(_cleanup_old_events,            interval=86400)   # 24 h
     schedule_job(cleanup_stale_backups,          interval=604800)  # 7 days
+    schedule_job(cleanup_backup_retention,       interval=86400)   # 24 h — P3A retention
     schedule_job(cleanup_sessions,               interval=86400)   # 24 h
     schedule_job(_daily_report_job,              interval=3600)    # hourly check → fires at 8 AM UTC
 
-    base_count = 19
+    base_count = 21
     optional_count = 0
 
     if ENABLE_CAPACITY_FORECAST:

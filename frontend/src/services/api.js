@@ -1117,3 +1117,51 @@ export const listKnowledgeSafeActions = async () => {
   const response = await api.get('/admin/knowledge/safe-actions');
   return response.data;
 };
+
+
+// ── P3B Admin Backup Policy ──────────────────────────────────────────���────────
+
+export const getAdminBackupPolicy = async (hostingId) => {
+  const response = await api.get(`/admin/hostings/${hostingId}/backup-policy`);
+  return response.data;
+};
+
+export const updateAdminBackupPolicy = async (hostingId, data) => {
+  const response = await api.put(`/admin/hostings/${hostingId}/backup-policy`, data);
+  return response.data;
+};
+
+export const adminCreateBackup = async (hostingId, data) => {
+  const response = await api.post(`/admin/hostings/${hostingId}/backups`, data);
+  return response.data;
+};
+
+export const adminPauseBackups = async (hostingId, reason) => {
+  const response = await api.post(`/admin/hostings/${hostingId}/backups/pause`, { reason });
+  return response.data;
+};
+
+export const adminResumeBackups = async (hostingId, reason) => {
+  const response = await api.post(`/admin/hostings/${hostingId}/backups/resume`, { reason });
+  return response.data;
+};
+
+export const adminCleanupBackups = async (hostingId, mode = 'all_safe', dry_run = true) => {
+  const response = await api.post(`/admin/hostings/${hostingId}/backups/cleanup`, { mode, dry_run });
+  return response.data;
+};
+
+export const getAdminBackupPolicyHistory = async (hostingId) => {
+  const response = await api.get(`/admin/hostings/${hostingId}/backup-policy/history`);
+  return response.data;
+};
+
+export const revertAdminBackupPolicy = async (hostingId, history_id, reason) => {
+  const response = await api.post(`/admin/hostings/${hostingId}/backup-policy/revert`, { history_id, reason });
+  return response.data;
+};
+
+export const setBackupProtected = async (hostingId, backupId, protected_, reason) => {
+  const response = await api.patch(`/admin/hostings/${hostingId}/backups/${backupId}/protect`, { protected: protected_, reason });
+  return response.data;
+};

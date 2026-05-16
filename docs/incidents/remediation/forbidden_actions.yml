@@ -97,3 +97,26 @@ forbidden_actions:
 
   - id: delete_client_files
     reason: "Client files are irreplaceable customer data — deletion is always forbidden without explicit client consent and backup confirmation"
+
+  # ── P3A Backup forbidden actions ─────────────────────────────────────────────
+
+  - id: delete_last_successful_backup
+    reason: "The last successful backup is the only safety net — never delete it even if disk is full"
+
+  - id: log_database_password
+    reason: "MYSQL_PASSWORD must never appear in logs, error messages, or command output"
+
+  - id: disable_backups_silently
+    reason: "Disabling backups without audit trail and user notification is a contractual violation"
+
+  - id: restore_without_pre_restore_backup
+    reason: "Restore must always create a pre_restore internal snapshot first — irreversible otherwise"
+
+  - id: overwrite_live_files_without_snapshot
+    reason: "Overwriting /opt/clients/<container_name>/ without snapshot causes unrecoverable data loss"
+
+  - id: chmod_777_backup_dir
+    reason: "World-writable backup directory exposes all tenant backup data to container escapes"
+
+  - id: run_daily_backups_without_entitlement
+    reason: "Backups are a paid feature — running them for non-entitled plans breaks the commercial model"

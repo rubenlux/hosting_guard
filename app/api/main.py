@@ -1240,6 +1240,7 @@ from app.api.routes.admin import router as admin_router
 from app.api.routes.internal import router as internal_router
 from app.api.routes.admin_router_health import router as router_health_router
 from app.api.routes.admin_knowledge import router as knowledge_router
+from app.api.routes.admin_backup import router as admin_backup_router
 
 # Orquestador con RAG por Tenant y LLM dinámico (env var)
 ai_orchestrator = AIOrchestrator(
@@ -1258,6 +1259,7 @@ app.include_router(admin_router)
 app.include_router(internal_router)
 app.include_router(router_health_router)
 app.include_router(knowledge_router)
+app.include_router(admin_backup_router)
 
 # ── Support Chat (aditivo) ────────────────────────────────────────────────
 from app.api.routes.support_chat import router as support_chat_router

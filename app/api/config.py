@@ -36,3 +36,17 @@ if ENABLE_ACTION_EXECUTION:
 
 # IP pública del servidor — used for apex DNS (A record) verification and Traefik custom-domain config
 SERVER_IP = os.getenv("SERVER_IP", "")
+
+# ── Tenant Backups (P3A — local storage) ─────────────────────────────────────
+BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "true").lower() == "true"
+BACKUP_STORAGE_DRIVER = os.getenv("BACKUP_STORAGE_DRIVER", "local")
+BACKUP_LOCAL_DIR = os.getenv("BACKUP_LOCAL_DIR", "/opt/hostingguard-backups")
+BACKUP_DATABASE_ENABLED = os.getenv("BACKUP_DATABASE_ENABLED", "true").lower() == "true"
+BACKUP_FILES_ENABLED = os.getenv("BACKUP_FILES_ENABLED", "true").lower() == "true"
+BACKUP_AUTOMATIC_RETENTION_POLICY = os.getenv("BACKUP_AUTOMATIC_RETENTION_POLICY", "latest_only")
+BACKUP_KEEP_LAST_SUCCESSFUL = os.getenv("BACKUP_KEEP_LAST_SUCCESSFUL", "true").lower() == "true"
+BACKUP_DELETE_PREVIOUS_AFTER_SUCCESS = os.getenv("BACKUP_DELETE_PREVIOUS_AFTER_SUCCESS", "true").lower() == "true"
+BACKUP_MAX_MANUAL_BACKUPS_PER_TENANT = int(os.getenv("BACKUP_MAX_MANUAL_BACKUPS_PER_TENANT", "2"))
+BACKUP_PRE_RESTORE_TTL_HOURS = int(os.getenv("BACKUP_PRE_RESTORE_TTL_HOURS", "24"))
+BACKUP_MAX_TOTAL_GB = float(os.getenv("BACKUP_MAX_TOTAL_GB", "20"))
+BACKUP_MAX_PER_TENANT_GB = float(os.getenv("BACKUP_MAX_PER_TENANT_GB", "2"))

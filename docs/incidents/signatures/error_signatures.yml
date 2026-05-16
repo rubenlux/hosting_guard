@@ -987,3 +987,99 @@ signatures:
     source: health_guard
     confidence: 0.95
     type: literal
+
+  # ─── TENANT_BACKUP_FILES_PATH_MISSING ───────────────────────────────────────
+  - id: sig_135
+    pattern: "backup_files_path_missing"
+    incident_id: TENANT_BACKUP_FILES_PATH_MISSING
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_136
+    pattern: "backup.tenant.failed.*files_path_missing"
+    incident_id: TENANT_BACKUP_FILES_PATH_MISSING
+    source: app_logs
+    confidence: 0.95
+    type: regex
+
+  # ─── TENANT_BACKUP_DATABASE_DUMP_FAILED ─────────────────────────────────────
+  - id: sig_137
+    pattern: "backup_database_dump_failed"
+    incident_id: TENANT_BACKUP_DATABASE_DUMP_FAILED
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_138
+    pattern: "mysqldump: command not found"
+    incident_id: TENANT_BACKUP_DATABASE_DUMP_FAILED
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_139
+    pattern: "mariadb-dump: command not found"
+    incident_id: TENANT_BACKUP_DATABASE_DUMP_FAILED
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_140
+    pattern: "backup_database_container_missing"
+    incident_id: TENANT_BACKUP_DATABASE_DUMP_FAILED
+    source: app_logs
+    confidence: 0.9
+    type: substring
+
+  # ─── TENANT_BACKUP_LOCAL_STORAGE_FULL ───────────────────────────────────────
+  - id: sig_141
+    pattern: "backup_local_storage_full"
+    incident_id: TENANT_BACKUP_LOCAL_STORAGE_FULL
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_142
+    pattern: "No space left on device"
+    incident_id: TENANT_BACKUP_LOCAL_STORAGE_FULL
+    source: app_logs
+    confidence: 0.9
+    type: substring
+
+  - id: sig_143
+    pattern: "OSError: [Errno 28]"
+    incident_id: TENANT_BACKUP_LOCAL_STORAGE_FULL
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  # ─── TENANT_BACKUP_RETENTION_CLEANUP_FAILED ─────────────────────────────────
+  - id: sig_144
+    pattern: "backup_retention_cleanup_failed"
+    incident_id: TENANT_BACKUP_RETENTION_CLEANUP_FAILED
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_145
+    pattern: "cleanup_backup_retention.*failed"
+    incident_id: TENANT_BACKUP_RETENTION_CLEANUP_FAILED
+    source: app_logs
+    confidence: 0.9
+    type: regex
+
+  # ─── TENANT_BACKUP_NOT_CONFIGURED ───────────────────────────────────────────
+  - id: sig_146
+    pattern: "backup_not_configured"
+    incident_id: TENANT_BACKUP_NOT_CONFIGURED
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_147
+    pattern: "BACKUP_ENABLED=false"
+    incident_id: TENANT_BACKUP_NOT_CONFIGURED
+    source: app_logs
+    confidence: 0.9
+    type: substring
