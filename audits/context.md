@@ -2501,3 +2501,36 @@ Frontend HostingList, StatusCommandBar, and the status classification logic upda
 Runbook TENANT_ROUTE_DOCKER_LABELS_ONLY.md created
 Signatures sig_128–133 added (plus sig_117/124/127 corrected to the right incident) 6–7. Safe and forbidden actions defined in runbook frontmatter and incident index
 scripts/ops/validate_provisioning_gate_live.sh created
+
+1256 passed, 0 failures. Here's a summary of all four bugs addressed:
+
+BUG 1 — YAML template fix (traefik_file_provider.py)
+
+The bug: mw_block had 8-space indent (        middlewares:) placed after certResolver: le (also 8 spaces), so YAML parsed middlewares as a child of tls:. Traefik logged field not found, node: middlewares and rejected the file.
+
+Fix: mw_block now uses 6-space indent (      middlewares:) placed before tls: — at router level, not inside tls. Also added _validate_traefik_yaml() which runs before os.replace() and raises ValueError immediately if the structure is wrong, preventing a bad file from ever reaching disk.
+
+BUG 2 — Legacy bundle false criticals
+
+Already fixed in the previous session (bundle detection in _router_source_for_tenant + _check_route). The gate now finds tenants in tenants-active.yml and sets dynamic_file_route_exists=True + uses_bundle_legacy=True. The Router Health Guard treats dynamic_file_bundle router source as healthy (no incident). migrate_legacy_bundle_routes.sh generates individual files on --apply.
+
+BUG 3 — validate_provisioning_gate_live.sh false PASS
+
+Script now:
+
+Labels each result with [STRUCTURAL PASS] or [FULL PASS] depending on --check-http
+For active_with_placeholder without --check-http: shows [STRUCTURAL PASS — runtime not validated] + reminder to use --check-http
+Checks yaml_structure_valid=False explicitly and emits a [YAML INVALID] fail before the status check
+routing_failed results are labelled [RUNTIME FAIL]
+BUG 4 — Signature
+
+sig_134 "Docker Provider route only" → TENANT_ROUTE_DOCKER_LABELS_ONLY was already added in the previous session.
+
+New tests added (6):
+
+test_traefik_yaml_structure_middlewares_at_router_level — parses YAML, asserts structure
+test_traefik_yaml_no_forwardauth_omits_middlewares — use_forwardauth=False produces no middlewares block
+test_validate_traefik_yaml_rejects_middlewares_under_tls — validator catches the bug
+test_validate_traefik_yaml_accepts_correct_structure — validator passes correct YAML
+test_gate_returns_routing_failed_for_invalid_yaml_structure — gate returns routing_failed for a file with the old broken template
+test_legacy_bundle_route_satisfies_gate — bundle tenants don't get routing_degraded

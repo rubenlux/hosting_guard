@@ -102,7 +102,7 @@ def _check_index_html(host_mount_path: str, checks: dict) -> None:
             logger.warning("provisioning_gate: index.html read failed: %s", exc)
 
 
-def _check_route(hosting_id: int, checks: dict) -> None:
+def _check_route(hosting_id: int, container_name: str, checks: dict) -> None:
     route_file = os.path.join(_TRAEFIK_DYNAMIC_DIR, f"tenant-{hosting_id}.yml")
     if os.path.isfile(route_file):
         checks["dynamic_file_route_exists"] = True
@@ -110,8 +110,29 @@ def _check_route(hosting_id: int, checks: dict) -> None:
             with open(route_file, "r", encoding="utf-8") as f:
                 content = f.read()
             checks["uses_forwardauth_file"] = "hg-forwardauth" in content
+            # Validate YAML structure — catches middlewares-under-tls bug
+            try:
+                from app.services.traefik_file_provider import _validate_traefik_yaml
+                _validate_traefik_yaml(content, route_file)
+                checks["yaml_structure_valid"] = True
+            except ValueError as yaml_exc:
+                checks["yaml_structure_valid"] = False
+                logger.warning("provisioning_gate: invalid YAML structure: %s", yaml_exc)
         except Exception as exc:
             logger.warning("provisioning_gate: route file read failed: %s", exc)
+        return
+    # Legacy bundle: all tenants in one file (pre-P2B deployments)
+    bundle_file = os.path.join(_TRAEFIK_DYNAMIC_DIR, "tenants-active.yml")
+    if os.path.isfile(bundle_file):
+        try:
+            with open(bundle_file, "r", encoding="utf-8") as f:
+                bundle_content = f.read()
+            if container_name in bundle_content:
+                checks["dynamic_file_route_exists"] = True
+                checks["uses_bundle_legacy"] = True
+                checks["uses_forwardauth_file"] = "hg-forwardauth" in bundle_content
+        except Exception as exc:
+            logger.warning("provisioning_gate: bundle route check failed: %s", exc)
 
 
 def _check_http(subdomain: str, container_name: str, checks: dict, timeout: float) -> None:
@@ -202,6 +223,14 @@ def _evaluate(checks: dict) -> ProvisioningGateResult:
             ],
         )
 
+    if checks.get("yaml_structure_valid") is False:
+        return _fail(
+            "routing_failed",
+            "Traefik route YAML has invalid structure (middlewares nested under tls)",
+            safe=["validate_traefik_dynamic_yaml", "regenerate_tenant_file_provider_route"],
+            forbidden=["mark_healthy_without_file_provider_route"],
+        )
+
     # ── content ─────────────────────────────────────────────────────────────
     if not checks["index_html_exists"]:
         return _fail(
@@ -250,6 +279,7 @@ def validate_static_tenant_provisioning(
         "placeholder_content": False,
         "dynamic_file_route_exists": False,
         "uses_forwardauth_file": False,
+        "yaml_structure_valid": None,  # None=not checked, True=valid, False=invalid
         "origin_http_status": None,
         "public_http_status": None,
     }
@@ -259,7 +289,7 @@ def validate_static_tenant_provisioning(
     _check_container(container_name, checks)
     _check_mount(container_name, host_mount_path, checks)
     _check_index_html(host_mount_path, checks)
-    _check_route(hosting_id, checks)
+    _check_route(hosting_id, container_name, checks)
     if check_http:
         _check_http(subdomain, container_name, checks, http_timeout)
 

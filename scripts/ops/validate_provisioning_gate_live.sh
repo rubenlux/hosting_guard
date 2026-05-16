@@ -123,6 +123,10 @@ echo -e "${CYN}HostingGuard — Provisioning Gate Live Validator${RST}"
 echo -e "${CYN}TRAEFIK_DYNAMIC_DIR: ${TRAEFIK_DYNAMIC_DIR}${RST}"
 echo -e "${CYN}CLIENTS_DIR:         ${CLIENTS_DIR}${RST}"
 echo -e "${CYN}check_http:          ${CHECK_HTTP}${RST}"
+if [[ "${CHECK_HTTP}" == "false" ]]; then
+  echo -e "${YEL}  ⚠ check_http=false — TLS/Cloudflare errors (526, SSL cert) will NOT be detected.${RST}"
+  echo -e "${YEL}    Use --check-http to validate public HTTPS reachability.${RST}"
+fi
 echo ""
 
 PASS=0
@@ -145,21 +149,39 @@ while IFS=$'\t' read -r hosting_id container_name subdomain; do
   ok_flag="$(echo "${result_json}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["ok"])')"
   reason="$(echo "${result_json}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["reason"])')"
 
+  # Annotate result with check scope so STRUCTURAL PASS vs RUNTIME PASS is clear
+  scope_label="STRUCTURAL"
+  if [[ "${CHECK_HTTP}" == "true" ]]; then
+    scope_label="FULL"
+  fi
+
+  yaml_valid="$(echo "${result_json}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("checks",{}).get("yaml_structure_valid","?"))')"
+  if [[ "${yaml_valid}" == "False" ]]; then
+    fail "YAML INVALID — Traefik will reject this file (middlewares nested under tls)"
+    (( FAIL++ )) || true
+    continue
+  fi
+
   case "${status}" in
     active)
-      ok "status=active — ${reason}"
+      ok "[${scope_label} PASS] status=active — ${reason}"
       (( PASS++ )) || true
       ;;
     active_with_placeholder)
-      ok "status=active_with_placeholder — ${reason}"
+      if [[ "${CHECK_HTTP}" == "false" ]]; then
+        warn "[STRUCTURAL PASS — runtime not validated] status=active_with_placeholder — ${reason}"
+        warn "    Run with --check-http to confirm public route + TLS are healthy."
+      else
+        ok "[${scope_label} PASS] status=active_with_placeholder — ${reason}"
+      fi
       (( PASS++ )) || true
       ;;
     pending_content)
-      warn "status=pending_content — ${reason}"
+      warn "[${scope_label}] status=pending_content — ${reason}"
       (( WARN++ )) || true
       ;;
     routing_degraded)
-      warn "status=routing_degraded — ${reason}"
+      warn "[${scope_label}] status=routing_degraded — ${reason}"
       echo "${result_json}" | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
@@ -171,7 +193,7 @@ for a in d.get("forbidden_actions", []):
       (( WARN++ )) || true
       ;;
     routing_failed|provisioning_failed)
-      fail "status=${status} — ${reason}"
+      fail "[RUNTIME FAIL] status=${status} — ${reason}"
       echo "${result_json}" | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
@@ -183,7 +205,7 @@ for k, v in checks.items():
       (( FAIL++ )) || true
       ;;
     *)
-      warn "status=${status} (unknown) — ${reason}"
+      warn "[${scope_label}] status=${status} (unknown) — ${reason}"
       (( WARN++ )) || true
       ;;
   esac

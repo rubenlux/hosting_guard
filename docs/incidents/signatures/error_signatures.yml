@@ -980,3 +980,10 @@ signatures:
     source: health_guard
     confidence: 0.98
     type: literal
+
+  - id: sig_134
+    pattern: "Docker Provider route only"
+    incident_id: TENANT_ROUTE_DOCKER_LABELS_ONLY
+    source: health_guard
+    confidence: 0.95
+    type: literal

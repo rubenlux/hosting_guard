@@ -31,6 +31,8 @@ _HTTP_TIMEOUT = 10
 # Traefik's default 404 body is "404 page not found" = 19 bytes
 _TRAEFIK_404_MAX_BODY = 30
 _BASE_DOMAIN = "hostingguard.lat"
+# Patchable in tests
+_TRAEFIK_DYNAMIC_DIR = "/opt/traefik-dynamic"
 
 
 def normalize_tenant_public_host(subdomain: str, base_domain: str = _BASE_DOMAIN) -> str:
@@ -273,6 +275,9 @@ def _classify_failure(status_code: int, content_type: str, body: bytes = b"") ->
         return "traefik_router_missing_or_unmatched"
     if status_code == 403 and _is_nginx_403_empty_dir(body):
         return "nginx_403_empty_index"
+    if status_code == 526:
+        # Cloudflare: Invalid SSL certificate on origin — ACME/TLS propagation failure
+        return "tls_or_certificate_issue"
     if status_code in (502, 503, 504):
         return "traefik_backend_unreachable"
     return "traefik_backend_unreachable"
@@ -343,11 +348,21 @@ def _router_source_for_platform(route_cfg: dict) -> str:
 
 
 def _router_source_for_tenant(hosting_id: int, container_name: str) -> str:
-    # Accept both naming conventions (tenant-{id}.yml and legacy {id}.yml)
-    if os.path.exists(f"/opt/traefik-dynamic/tenant-{hosting_id}.yml"):
+    # Individual file — current canonical form
+    if os.path.exists(f"{_TRAEFIK_DYNAMIC_DIR}/tenant-{hosting_id}.yml"):
         return "dynamic_file"
-    if os.path.exists(f"/opt/traefik-dynamic/{hosting_id}.yml"):
+    # Legacy alt name (pre-namespacing)
+    if os.path.exists(f"{_TRAEFIK_DYNAMIC_DIR}/{hosting_id}.yml"):
         return "dynamic_file"
+    # Legacy bundle: multiple tenants in one file (pre-P2B deployments)
+    bundle = f"{_TRAEFIK_DYNAMIC_DIR}/tenants-active.yml"
+    if os.path.exists(bundle):
+        try:
+            with open(bundle, "r", encoding="utf-8") as _f:
+                if container_name in _f.read():
+                    return "dynamic_file_bundle"
+        except Exception:
+            pass
     try:
         from app.infra.docker_client import run_docker_command
         rc, out, _ = run_docker_command(
@@ -608,6 +623,11 @@ def _check_tenant_hosting(h: dict) -> "RouterHealthResult":
                 f"{host} → HTTP {status_code} OK "
                 f"(File Provider YAML missing — Docker labels only routing)"
             )
+        elif router_source == "dynamic_file_bundle":
+            # Routed via legacy tenants-active.yml bundle — functional but needs migration
+            # to individual tenant-{id}.yml. Not an incident; flag in evidence only.
+            evidence["legacy_bundle"] = True
+            summary = f"{host} → HTTP {status_code} OK (legacy bundle — individual YAML migration needed)"
         else:
             summary = f"{host} → HTTP {status_code} OK"
 
