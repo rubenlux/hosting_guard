@@ -113,9 +113,10 @@ services:
 
     volumes:
       - ./data:/app/data
-      - /usr/bin/docker:/usr/bin/docker:ro   # binario docker del host (solo lectura)
-      - /opt/clients:/opt/clients             # sitios desplegados por usuarios (github deploy)
-      - imports:/tmp/hg_imports              # uploads compartidos con el worker
+      - /usr/bin/docker:/usr/bin/docker:ro       # binario docker del host (solo lectura)
+      - /opt/clients:/opt/clients                # sitios desplegados por usuarios (github deploy)
+      - imports:/tmp/hg_imports                  # uploads compartidos con el worker
+      - /opt/hostingguard-backups:/opt/hostingguard-backups  # almacenamiento de tenant backups (P3A)
       # sin socket directo — DOCKER_HOST apunta al proxy
 
     networks:
@@ -298,6 +299,7 @@ services:
       - /opt/clients:/opt/clients
       - ./data:/app/data
       - imports:/tmp/hg_imports
+      - /opt/hostingguard-backups:/opt/hostingguard-backups
     networks:
       - hosting_network
       - socket_proxy_network
@@ -329,6 +331,7 @@ services:
       - /usr/bin/docker:/usr/bin/docker:ro
       - /opt/clients:/opt/clients
       - ./data:/app/data
+      - /opt/hostingguard-backups:/opt/hostingguard-backups
     networks:
       - hosting_network
       - socket_proxy_network

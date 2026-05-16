@@ -2582,3 +2582,25 @@ admin_override (tenant_backup_policies.admin_override=true)
         → plan (agencia/profesional/básico/free)
             → default
 Si paused=true, el scheduler no lanza backups automáticos aunque el hosting tenga derecho. El admin puede seguir forzando un backup manual.
+
+Resumen de cambios
+Causa raíz del crash (React error #31)
+admin_create_backup retornaba detail=result (un dict) cuando el backup fallaba. El frontend hacía flash(e?.response?.data?.detail), guardaba el objeto en state, y {actionMsg.msg} intentaba renderizar el objeto como hijo JSX → crash.
+
+Fixes aplicados
+Backend
+
+Archivo	Cambio
+app/api/routes/backup.py	Eliminada la ruta GET /hostings/{id}/backups duplicada (línea 87, que era la vieja que leía de backups table y bloqueaba la ruta P3A). La P3A de línea 248 ahora gana y maneja correctamente admin + non-owner (403) + not-found (404). Try/except protege de 500.
+app/api/routes/admin_backup.py	detail=result (dict) → detail=result.get("error_message") (string). Nuevo endpoint GET /admin/hostings/{id}/backups que devuelve 200 [] para hostings sin backups y 404 para hosting inexistente.
+app/services/tenant_backup_service.py	Agregadas columnas protected, protected_reason a ambos SELECTs en list_tenant_backups.
+Frontend
+
+Archivo	Cambio
+BackupPolicyPanel.jsx	Nuevo helper getErrorMsg(e, fallback) — extrae string de detail sea string u objeto {code, message}. Todos los handlers (handleSave, handlePause, handleResume, handleForceBackup, load) usan getErrorMsg en lugar de e?.response?.data?.detail. Nuevo tab "Backups" con BackupListTab que usa getAdminBackupList.
+api.js	Nueva función getAdminBackupList(hostingId, limit) → GET /admin/hostings/{id}/backups.
+Tests — +6 backend (22 total), +6 frontend (169 total)
+
+Service: admin empty, owner rows, protected fields, no-500 on empty
+API: admin any hosting → 200, non-owner → 403
+Frontend: backups=[], error string, object detail no crash, adminCreateBackup object detail, tab usa endpoint correcto, getAdminBackupPolicy falla → string
