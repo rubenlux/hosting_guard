@@ -2551,3 +2551,34 @@ Frontend
 frontend/src/components/admin/BackupPolicyPanel.jsx — Full admin panel: status badges (paused/override/daily+manual/manual-only/none), source badge (admin_override/addon/plan/default), action buttons (backup now, pause, resume, reload), 3-tab layout (Política / Historial / Cleanup), editable policy form with all fields, history table with per-entry revert, cleanup mode selector with dry_run guard
 frontend/src/services/api.js — 9 new P3B API functions appended
 Tests — tests/test_admin_backup_policy.py: 16 tests, all passing
+
+P3B — Admin Backup Control Panel
+Estado: Completo. 163 tests frontend / 16 tests backend, 0 fallos.
+
+Qué se construyó
+Backend
+
+Archivo	Descripción
+app/infra/migrations.py	4 nuevas migraciones: columnas protected/protected_reason en tenant_backups, tablas tenant_backup_policies y tenant_backup_policy_history
+app/services/backup_policy_service.py	Nuevo servicio (~420 líneas): EffectiveBackupPolicy, resolución de prioridad admin_override > addon > plan > default, upsert_policy, revert_policy, set_backup_protected
+app/services/tenant_backup_service.py	Modificado: scheduler respeta policy.paused y policy.automatic_backup_enabled; cleanup excluye backups protegidos
+app/api/routes/admin_backup.py	Nuevo router con 9 endpoints (GET/PUT policy, POST backup manual, pause/resume, cleanup, historial, revert, protect)
+app/api/main.py	Registrado admin_backup_router
+Frontend
+
+Archivo	Descripción
+frontend/src/components/admin/BackupPolicyPanel.jsx	Panel completo (~545 líneas): 3 tabs (Política / Historial / Cleanup), badges de estado/fuente, formulario de política, tabla de historial con revert, panel de cleanup con dry-run
+frontend/src/services/api.js	9 nuevas funciones de API
+frontend/src/pages/AdminDashboard.jsx	Botón Archive en cada fila de hostings → abre modal con BackupPolicyPanel
+frontend/src/components/admin/BackupPolicyPanel.test.jsx	9 tests (carga de API, badges, checkbox diario, pause/resume, historial vacío, cleanup dry-run)
+Tests
+
+tests/test_admin_backup_policy.py — 16 tests backend (INSERT path, UPDATE path, revert, cleanup, pause/resume, protected, historial)
+tests/test_tenant_backup_service.py — 6 tests corregidos (admin_override=True en _patch_db)
+Flujo de política efectiva
+
+admin_override (tenant_backup_policies.admin_override=true)
+    → addon_active
+        → plan (agencia/profesional/básico/free)
+            → default
+Si paused=true, el scheduler no lanza backups automáticos aunque el hosting tenga derecho. El admin puede seguir forzando un backup manual.

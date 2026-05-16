@@ -149,8 +149,32 @@ def admin_create_backup(
     )
 
     if result.get("status") == "failed":
-        raise HTTPException(status_code=500, detail=result)
+        raise HTTPException(
+            status_code=500,
+            detail=result.get("error_message") or str(result.get("error_code", "backup_failed")),
+        )
     return result
+
+
+# ── GET admin backup list ─────────────────────────────────────────────────────
+
+@router.get("/hostings/{hosting_id}/backups")
+def admin_list_backups(
+    hosting_id: int,
+    limit: int = 20,
+    admin: dict = Depends(require_role("admin")),
+):
+    """List all backups for any hosting (admin only). Returns 200 [] when empty."""
+    from app.services.tenant_backup_service import list_tenant_backups as _list
+    from app.infra.audit.hosting_repository import HostingRepository
+    repo = HostingRepository()
+    if not repo.get_hosting_any(hosting_id):
+        raise HTTPException(status_code=404, detail="Hosting not found")
+    try:
+        items = _list(hosting_id, admin=True, limit=limit)
+    except Exception:
+        items = []
+    return {"items": items, "total": len(items)}
 
 
 # ── POST pause ────────────────────────────────────────────────────────────────

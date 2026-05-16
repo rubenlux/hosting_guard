@@ -800,7 +800,8 @@ def list_tenant_backups(hosting_id: int, user_id: Optional[int] = None,
                 """SELECT backup_id, hosting_id, user_id, backup_type, status, trigger,
                           retention_policy, files_size_bytes, database_size_bytes,
                           total_size_bytes, subdomain, container_name,
-                          started_at, finished_at, expires_at, error_code, error_message
+                          started_at, finished_at, expires_at, error_code, error_message,
+                          protected, protected_reason
                    FROM tenant_backups WHERE hosting_id=%s AND status != 'deleted'
                    ORDER BY started_at DESC LIMIT %s""",
                 (hosting_id, limit),
@@ -810,7 +811,8 @@ def list_tenant_backups(hosting_id: int, user_id: Optional[int] = None,
                 """SELECT backup_id, hosting_id, user_id, backup_type, status, trigger,
                           retention_policy, files_size_bytes, database_size_bytes,
                           total_size_bytes, subdomain, container_name,
-                          started_at, finished_at, expires_at, error_code, error_message
+                          started_at, finished_at, expires_at, error_code, error_message,
+                          protected, protected_reason
                    FROM tenant_backups WHERE hosting_id=%s AND user_id=%s AND status != 'deleted'
                    ORDER BY started_at DESC LIMIT %s""",
                 (hosting_id, user_id, limit),

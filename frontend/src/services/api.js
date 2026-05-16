@@ -1165,3 +1165,8 @@ export const setBackupProtected = async (hostingId, backupId, protected_, reason
   const response = await api.patch(`/admin/hostings/${hostingId}/backups/${backupId}/protect`, { protected: protected_, reason });
   return response.data;
 };
+
+export const getAdminBackupList = async (hostingId, limit = 20) => {
+  const response = await api.get(`/admin/hostings/${hostingId}/backups`, { params: { limit } });
+  return response.data;
+};

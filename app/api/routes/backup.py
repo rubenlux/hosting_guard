@@ -84,16 +84,6 @@ async def create_backup(request: Request, hosting_id: int, user: dict = Depends(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@router.get("/hostings/{hosting_id}/backups")
-def list_backups(hosting_id: int, user: dict = Depends(verify_token)):
-    user_id = user["user_id"]
-    hosting = _hosting_repo.get_hosting(hosting_id, user_id)
-    if not hosting:
-        raise HTTPException(status_code=404, detail="Hosting not found")
-    from app.services.backup_service import list_backups as _list
-    return {"items": _list(hosting_id, user_id)}
-
-
 @router.get("/backups/{backup_id}/download")
 @limiter.limit("10/hour")
 async def download_backup(
@@ -247,17 +237,22 @@ async def create_tenant_backup(
 
 @router.get("/hostings/{hosting_id}/backups")
 def list_tenant_backups(hosting_id: int, user: dict = Depends(verify_token)):
-    """List backups for a hosting (owner or admin)."""
+    """List backups for a hosting (owner or admin). Non-owner non-admin → 403."""
     user_id = int(user["user_id"])
     is_admin = user.get("role") == "admin"
 
     if not is_admin:
-        hosting = _hosting_repo.get_hosting(hosting_id, user_id)
+        hosting = _hosting_repo.get_hosting_any(hosting_id)
         if not hosting:
             raise HTTPException(status_code=404, detail="Hosting not found")
+        if hosting.get("user_id") != user_id:
+            raise HTTPException(status_code=403, detail="Acceso denegado")
 
     from app.services.tenant_backup_service import list_tenant_backups as _list
-    items = _list(hosting_id, user_id=user_id if not is_admin else None, admin=is_admin)
+    try:
+        items = _list(hosting_id, user_id=user_id if not is_admin else None, admin=is_admin)
+    except Exception:
+        items = []
     return {"items": items, "total": len(items)}
 
 

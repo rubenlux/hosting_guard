@@ -2,13 +2,24 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   Archive, Play, Pause, RefreshCw, Trash2, Shield, ShieldOff,
   ChevronDown, ChevronRight, Loader2, AlertTriangle, CheckCircle2,
-  Settings, History, RotateCcw, Zap, Clock, Lock,
+  Settings, History, RotateCcw, Zap, Clock, Lock, Database,
 } from 'lucide-react';
 import {
   getAdminBackupPolicy, updateAdminBackupPolicy, adminCreateBackup,
   adminPauseBackups, adminResumeBackups, adminCleanupBackups,
   getAdminBackupPolicyHistory, revertAdminBackupPolicy,
+  getAdminBackupList,
 } from '../../services/api';
+
+function getErrorMsg(e, fallback = 'Error inesperado') {
+  const detail = e?.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (detail?.message) return String(detail.message);
+  if (detail?.error_message) return String(detail.error_message);
+  if (detail?.code) return `Error: ${detail.code}`;
+  if (e?.message) return String(e.message);
+  return fallback;
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -267,6 +278,68 @@ function HistoryTable({ hostingId, onRevert }) {
   );
 }
 
+// ── admin backup list ─────────────────────────────────────────────────────────
+
+const STATUS_COLOR = {
+  completed: 'text-green-400',
+  failed:    'text-red-400',
+  running:   'text-blue-400',
+  pending:   'text-blue-400',
+  partial:   'text-amber-400',
+};
+
+function BackupListTab({ hostingId }) {
+  const [backups, setBackups] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    getAdminBackupList(hostingId)
+      .then(d => setBackups(d.items || []))
+      .catch(e => setError(getErrorMsg(e, 'Error cargando backups')))
+      .finally(() => setLoading(false));
+  }, [hostingId]);
+
+  if (loading) return (
+    <div className="flex items-center gap-2 py-6 text-zinc-500 text-sm">
+      <Loader2 size={14} className="animate-spin" /> Cargando backups...
+    </div>
+  );
+  if (error) return (
+    <div className="flex items-center gap-2 py-4 text-red-400 text-sm" data-testid="backup-list-error">
+      <AlertTriangle size={14} /> {error}
+    </div>
+  );
+  if (!backups.length) return (
+    <div className="flex items-center gap-2 py-4 text-zinc-500 text-sm">
+      <Database size={14} /> Sin backups registrados.
+    </div>
+  );
+
+  return (
+    <div className="space-y-1.5" data-testid="backup-list">
+      {backups.map(b => (
+        <div key={b.backup_id}
+          className="flex items-center gap-3 px-3 py-2 rounded-lg bg-zinc-800/50 border border-zinc-800 text-xs">
+          <span className={`font-medium shrink-0 ${STATUS_COLOR[b.status] || 'text-zinc-400'}`}>
+            {b.status}
+          </span>
+          <span className="text-zinc-400 flex-1 truncate">
+            {b.backup_type} · {b.trigger}
+            {b.total_size_bytes ? ` · ${(b.total_size_bytes / (1024 * 1024)).toFixed(1)} MB` : ''}
+          </span>
+          {b.protected && (
+            <Shield size={12} className="text-amber-400 shrink-0" title="Protegido" />
+          )}
+          <span className="text-zinc-600 shrink-0">{fmtDate(b.started_at)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
 // ── cleanup panel ─────────────────────────────────────────────────────────────
 
 function CleanupPanel({ hostingId }) {
@@ -342,7 +415,7 @@ export default function BackupPolicyPanel({ hostingId }) {
     setLoading(true);
     getAdminBackupPolicy(hostingId)
       .then(setPolicy)
-      .catch(e => setError(e?.response?.data?.detail || 'Error al cargar política'))
+      .catch(e => setError(getErrorMsg(e, 'Error al cargar política')))
       .finally(() => setLoading(false));
   }, [hostingId]);
 
@@ -360,7 +433,7 @@ export default function BackupPolicyPanel({ hostingId }) {
       await load();
       flash('Política guardada');
     } catch (e) {
-      flash(e?.response?.data?.detail || 'Error al guardar', false);
+      flash(getErrorMsg(e, 'Error al guardar'), false);
     } finally {
       setSaving(false);
     }
@@ -374,7 +447,7 @@ export default function BackupPolicyPanel({ hostingId }) {
       await load();
       flash('Backups pausados');
     } catch (e) {
-      flash(e?.response?.data?.detail || 'Error al pausar', false);
+      flash(getErrorMsg(e, 'Error al pausar'), false);
     }
   };
 
@@ -384,7 +457,7 @@ export default function BackupPolicyPanel({ hostingId }) {
       await load();
       flash('Backups reanudados');
     } catch (e) {
-      flash(e?.response?.data?.detail || 'Error al reanudar', false);
+      flash(getErrorMsg(e, 'Error al reanudar'), false);
     }
   };
 
@@ -394,7 +467,7 @@ export default function BackupPolicyPanel({ hostingId }) {
       await adminCreateBackup(hostingId, { backup_type: 'full', reason: 'backup manual admin' });
       flash('Backup iniciado');
     } catch (e) {
-      flash(e?.response?.data?.detail || 'Error al crear backup', false);
+      flash(getErrorMsg(e, 'Error al crear backup'), false);
     } finally {
       setCreatingBackup(false);
     }
@@ -416,6 +489,7 @@ export default function BackupPolicyPanel({ hostingId }) {
 
   const tabs = [
     { id: 'policy',  label: 'Política',  icon: Settings },
+    { id: 'backups', label: 'Backups',   icon: Database },
     { id: 'history', label: 'Historial', icon: History },
     { id: 'cleanup', label: 'Cleanup',   icon: Trash2 },
   ];
@@ -532,6 +606,9 @@ export default function BackupPolicyPanel({ hostingId }) {
       {/* tab content */}
       {section === 'policy' && policy && (
         <PolicyForm policy={policy} onSave={handleSave} saving={saving} />
+      )}
+      {section === 'backups' && (
+        <BackupListTab hostingId={hostingId} />
       )}
       {section === 'history' && (
         <HistoryTable hostingId={hostingId} onRevert={() => { load(); setSection('policy'); }} />

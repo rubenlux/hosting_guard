@@ -30,6 +30,7 @@ vi.mock('../../services/api', () => ({
   getAdminBackupPolicyHistory:  vi.fn(),
   revertAdminBackupPolicy:     vi.fn(),
   setBackupProtected:          vi.fn(),
+  getAdminBackupList:          vi.fn(),
   // AdminDashboard API (needed for HostingsTable)
   getAdminHostings:            vi.fn(),
   getAdminHostingsMetrics:     vi.fn(),
@@ -38,6 +39,7 @@ vi.mock('../../services/api', () => ({
 import {
   getAdminBackupPolicy, getAdminBackupPolicyHistory,
   adminPauseBackups, adminResumeBackups,
+  adminCreateBackup, getAdminBackupList,
 } from '../../services/api';
 import BackupPolicyPanel from './BackupPolicyPanel';
 
@@ -87,6 +89,7 @@ const POLICY_DAILY_ACTIVE = {
 function renderPanel(policy = POLICY_MANUAL_ONLY) {
   getAdminBackupPolicy.mockResolvedValue(policy);
   getAdminBackupPolicyHistory.mockResolvedValue([]);
+  getAdminBackupList.mockResolvedValue({ items: [], total: 0 });
   return render(<BackupPolicyPanel hostingId={56} />);
 }
 
@@ -191,6 +194,117 @@ describe('BackupPolicyPanel', () => {
   });
 });
 
+// ── Tests 10–15: Error handling and backup list ───────────────────────────────
+
+describe('BackupPolicyPanel — error handling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('10 — renders with backups=[] without crashing', async () => {
+    getAdminBackupPolicy.mockResolvedValue(POLICY_MANUAL_ONLY);
+    getAdminBackupPolicyHistory.mockResolvedValue([]);
+    getAdminBackupList.mockResolvedValue({ items: [], total: 0 });
+
+    render(<BackupPolicyPanel hostingId={56} />);
+
+    await waitFor(() => screen.getByText('Política de Backups'));
+
+    fireEvent.click(screen.getByText('Backups'));
+    await waitFor(() => {
+      expect(screen.getByText(/Sin backups registrados/i)).toBeTruthy();
+    });
+  });
+
+  it('11 — shows error string if getAdminBackupList fails (not object)', async () => {
+    getAdminBackupPolicy.mockResolvedValue(POLICY_MANUAL_ONLY);
+    getAdminBackupPolicyHistory.mockResolvedValue([]);
+    getAdminBackupList.mockRejectedValue({
+      response: { data: { detail: 'DB unavailable' } },
+    });
+
+    render(<BackupPolicyPanel hostingId={56} />);
+    await waitFor(() => screen.getByText('Política de Backups'));
+
+    fireEvent.click(screen.getByText('Backups'));
+    await waitFor(() => {
+      expect(screen.getByText('DB unavailable')).toBeTruthy();
+    });
+  });
+
+  it('12 — does not crash when error detail is an object {code, message}', async () => {
+    getAdminBackupPolicy.mockResolvedValue(POLICY_MANUAL_ONLY);
+    getAdminBackupPolicyHistory.mockResolvedValue([]);
+    getAdminBackupList.mockRejectedValue({
+      response: { data: { detail: { code: 'backup_failed', message: 'Container offline' } } },
+    });
+
+    render(<BackupPolicyPanel hostingId={56} />);
+    await waitFor(() => screen.getByText('Política de Backups'));
+
+    fireEvent.click(screen.getByText('Backups'));
+    await waitFor(() => {
+      // Should render the message string, NOT crash
+      expect(screen.getByText('Container offline')).toBeTruthy();
+    });
+  });
+
+  it('13 — adminCreateBackup failure with object detail shows string, no crash', async () => {
+    getAdminBackupPolicy.mockResolvedValue(POLICY_MANUAL_ONLY);
+    getAdminBackupPolicyHistory.mockResolvedValue([]);
+    getAdminBackupList.mockResolvedValue({ items: [], total: 0 });
+    adminCreateBackup.mockRejectedValue({
+      response: { data: { detail: { code: 'backup_failed', message: 'Disco lleno' } } },
+    });
+
+    render(<BackupPolicyPanel hostingId={56} />);
+    await waitFor(() => screen.getByText('Backup ahora'));
+
+    fireEvent.click(screen.getByText('Backup ahora'));
+    await waitFor(() => {
+      expect(screen.getByText('Disco lleno')).toBeTruthy();
+    });
+  });
+
+  it('14 — admin panel uses getAdminBackupList for Backups tab', async () => {
+    getAdminBackupPolicy.mockResolvedValue(POLICY_MANUAL_ONLY);
+    getAdminBackupPolicyHistory.mockResolvedValue([]);
+    getAdminBackupList.mockResolvedValue({
+      items: [
+        {
+          backup_id: 1, status: 'completed', backup_type: 'full', trigger: 'manual',
+          total_size_bytes: 1048576, started_at: '2026-05-01T12:00:00Z',
+          protected: false, protected_reason: null,
+        },
+      ],
+      total: 1,
+    });
+
+    render(<BackupPolicyPanel hostingId={56} />);
+    await waitFor(() => screen.getByText('Política de Backups'));
+
+    fireEvent.click(screen.getByText('Backups'));
+    await waitFor(() => {
+      expect(getAdminBackupList).toHaveBeenCalledWith(56);
+      expect(screen.getByText('completed')).toBeTruthy();
+    });
+  });
+
+  it('15 — getAdminBackupPolicy failure shows error string, not object', async () => {
+    getAdminBackupPolicy.mockRejectedValue({
+      response: { data: { detail: { code: 'not_found', message: 'Hosting no encontrado' } } },
+    });
+    getAdminBackupPolicyHistory.mockResolvedValue([]);
+    getAdminBackupList.mockResolvedValue({ items: [], total: 0 });
+
+    render(<BackupPolicyPanel hostingId={99} />);
+    await waitFor(() => {
+      expect(screen.getByText('Hosting no encontrado')).toBeTruthy();
+    });
+  });
+});
+
+
 // ── Tests 1–2: AdminDashboard integration ────────────────────────────────────
 // These tests verify the button appears in the table and opens the panel.
 // We test BackupPolicyPanel directly (unit) rather than mounting the entire
@@ -206,6 +320,7 @@ describe('AdminDashboard Backups button — integration contract', () => {
   it('1 — BackupPolicyPanel accepts hostingId prop and calls the API', async () => {
     getAdminBackupPolicy.mockResolvedValue(POLICY_MANUAL_ONLY);
     getAdminBackupPolicyHistory.mockResolvedValue([]);
+    getAdminBackupList.mockResolvedValue({ items: [], total: 0 });
 
     render(<BackupPolicyPanel hostingId={56} />);
 
@@ -217,6 +332,7 @@ describe('AdminDashboard Backups button — integration contract', () => {
   it('2 — BackupPolicyPanel renders policy state badge after loading', async () => {
     getAdminBackupPolicy.mockResolvedValue(POLICY_DAILY_ACTIVE);
     getAdminBackupPolicyHistory.mockResolvedValue([]);
+    getAdminBackupList.mockResolvedValue({ items: [], total: 0 });
 
     render(<BackupPolicyPanel hostingId={56} />);
 
