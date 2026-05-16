@@ -7,7 +7,8 @@
       "Bash(python3:*)",
       "Bash(wc -l /c/Users/ruben/Documents/Mis-Proyectos/hosting_guard/frontend/src/components/dashboard/*.jsx)",
       "Bash(pip list *)",
-      "Bash(python -m pytest tests/test_nginx_403_empty_index.py tests/test_router_health_guard.py -q)"
+      "Bash(python -m pytest tests/test_nginx_403_empty_index.py tests/test_router_health_guard.py -q)",
+      "Bash(python -m pytest tests/test_api_admin_metrics.py -v)"
     ]
   }
 }

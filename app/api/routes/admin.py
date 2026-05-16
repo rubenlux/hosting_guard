@@ -69,17 +69,6 @@ def list_all_hostings(user: dict = Depends(require_role("admin"))):
     return _hosting_repo.get_all_hostings()
 
 
-@router.get("/hostings/{hosting_id}")
-def get_hosting_by_id(hosting_id: int, user: dict = Depends(require_role("admin"))):
-    """Direct admin lookup by hosting_id. Used by chaos/E2E scripts to validate tenants."""
-    hostings = _hosting_repo.get_all_hostings()
-    for h in hostings:
-        if h.get("hosting_id") == hosting_id:
-            return h
-    from fastapi import HTTPException as _HTTPException
-    raise _HTTPException(status_code=404, detail=f"Hosting {hosting_id} not found")
-
-
 @router.get("/hostings/metrics")
 @limiter.limit("5/minute")
 async def get_all_hostings_metrics(request: Request, _: dict = Depends(require_role("admin"))):
@@ -140,6 +129,17 @@ async def get_all_hostings_metrics(request: Request, _: dict = Depends(require_r
         })
 
     return out
+
+
+@router.get("/hostings/{hosting_id}")
+def get_hosting_by_id(hosting_id: int, user: dict = Depends(require_role("admin"))):
+    """Direct admin lookup by hosting_id. Used by chaos/E2E scripts to validate tenants."""
+    hostings = _hosting_repo.get_all_hostings()
+    for h in hostings:
+        if h.get("hosting_id") == hosting_id:
+            return h
+    from fastapi import HTTPException as _HTTPException
+    raise _HTTPException(status_code=404, detail=f"Hosting {hosting_id} not found")
 
 
 @router.get("/users/{user_id}/full")

@@ -2604,3 +2604,35 @@ Tests — +6 backend (22 total), +6 frontend (169 total)
 Service: admin empty, owner rows, protected fields, no-500 on empty
 API: admin any hosting → 200, non-owner → 403
 Frontend: backups=[], error string, object detail no crash, adminCreateBackup object detail, tab usa endpoint correcto, getAdminBackupPolicy falla → string
+
+Informe — BUG Dashboard Metrics 422
+Completado
+Bug principal: GET /admin/hostings/metrics → 422 int_parsing
+
+Causa: FastAPI registraba /hostings/{hosting_id} antes que /hostings/metrics, capturando "metrics" como int
+Fix: movida la ruta estática /hostings/metrics antes de la dinámica /hostings/{hosting_id} en admin.py
+Tests nuevos: tests/test_api_admin_metrics.py — 6 tests
+
+/admin/hostings/metrics → 200, no 422
+"metrics" no parseado como int hosting_id
+/admin/hostings/56 con int real → 200
+/admin/hostings/9999 inexistente → 404
+/admin/hostings/abc (no-int, no-metrics) → 422
+/admin/hostings/56/backup-policy no afectado por el reordenamiento
+Fix en test 6: el fake de política usaba clase plana; cambiado a instancia real de EffectiveBackupPolicy (dataclass) para que dataclasses.asdict() funcione.
+
+Estado final
+Suite	Resultado
+Backend (pytest tests/)	1313 passed, 1 skipped
+Frontend (npm run test)	169 passed
+test_api_admin_metrics.py	6/6 passed
+Pendiente (producción)
+El docker-compose.yml local ya tiene el volumen /opt/hostingguard-backups añadido. Cuando hagas deploy, recuerda actualizar manualmente /opt/deploy/docker-compose.yml en el servidor:
+
+
+# En hosting-guard-prod, bajo cada servicio app / worker / scheduler:
+- /opt/hostingguard-backups:/opt/hostingguard-backups
+Y validar:
+
+
+curl https://api.hostingguard.lat/admin/hostings/metrics  # → 200, array JSON
