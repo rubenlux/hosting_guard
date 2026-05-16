@@ -2326,3 +2326,178 @@ tests/test_upload_zip_validation.py:
 
 Fixture: added user_id: 2, status: "active" to mock hosting dict; set both get_hosting.return_value and get_hosting_any.return_value.
 8 new regression tests covering the primary 404 bug, admin access, owner access, 403 for non-owner, 404 for missing, 409 for deleted, structured response, and missing_index_html.
+
+Informe — HostingGuard P1 + P2
+P1 — Upload ZIP: endpoint devolvía 404/503 para hostings existentes
+Problema raíz: get_hosting(id, user_id) filtra WHERE user_id = ?, fallando cuando el admin tiene un user_id distinto al dueño del hosting.
+
+Cambios aplicados en hosting.py:
+
+Autorización reescrita: get_hosting_any(id) + validación de ownership en Python + bypass para admin + bloqueo de deleted
+file.filename normalizado a str (era str | None)
+site_dir construido con os.path.join(...) en lugar de f-string (necesario para que el fixture de tests pueda parcharlo)
+Validaciones añadidas: ZIP vacío, index.html requerido, extensiones bloqueadas
+Swap atómico: _new/ → _backup/ → mueve contenido → rollback si falla
+Respuesta estructurada: { status, hosting_id, subdomain, url, files_applied, index_html, target_dir }
+Tests: 17/17 en test_upload_zip_validation.py ✓
+
+P2 — Provisioning Gate para tenants estáticos
+Objetivo: Impedir que un tenant recién creado quede marcado como active si no está operativo.
+
+Archivos nuevos:
+
+Archivo	Descripción
+app/services/provisioning_gate.py	12 checks, evaluador por prioridad, ProvisioningGateResult
+app/services/traefik_file_provider.py	Crea/borra YAML del File Provider con rename atómico
+Jerarquía de estados (mejor → peor):
+
+
+active → active_with_placeholder → pending_content
+       → routing_degraded → routing_failed → provisioning_failed
+Cambios en hosting_repository.py:
+
+5 nuevos estados añadidos a VALID_STATUSES.
+
+Integración en create_hosting:
+
+Crea directorio host + placeholder index.html si no existe
+Crea Traefik File Provider YAML (tenant-{id}.yml)
+Ejecuta gate con check_http=False (TLS/routing no están listos aún)
+Actualiza status en DB si no es active
+Escribe evento de auditoría hosting.provisioning.gate_passed/gate_failed
+Devuelve provisioning_status en la respuesta
+Tests: 17/17 en test_provisioning_gate.py ✓
+
+Suite completa: 1246 passed, 1 skipped, 0 failed ✓
+
+Pendiente (no implementado en esta sesión)
+Integración de delete_tenant_file_provider al borrar un hosting
+Router Health Guard consumiendo ProvisioningGate
+Dashboard UI: mostrar estados pending_content, routing_degraded, etc.
+Runbook TENANT_ROUTE_DOCKER_LABELS_ONLY en INCIDENT_INDEX.md
+
+---------------------------------------------------------------
+
+## Coolify vs HostingGuard — Benchmark Técnico
+Qué es Coolify en realidad
+Stack: PHP 78% / Blade 19% / Shell. Laravel + PostgreSQL + Redis + Docker Engine v24+. Traefik v2 por defecto (también Caddy y Nginx). Tiempo real vía Soketi (puerto 6001). Terminal en browser (6002).
+
+Modelo: Control plane que conecta a servidores remotos vía SSH y orquesta Docker en ellos. No corre las apps — las orquesta en tus servidores. Es un PaaS developer self-service, no hosting gestionado.
+
+Conclusión rápida: No son competidores directos. Coolify vende "gestión de N servidores propios". HostingGuard vende "hosting gestionado". El eje de comparación útil es qué patrones técnicos están resueltos allá y no aquí.
+
+Matriz por área
+Área	Coolify	HostingGuard	Brecha
+Server onboarding	SSH keypair + 4 checks + instala Traefik	Provisioning Gate (12 checks) por tenant	Paradigma distinto — el Gate de HG es equivalente funcional
+App deployment	Nixpacks (50+ runtimes), Dockerfile, Compose, PR previews	4 estrategias (Dockerfile, server, static_built, static_pure), webhook HMAC	Sin Nixpacks, sin PR preview environments
+Static sites	Toggle + Static buildpack + Traefik	Strategy C + _find_serve_dir + health check post-deploy	Equivalente; HG tiene post-deploy diagnosis que Coolify no
+Databases	PostgreSQL, MariaDB, MongoDB, Redis, ClickHouse, SurrealDB, MinIO	Solo MariaDB per-tenant (WordPress)	Gran brecha en variedad y backup automation
+Docker orchestration	Standalone + Swarm experimental, cleanup automático por disco	Standalone, container locks, scheduler/worker separados	Falta cleanup automático por presión de disco
+Proxy / routing	Traefik + Caddy + Nginx, middleware chains, Cloudflare Tunnel	Traefik + Router Health Guard + custom domain con compound TLD	HG tiene Router Health Guard — Coolify no tiene nada equivalente
+TLS / certificados	Let's Encrypt vía Traefik, Cloudflare integration	Let's Encrypt vía Traefik, ssl_status por dominio	Equivalente; HG falta last_cert_renewal + alerta de expiración
+Backups	Cron + pg_dump custom format + S3 + IAM policy generation	Solo backup del DB propio (pg_dump en hosting-guard-db)	Gap crítico: datos de tenant (WordPress files + MariaDB) sin backup automatizado
+Templates	150+ Compose templates, magic variables (SERVICE_PASSWORD_*)	WordPress+MariaDB y nginx static (opinionated)	HG no compite en marketplace — falta depth en vertical WordPress
+Logs / observability	Log drains (Axiom, New Relic), Sentinel CPU/RAM, 6 canales de notificación	Prometheus metrics, log parser, wp attack aggregation, diagnostic engine	HG más sofisticado en WordPress; falta log drain externo y canales Discord/Webhook
+Health checks	Docker HEALTHCHECK + Traefik routing a containers saludables	health_engine + post-deploy check + Router Health Guard + diagnostic engine	HG más avanzado para el caso managed; verificar integración Traefik→health
+User / team model	Team con owner+members, API tokens con 4 niveles de scope	User con plans, admin/staff, impersonación	Gap crítico para agencias: sin modelo de equipos ni sub-cuentas de cliente
+Security model	SSH keypair, Docker network isolation, 2FA, APP_KEY encryption	JWT revocation, CSP/HSTS, path traversal protection, container locks, WP attack detection, audit log inmutable	HG más fuerte en WordPress security; falta 2FA y aislamiento de red por tenant
+Installation	curl | bash, single command, 9 pasos automatizados	SaaS — no aplica	N/A por diseño
+Monetización	Self-hosted gratis + cloud $5/mes base + $3/mes por servidor	SaaS puro, planes $0–$129/mes, agency focus	Modelos distintos — no compiten
+A. Qué estudiar en profundidad
+1. Template Magic Variables (SERVICE_PASSWORD_*, SERVICE_FQDN_*)
+Generación determinista de secrets por servicio, idempotente entre redeployments. Patrón correcto para inyección de WP_DB_PASSWORD, WP_AUTH_KEY, etc. en tenants de WordPress.
+
+2. Sentinel + CheckAndStartSentinelJob
+Contenedor ligero que pushea métricas CPU/RAM + job que monitorea al monitor (auto-restart, auto-update, 120s timeout). Patrón de self-healing monitoring que HG necesita para el health watcher de tenants.
+
+3. Backup pipeline completo
+Cron por base de datos + pg_dump --format=custom + S3 con IAM policy generation (JSON mínimo: ListBucket/GetObject/PutObject/DeleteObject a un bucket ARN específico) + retención configurable + trigger manual. Leer especialmente la distinción entre "instance backup" (datos de Coolify) y "application backup" (datos del usuario) — HG debe hacer la misma distinción.
+
+4. Proxy lifecycle en 5 acciones
+CheckProxy, GetProxyConfiguration, SaveProxyConfiguration, StartProxy, StopProxy. HG tiene 2 de 5 (write_traefik_config + remove_traefik_config). Falta: CheckProxy (health probe del proxy mismo) y SaveProxyConfiguration (persistencia versionada de config).
+
+5. Team model + API tokens con scope
+team_user pivot con roles, API tokens con 4 niveles (read-only, read:sensitive, view:sensitive, *), recursos scoped a teams, env vars compartidas por team. Referencia directa para el modelo de agencias.
+
+B. Qué adaptar (patrón correcto, stack Python/FastAPI/Docker)
+1. Backup automático de tenants → S3 (Prioridad: crítica)
+ARQ task backup_tenant_mariadb por cron. Por cada tenant activo:
+
+
+docker exec {container} mariadb-dump --all-databases | gzip → boto3.upload_fileobj → s3://{bucket}/{tenant_id}/{date}/
+Stagger con initial_delay = hash(tenant_id) % 3600. Metadata en audit table. Lifecycle policy 30 días. Endpoints: GET /hostings/{id}/backups + POST /hostings/{id}/backups/{backup_id}/restore.
+
+2. Magic env vars para WordPress
+Al provisionar: generar WP_ADMIN_PASSWORD, WP_DB_PASSWORD, WP_AUTH_KEY, WP_SECURE_AUTH_KEY, WP_LOGGED_IN_KEY con secrets.token_urlsafe(32), cifrados en reposo. Endpoint GET /hostings/{id}/credentials solo para owner. Elimina la categoría más común de tickets de soporte.
+
+3. Router Health Guard extendido
+HG ya tiene admin_router_health.py. Añadir:
+
+GET /admin/router/version → compara versión de Traefik corriendo vs latest stable
+traefik_version en tabla de config del servidor
+Evento router_version_outdated → pipeline system_incidents con source_type='router'
+4. Notificaciones multi-canal
+notification_dispatcher.py con registro de canales. Empezar: Email (mailer.py existe) + Discord webhook + webhook genérico. Tabla notification_channels (channel_type, config_json, enabled_events JSON). Eventos a notificar: deploy_failed, container_down, backup_failed, wp_brute_force_detected, ssl_expiry_warning, disk_pressure.
+
+5. Cleanup por presión de disco
+ARQ task cada 6 horas. Si df /opt/clients > 85%: prunar containers parados de tenants terminados + imágenes dangling con label managed_by=hostingguard + volumes huérfanos. Skip si algún tenant está en estado starting. Emitir disk_pressure_cleanup_executed como system alert.
+
+6. Rollback de deploy
+Formalizar schema de deploy_logs JSONB: deploy_id, strategy, started_at, finished_at, exit_code, commit_sha, phases[]. Implementar POST /hostings/{id}/deployments/{deploy_id}/rollback que re-ejecuta el git_config del deploy anterior con el commit SHA previo.
+
+C. Qué no conviene copiar
+Qué	Por qué no
+PHP/Laravel	FastAPI + Python es la ventaja competitiva de HG para la capa AI (Anthropic SDK, async I/O). No tocar.
+Nixpacks	Sistema de 50+ runtimes. Overkill para el vertical WordPress/agency. Los 4 estrategias de HG cubren el caso de uso.
+Docker Swarm	Experimental en Coolify, requiere registry externo + 3 nodos mínimo. Sin beneficio para el modelo single-tenant de HG.
+150+ templates	Dilución de foco. HG debe tener 5-10 templates profundos y testeados (WP+MariaDB, WooCommerce+Redis, WP Multisite, staging clone, static). Profundidad sobre amplitud.
+Self-hosted gratis	El valor de HG está en las operaciones gestionadas y la capa AI. Regalar la infraestructura canibaliza el producto.
+Build servers dedicados	Los builds de HG ya corren en docker run --rm efímeros. Un build server separado añade latencia de red sin beneficio a la escala actual.
+D. Dónde HostingGuard puede ganar
+1. RAG + Incident Runbooks (vs. docs estáticos de Coolify)
+Coolify ante un 502: "revisa la documentación." HG ante un 502: el diagnostic engine corre, el RAG consulta el historial del tenant, y el AI advisory pre-carga la solución en el panel. Si el tenant tuvo PHP memory exhaustion hace 14 días, el runbook lo recuerda y sugiere los cambios exactos (innodb_buffer_pool_size, memory_limit). Esto es un feature de retención de clientes que ningún competidor tiene.
+
+2. Router Health Guard como feature premium
+Coolify detecta que un container está unhealthy. No puede detectar que la regla de Traefik de un tenant específico conflictúa con otro, que un cambio de DNS hace 6 horas rompió el routing de un tenant mientras los demás funcionan, o que un dominio custom recién añadido sombrea una regla existente. El mensaje de venta: "Validamos que el routing de tu sitio funciona correctamente antes de que tu cliente lo note."
+
+3. Provisioning Gate como señal de confianza
+Coolify valida 4 cosas al añadir un servidor (SSH, Docker version, disco, SSH config). HostingGuard valida 12 cosas antes de que el tenant sea accesible. Usar esto en la página de precios y en el dashboard: indicador de progreso por check, resultado visible. Justifica el precio de Agencia Pro vs. los $5/mes de Coolify cloud.
+
+4. Diagnosis automático como deflector de soporte
+El soporte de Coolify es: GitHub issues + Discord + email limitado en cloud. Con diagnostic_engine.py + ai_client.py + ai_diagnosis_repository.py, HG puede responder "¿por qué está lento mi sitio?" antes de que el usuario abra un ticket. Cuando el CPU de un tenant spikea, el pipeline corre automáticamente, identifica la causa (WooCommerce cart SQL, AJAX sin cache, plugin conflict), y empuja un advisory legible al dashboard. Nadie más hace esto.
+
+5. Vertical WordPress/ecommerce (foco que Coolify no tiene)
+Coolify despliega desde BitcoinCore hasta Bluesky PDS. No entiende WordPress. HG puede dominar:
+
+WooCommerce Health Score: al provisionar WooCommerce, verificar object cache, HPOS, cart fragments async, compresión de imágenes. Reportar como puntuación.
+WordPress Multisite gestionado: POST /hostings/{id}/subsites con DNS automático + routing Traefik. Coolify no tiene conciencia de multisite.
+Portal de cliente para agencias: vista read-only por hosting para el cliente final (uptime, último deploy, estado de dominio, historial de backups). Sin acceso al servidor ni a la configuración.
+Staging environment clone: POST /hostings/{id}/clone-to-staging crea subdominio de staging con copia de datos de producción. Coolify tiene PR previews para repositorios Git, no clones de datos WordPress.
+6. WP Attack Aggregation como diferenciador de seguridad
+HG ya tiene aggregate_wp_attacks.py (brute force threshold 5/10min, xmlrpc 3/10min). Coolify no tiene nada equivalente. Packaging: "Detectamos y bloqueamos automáticamente ataques de fuerza bruta y xmlrpc en WordPress." Añadir POST /hostings/{id}/blocked-ips para exponer el bloqueo automático. Widget "Seguridad" en el dashboard con el conteo de ataques del mes.
+
+7. Audit log inmutable como feature de compliance
+El audit log de Coolify es mutable (registros de DB estándar). El de HG es append-only por restricción arquitectural. Para agencias con clientes WooCommerce (GDPR, cumplimiento PCI DSS): "Cada acción sobre tu hosting — quién hizo qué, cuándo — queda registrada permanentemente y no puede alterarse." Exponer GET /hostings/{id}/audit-log como endpoint paginado.
+
+Prioridades derivadas del benchmark
+Las 5 brechas más importantes que bloquean el pitch de agencias, ordenadas:
+
+#	Feature	Bloquea
+1	Backup automático de tenant (MariaDB + files → S3)	Propuesta a cualquier agencia seria
+2	Notificaciones multi-canal (Discord + webhook mínimo)	Expectativa baseline de cualquier agencia
+3	Modelo de equipos / sub-cuentas (agencia owner + cliente read-only)	Justificación del precio Agencia Pro
+4	WooCommerce Health Score	Diferenciador que ningún competidor tiene
+5	Staging clone (clone-to-staging)	Workflow de agencias sin esto no arranca
+
+---------------------------------------------------------------
+
+1246 passed, 1 skipped, 0 failures. P2B is complete.
+
+All 8 tasks from the spec are done:
+
+delete_tenant_file_provider called in _do_delete_hosting (non-fatal, covers terminate_hosting_by_user too)
+Router Health Guard enriches static tenants via ProvisioningGate (check_http=False) and maps gate status → incident type
+Frontend HostingList, StatusCommandBar, and the status classification logic updated for all new statuses
+Runbook TENANT_ROUTE_DOCKER_LABELS_ONLY.md created
+Signatures sig_128–133 added (plus sig_117/124/127 corrected to the right incident) 6–7. Safe and forbidden actions defined in runbook frontmatter and incident index
+scripts/ops/validate_provisioning_gate_live.sh created

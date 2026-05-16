@@ -82,7 +82,12 @@ export default function StatusCommandBar({ hostings = [], healthData = {}, advis
     statusLabel,
     statusColor,
   } = useMemo(() => {
-    const active = hostings.filter(h => h.status === 'active');
+    // Operational: container is running and routing works (may have placeholder content)
+    const OPERATIONAL = new Set(['active', 'active_with_placeholder']);
+    // Degraded: provisioning or routing issues that need attention
+    const DEGRADED    = new Set(['pending_content', 'routing_degraded', 'routing_failed', 'provisioning_failed']);
+
+    const active = hostings.filter(h => OPERATIONAL.has(h.status));
     const scores = active
       .map(h => healthData[h.hosting_id]?.score)
       .filter(s => s != null);
@@ -104,25 +109,35 @@ export default function StatusCommandBar({ hostings = [], healthData = {}, advis
       h => healthData[h.hosting_id]?.public_reachable === false,
     ).length;
 
-    const allOk = criticals === 0 && warns === 0 && brokenRoutes === 0;
+    // Degraded hostings: provisioning/routing states that are not fully operational
+    const degradedCount = hostings.filter(h => DEGRADED.has(h.status)).length;
+
+    const allOk = criticals === 0 && warns === 0 && brokenRoutes === 0 && degradedCount === 0;
 
     const label = allOk
       ? 'Todo operativo'
       : brokenRoutes > 0
         ? `${brokenRoutes} sitio${brokenRoutes !== 1 ? 's' : ''} con ruta caída`
-        : criticals > 0
-          ? `${criticals} sitio${criticals !== 1 ? 's' : ''} con alerta crítica`
-          : `${warns} sitio${warns !== 1 ? 's' : ''} requiere atención`;
+        : degradedCount > 0
+          ? `${degradedCount} sitio${degradedCount !== 1 ? 's' : ''} en estado degradado`
+          : criticals > 0
+            ? `${criticals} sitio${criticals !== 1 ? 's' : ''} con alerta crítica`
+            : `${warns} sitio${warns !== 1 ? 's' : ''} requiere atención`;
 
-    const color = allOk ? '#22d3a5' : (brokenRoutes > 0 || criticals > 0) ? '#ef4444' : '#f59e0b';
+    const color = allOk
+      ? '#22d3a5'
+      : (brokenRoutes > 0 || criticals > 0)
+        ? '#ef4444'
+        : '#f59e0b';
 
     return {
       avgScore:         avg,
-      activeCount:      active.length,
+      activeCount:      hostings.filter(h => OPERATIONAL.has(h.status) || DEGRADED.has(h.status)).length,
       criticalCount:    criticals,
       warnCount:        warns,
       unresolvedAlerts: unresolved,
       brokenRouteCount: brokenRoutes,
+      degradedCount,
       isAllHealthy:     allOk,
       statusLabel:      label,
       statusColor:      color,

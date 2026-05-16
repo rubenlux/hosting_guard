@@ -561,6 +561,16 @@ async def _do_delete_hosting(hosting_id: int, user_id: int) -> dict:
             detail += f" Docker errors: {'; '.join(docker_errors)}"
         raise HTTPException(status_code=500, detail=detail)
 
+    # ── 2.5. Remove Traefik File Provider YAML (non-fatal) ──────────────────────
+    try:
+        from app.services.traefik_file_provider import delete_tenant_file_provider
+        delete_tenant_file_provider(hosting_id)
+    except Exception as _fp_exc:
+        logger.warning(
+            "delete_hosting: file provider cleanup failed for hosting_id=%s: %s",
+            hosting_id, _fp_exc,
+        )
+
     # ── 3. Hard-delete: cascade-clean all child records + remove hosting row ────
     site_name = hosting.get("name") or str(hosting_id)
     hosting_repo.delete_hosting(hosting_id, user_id, db_container=db_container)

@@ -505,30 +505,36 @@ def check_tenant_routes(limit: int = 100, hosting_id: Optional[int] = None) -> l
     try:
         conn = get_connection()
         cur = conn.cursor()
+        _MONITORED_STATUSES = (
+            "active", "active_with_placeholder", "pending_content",
+            "routing_degraded", "routing_failed", "provisioning_failed",
+        )
         if hosting_id is not None:
             cur.execute(
                 """
-                SELECT hosting_id, user_id, subdomain, container_name
+                SELECT hosting_id, user_id, subdomain, container_name,
+                       COALESCE(db_container_name, '') AS db_container_name
                 FROM hostings
-                WHERE status = 'active'
+                WHERE status = ANY(%s)
                   AND hosting_id = %s
                   AND subdomain IS NOT NULL AND subdomain <> ''
                   AND container_name IS NOT NULL AND container_name <> ''
                 """,
-                (hosting_id,),
+                (list(_MONITORED_STATUSES), hosting_id),
             )
         else:
             cur.execute(
                 """
-                SELECT hosting_id, user_id, subdomain, container_name
+                SELECT hosting_id, user_id, subdomain, container_name,
+                       COALESCE(db_container_name, '') AS db_container_name
                 FROM hostings
-                WHERE status = 'active'
+                WHERE status = ANY(%s)
                   AND subdomain IS NOT NULL AND subdomain <> ''
                   AND container_name IS NOT NULL AND container_name <> ''
                 ORDER BY hosting_id
                 LIMIT %s
                 """,
-                (limit,),
+                (list(_MONITORED_STATUSES), limit),
             )
         hostings = [dict(r) for r in cur.fetchall()]
     except Exception as exc:
@@ -551,6 +557,8 @@ def _check_tenant_hosting(h: dict) -> "RouterHealthResult":
     subdomain = h["subdomain"]
     container_name = h["container_name"]
     user_id = h.get("user_id")
+    db_container_name = (h.get("db_container_name") or "").strip()
+    is_static = not db_container_name
     host = normalize_tenant_public_host(subdomain)
 
     container_running = _container_status(container_name)
@@ -591,8 +599,52 @@ def _check_tenant_hosting(h: dict) -> "RouterHealthResult":
         elif status_code == 200 and _is_nginx_default_page(body):
             incident_type = "misconfigured_site_content"
             summary = f"{host} → HTTP 200 pero sirve página nginx por defecto (sin contenido)"
+        elif router_source == "docker_labels":
+            # Site is reachable but File Provider YAML is missing — routing_degraded.
+            # Docker labels routing survives only while Docker provider is healthy;
+            # File Provider is the authoritative model.
+            incident_type = "tenant_route_docker_labels_only"
+            summary = (
+                f"{host} → HTTP {status_code} OK "
+                f"(File Provider YAML missing — Docker labels only routing)"
+            )
         else:
             summary = f"{host} → HTTP {status_code} OK"
+
+        # ── ProvisioningGate enrichment (static/nginx tenants only) ──────────
+        # Run gate with check_http=False (HTTP already checked above) to get
+        # filesystem + mount + route checks. The gate is the canonical source
+        # of truth for provisioning state; its result enriches evidence and
+        # can set incident_type when HTTP check alone is insufficient.
+        if is_static:
+            try:
+                from app.services.provisioning_gate import validate_static_tenant_provisioning
+                gate = validate_static_tenant_provisioning(
+                    hosting_id, container_name, subdomain, check_http=False,
+                )
+                evidence["gate_status"] = gate.status
+                evidence["gate_checks"] = gate.checks
+                if gate.safe_actions:
+                    evidence["gate_safe_actions"] = gate.safe_actions
+                if gate.forbidden_actions:
+                    evidence["gate_forbidden_actions"] = gate.forbidden_actions
+                # Gate supersedes HTTP result for routing/content failures only.
+                # provisioning_failed is excluded: _container_status already handles
+                # that above, and gate docker inspect may fail in restricted envs.
+                if not gate.ok and incident_type is None:
+                    _GATE_INCIDENT_MAP = {
+                        "routing_degraded": "tenant_route_docker_labels_only",
+                        "pending_content":  "nginx_403_empty_index",
+                    }
+                    mapped = _GATE_INCIDENT_MAP.get(gate.status)
+                    if mapped:
+                        incident_type = mapped
+                        summary = f"{host} — gate: {gate.reason}"
+            except Exception as _gate_exc:
+                logger.debug(
+                    "router_health_guard: gate enrichment failed for hosting_id=%s: %s",
+                    hosting_id, _gate_exc,
+                )
 
     healthy = incident_type is None
     result = RouterHealthResult(

@@ -857,9 +857,9 @@ signatures:
 
   - id: sig_117
     pattern: "router_source docker_labels"
-    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    incident_id: TENANT_ROUTE_DOCKER_LABELS_ONLY
     source: health_guard
-    confidence: 0.6
+    confidence: 0.95
     type: literal
 
   - id: sig_118
@@ -906,9 +906,9 @@ signatures:
 
   - id: sig_124
     pattern: "\"router_source\": \"docker_labels\""
-    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    incident_id: TENANT_ROUTE_DOCKER_LABELS_ONLY
     source: api_response
-    confidence: 0.7
+    confidence: 0.95
     type: substring
 
   - id: sig_125
@@ -927,7 +927,56 @@ signatures:
 
   - id: sig_127
     pattern: 'router_source": "docker_labels"'
-    incident_id: TENANT_CLOUDFLARE_526_ORIGIN_TLS_INVALID
+    incident_id: TENANT_ROUTE_DOCKER_LABELS_ONLY
     source: health_guard
-    confidence: 0.7
+    confidence: 0.95
     type: substring
+
+  # ── TENANT_ROUTE_DOCKER_LABELS_ONLY ─────────────────────────────────────────
+  # Tenant route depends on Traefik Docker labels only — File Provider YAML missing.
+  # Safe actions: regenerate_tenant_file_provider_route, migrate_tenant_route_docker_labels_to_file,
+  #               validate_traefik_dynamic_yaml, verify_forwardauth_file_middleware
+  # Forbidden:    rely_on_docker_provider_only, bypass_forwardauth,
+  #               mark_healthy_without_file_provider_route, disable_router_health_check
+
+  - id: sig_128
+    pattern: "no dynamic file route found"
+    incident_id: TENANT_ROUTE_DOCKER_LABELS_ONLY
+    source: health_guard
+    confidence: 0.95
+    type: literal
+
+  - id: sig_129
+    pattern: "missing tenant File Provider YAML"
+    incident_id: TENANT_ROUTE_DOCKER_LABELS_ONLY
+    source: health_guard
+    confidence: 1.0
+    type: literal
+
+  - id: sig_130
+    pattern: "tenant route depends on Docker labels"
+    incident_id: TENANT_ROUTE_DOCKER_LABELS_ONLY
+    source: health_guard
+    confidence: 0.95
+    type: literal
+
+  - id: sig_131
+    pattern: "traefik labels only"
+    incident_id: TENANT_ROUTE_DOCKER_LABELS_ONLY
+    source: health_guard
+    confidence: 0.9
+    type: literal
+
+  - id: sig_132
+    pattern: "tenant_route_docker_labels_only"
+    incident_id: TENANT_ROUTE_DOCKER_LABELS_ONLY
+    source: health_guard
+    confidence: 1.0
+    type: literal
+
+  - id: sig_133
+    pattern: "File Provider YAML missing"
+    incident_id: TENANT_ROUTE_DOCKER_LABELS_ONLY
+    source: health_guard
+    confidence: 0.98
+    type: literal

@@ -20,19 +20,45 @@ function CopyButton({ text }) {
   );
 }
 
-/**
- * Maps a hosting status string to the CSS class used for the status badge.
- * Defined at module level (not inside the component) so it is never re-created on render.
- */
+/** Maps status → CSS class for the status badge dot. */
 function getStatusClass(status) {
   switch (status) {
-    case 'active':    return 'ok';
-    case 'starting':  return 'starting';
-    case 'stopped':   return 'error';
-    case 'error':     return 'error';
-    case 'not_found': return 'error';
-    default:          return 'warn';
+    case 'active':
+    case 'active_with_placeholder': return 'ok';
+    case 'starting':                return 'starting';
+    case 'stopped':
+    case 'error':
+    case 'not_found':
+    case 'routing_failed':
+    case 'provisioning_failed':     return 'error';
+    case 'pending_content':
+    case 'routing_degraded':        return 'warn';
+    default:                        return 'warn';
   }
+}
+
+/** Human-readable label for each status. */
+const STATUS_LABELS = {
+  active:                 'activo',
+  active_with_placeholder:'activo',
+  starting:               'iniciando',
+  stopped:                'detenido',
+  error:                  'error',
+  not_found:              'no encontrado',
+  pending_content:        'sin contenido',
+  routing_degraded:       'ruta degradada',
+  routing_failed:         'ruta caída',
+  provisioning_failed:    'fallo de provisión',
+};
+
+/** True when a hosting is operationally active (can receive actions). */
+function isOperational(status) {
+  return status === 'active' || status === 'active_with_placeholder' || status === 'pending_content';
+}
+
+/** True when the status LED should pulse (operationally running). */
+function shouldPulse(status) {
+  return status === 'active' || status === 'active_with_placeholder';
 }
 
 /**
@@ -138,8 +164,8 @@ export default function HostingList({
             </div>
 
             <div className="ml-auto flex items-center gap-2">
-              <div className={`domain-status-dash ${getStatusClass(h.status)} ${h.status === 'active' ? 'animate-led shadow-[0_0_10px_rgba(0,255,136,0.5)]' : ''}`}>
-                ● {h.status}
+              <div className={`domain-status-dash ${getStatusClass(h.status)} ${shouldPulse(h.status) ? 'animate-led shadow-[0_0_10px_rgba(0,255,136,0.5)]' : ''}`}>
+                ● {STATUS_LABELS[h.status] ?? h.status}
               </div>
 
               <div className="flex items-center gap-1 border-l border-white/10 pl-2 ml-2">
@@ -149,7 +175,7 @@ export default function HostingList({
                   </div>
                 ) : (
                   <>
-                    {h.status === 'active' && (
+                    {isOperational(h.status) && (
                       <>
                         <button
                           onClick={() => onUploadZip(h)}
