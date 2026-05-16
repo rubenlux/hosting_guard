@@ -2534,3 +2534,20 @@ test_validate_traefik_yaml_rejects_middlewares_under_tls — validator catches t
 test_validate_traefik_yaml_accepts_correct_structure — validator passes correct YAML
 test_gate_returns_routing_failed_for_invalid_yaml_structure — gate returns routing_failed for a file with the old broken template
 test_legacy_bundle_route_satisfies_gate — bundle tenants don't get routing_degraded
+
+P3B complete. Here's a summary of everything delivered:
+
+P3B: Admin Backup Control Panel
+
+Backend
+
+app/infra/migrations.py — 3 new migration steps: tenant_backup_policies table, tenant_backup_policy_history table, protected/protected_reason columns on tenant_backups
+app/services/backup_policy_service.py — Policy resolution engine: get_effective_policy() (admin_override > addon > plan), upsert_policy(), revert_policy(), get_policy_history(), set_backup_protected()
+app/api/routes/admin_backup.py — 9 endpoints: GET/PUT backup-policy, POST backups (force), POST pause/resume, POST cleanup (dry_run supported), GET history, POST revert, PATCH protect
+app/services/tenant_backup_service.py — backup_tenants_job now uses get_effective_policy() and respects paused; delete_tenant_backup returns "protected" for protected backups; both cleanup functions skip protected backups; _cleanup_expired_ttl() extracted as a public helper
+app/api/main.py — admin_backup_router registered
+Frontend
+
+frontend/src/components/admin/BackupPolicyPanel.jsx — Full admin panel: status badges (paused/override/daily+manual/manual-only/none), source badge (admin_override/addon/plan/default), action buttons (backup now, pause, resume, reload), 3-tab layout (Política / Historial / Cleanup), editable policy form with all fields, history table with per-entry revert, cleanup mode selector with dry_run guard
+frontend/src/services/api.js — 9 new P3B API functions appended
+Tests — tests/test_admin_backup_policy.py: 16 tests, all passing

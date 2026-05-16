@@ -11,7 +11,7 @@ import {
   Terminal, RotateCcw, Play, Square, KeyRound,
   Crown, Infinity, CalendarClock, ShieldOff, TrendingUp as Upgrade, X,
   Database, Cpu, MemoryStick, HardDrive, Trash, Gauge, Wifi, WifiOff,
-  Sparkles, Mail, Send, BellRing, Monitor, BookOpen,
+  Sparkles, Mail, Send, BellRing, Monitor, BookOpen, Archive,
 } from 'lucide-react';
 import {
   getAdminUsers, getAdminHostings, getAdminPixelOverview,
@@ -43,6 +43,7 @@ import SecurityStatusBeacon from '../components/admin/SecurityStatusBeacon';
 import ResourceUsage from '../components/admin/ResourceUsage';
 import UnitEconomics from '../components/admin/UnitEconomics';
 import CostSettings from '../components/admin/CostSettings';
+import BackupPolicyPanel from '../components/admin/BackupPolicyPanel';
 
 /* ─── helpers ─────────────────────────────────────────────── */
 function groupBy(arr, key) {
@@ -1991,6 +1992,7 @@ function HostingsTable({ hostings, loading, metricsMap, onReload }) {
   const [logsModal, setLogsModal] = useState(null);   // { hosting, logs }
   const [terminateModal, setTerminate] = useState(null); // hosting
   const [importModal, setImportModal] = useState(null);  // hosting
+  const [backupModal, setBackupModal] = useState(null);  // hosting
 
   const act = async (hosting, fn, label) => {
     if (!window.confirm(`¿${label} el hosting "${hosting.name}" (${hosting.container_name})?`)) return;
@@ -2056,6 +2058,15 @@ function HostingsTable({ hostings, loading, metricsMap, onReload }) {
                     <td className="px-4 py-3 text-gray-500 font-mono text-[10px]">{h.subdomain}</td>
                     <td className="sticky right-0 bg-[#111] group-hover:bg-[#161616] px-4 py-3 border-l border-white/5 transition-colors">
                       <div className="flex items-center gap-1.5">
+                        {/* Backups — admin backup policy panel */}
+                        <button
+                          onClick={() => setBackupModal(h)}
+                          disabled={busy}
+                          title="Gestionar backups"
+                          className="p-1.5 rounded hover:bg-indigo-500/10 text-gray-600 hover:text-indigo-400 transition-colors disabled:opacity-40"
+                        >
+                          <Archive className="w-3.5 h-3.5" />
+                        </button>
                         {/* Import backup — only for WordPress containers */}
                         {h.container_name?.includes('_wp_') && (
                           <button
@@ -2160,6 +2171,38 @@ function HostingsTable({ hostings, loading, metricsMap, onReload }) {
           onClose={() => setImportModal(null)}
           onComplete={() => { setImportModal(null); onReload?.(); }}
         />
+      )}
+
+      {/* Backup Policy modal */}
+      {backupModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center p-6 overflow-y-auto"
+          onClick={() => setBackupModal(null)}
+        >
+          <div
+            className="bg-[#111] border border-white/8 rounded-2xl w-full max-w-2xl mt-8 mb-8"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal header */}
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-white/5">
+              <Archive className="w-4 h-4 text-indigo-400" />
+              <div>
+                <div className="text-[12px] font-bold text-white">{backupModal.name}</div>
+                <div className="text-[9px] text-gray-500 font-mono">{backupModal.subdomain} · {backupModal.plan}</div>
+              </div>
+              <button
+                onClick={() => setBackupModal(null)}
+                className="ml-auto text-gray-600 hover:text-white transition-colors text-lg leading-none"
+              >
+                ×
+              </button>
+            </div>
+            {/* Panel body */}
+            <div className="p-5">
+              <BackupPolicyPanel hostingId={backupModal.hosting_id} />
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
