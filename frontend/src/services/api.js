@@ -782,7 +782,7 @@ export const getHostingBackups = async (hostingId) => {
 };
 
 export const triggerBackup = async (hostingId) => {
-  const response = await api.post(`/hosting/hostings/${hostingId}/backup`);
+  const response = await api.post(`/hosting/hostings/${hostingId}/backups`);
   return response.data;
 };
 

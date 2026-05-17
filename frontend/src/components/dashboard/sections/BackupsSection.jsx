@@ -234,7 +234,8 @@ const BackupsSection = ({ hostings = [], user = null }) => {
     setLoading(true);
     try {
       const data = await getHostingBackups(activeId);
-      setBackups((data.items || []).map(normalizeBackup));
+      const rows = Array.isArray(data) ? data : (data?.items ?? []);
+      setBackups(rows.map(normalizeBackup));
     } catch { /* ignore */ }
     finally { setLoading(false); }
   }, [activeId]);

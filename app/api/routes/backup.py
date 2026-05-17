@@ -92,13 +92,28 @@ async def download_backup(
     background_tasks: BackgroundTasks,
     user: dict = Depends(verify_token),
 ):
-    """Download a completed backup as a tar.gz bundle (manifest + DB + files)."""
-    from app.services.backup_service import get_backup, build_download_package
+    """Download a completed backup as a tar.gz bundle.
+    Checks tenant_backups first, falls back to legacy backups table."""
+    from app.services.backup_service import build_download_package
 
     user_id = int(user["user_id"])
-    backup = await asyncio.get_running_loop().run_in_executor(
-        None, lambda: get_backup(backup_id, user_id)
+    is_admin = user.get("role") == "admin"
+    loop = asyncio.get_running_loop()
+
+    # Try tenant_backups first (P3A/P3B), then legacy backups table
+    from app.services.tenant_backup_service import get_tenant_backup
+    backup = await loop.run_in_executor(
+        None, lambda: get_tenant_backup(backup_id, user_id=None if is_admin else user_id, admin=is_admin)
     )
+    if backup:
+        # Normalize tenant_backups fields for build_download_package
+        backup.setdefault("site_name", backup.get("subdomain"))
+        backup.setdefault("created_at", backup.get("started_at"))
+        backup["db_path"] = backup.get("database_path")
+    else:
+        from app.services.backup_service import get_backup
+        backup = await loop.run_in_executor(None, lambda: get_backup(backup_id, user_id))
+
     if not backup:
         raise HTTPException(status_code=404, detail="Backup no encontrado")
     if backup["status"] != "completed":
@@ -111,7 +126,6 @@ async def download_backup(
     if not has_any:
         raise HTTPException(status_code=410, detail="Los archivos de este backup ya no están disponibles")
 
-    loop = asyncio.get_running_loop()
     tmp_path, filename = await loop.run_in_executor(
         None, lambda: build_download_package(backup)
     )
@@ -145,20 +159,35 @@ async def download_backup(
 
 @router.delete("/backups/{backup_id}")
 def delete_backup(backup_id: int, user: dict = Depends(verify_token)):
-    """Delete a failed or partial backup (client can only delete non-completed backups)."""
-    from app.services.backup_service import get_backup, delete_backup as _delete
-
+    """Delete a failed or partial backup.
+    Checks tenant_backups first, falls back to legacy backups table."""
     user_id = int(user["user_id"])
-    backup = get_backup(backup_id, user_id)
-    if not backup:
-        raise HTTPException(status_code=404, detail="Backup no encontrado")
-    if backup["status"] == "completed":
-        raise HTTPException(
-            status_code=403,
-            detail="No podés eliminar un backup completado. Contactá soporte si es necesario.",
-        )
+    is_admin = user.get("role") == "admin"
 
-    _delete(backup_id, user_id=user_id, admin=False)
+    # Try tenant_backups first (P3A/P3B)
+    from app.services.tenant_backup_service import get_tenant_backup, delete_tenant_backup as _del_tenant
+    backup = get_tenant_backup(backup_id, user_id=None if is_admin else user_id, admin=is_admin)
+    if backup:
+        if backup["status"] == "completed":
+            raise HTTPException(
+                status_code=403,
+                detail="No podés eliminar un backup completado. Contactá soporte si es necesario.",
+            )
+        result = _del_tenant(backup_id, user_id=None if is_admin else user_id, admin=is_admin)
+        if result == "protected":
+            raise HTTPException(status_code=403, detail="Este backup está protegido.")
+    else:
+        from app.services.backup_service import get_backup, delete_backup as _delete
+        backup = get_backup(backup_id, user_id)
+        if not backup:
+            raise HTTPException(status_code=404, detail="Backup no encontrado")
+        if backup["status"] == "completed":
+            raise HTTPException(
+                status_code=403,
+                detail="No podés eliminar un backup completado. Contactá soporte si es necesario.",
+            )
+        _delete(backup_id, user_id=user_id, admin=False)
+
     try:
         from app.services.activity_service import log_event
         log_event(user_id=user_id, hosting_id=backup["hosting_id"],
