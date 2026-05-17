@@ -1,6 +1,12 @@
 """Backup routes — manual backup creation, listing, download, delete."""
 import asyncio
+import io
+import json
 import logging
+import os
+import re
+import tarfile
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +23,71 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/hosting", tags=["Backup"])
 
 _hosting_repo = HostingRepository()
+
+# ── Tenant backup bundle helpers ──────────────────────────────────────────────
+
+_BACKUP_LOCAL_DIR = Path(os.getenv("BACKUP_LOCAL_DIR", "/opt/hostingguard-backups"))
+_SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _safe_tenant_path(raw: Optional[str]) -> Optional[Path]:
+    """Return resolved Path only if it sits inside BACKUP_LOCAL_DIR."""
+    if not raw:
+        return None
+    p = Path(raw).resolve()
+    try:
+        p.relative_to(_BACKUP_LOCAL_DIR.resolve())
+        return p
+    except ValueError:
+        logger.warning("tenant backup: rejected out-of-tree path %s", raw)
+        return None
+
+
+def _build_tenant_bundle(backup: dict) -> tuple:
+    """Build a .tar.gz bundle for a tenant backup: manifest.json + files.tar.gz + database.sql.gz.
+    Returns (tmp_path: Path, filename: str).
+    Raises HTTPException 404 if no payload files are found on disk.
+    """
+    files_p = _safe_tenant_path(backup.get("files_path"))
+    db_p    = _safe_tenant_path(backup.get("database_path"))
+    local_p = _safe_tenant_path(backup.get("local_path"))
+
+    has_files = files_p is not None and files_p.exists()
+    has_db    = db_p    is not None and db_p.exists()
+
+    if not has_files and not has_db:
+        raise HTTPException(
+            status_code=404,
+            detail="backup_file_missing: Los archivos de este backup ya no están disponibles",
+        )
+
+    subdomain  = backup.get("subdomain") or f"hosting-{backup['hosting_id']}"
+    safe_name  = _SAFE_NAME_RE.sub("-", subdomain)
+    started_at = backup.get("started_at")
+    if hasattr(started_at, "strftime"):
+        ts_str = started_at.strftime("%Y%m%d-%H%M%S")
+    else:
+        raw_ts = re.sub(r"[^0-9]", "", str(started_at or ""))[:14]
+        ts_str = f"{raw_ts[:8]}-{raw_ts[8:14]}" if len(raw_ts) >= 8 else "unknown"
+    filename = f"hostingguard-backup-{safe_name}-{ts_str}.tar.gz"
+
+    # Include the on-disk manifest.json if present
+    manifest_p: Optional[Path] = None
+    if local_p and local_p.is_dir():
+        candidate = local_p / "manifest.json"
+        if candidate.exists():
+            manifest_p = candidate
+
+    tmp = Path(tempfile.mktemp(suffix=".tar.gz", dir="/tmp"))
+    with tarfile.open(tmp, "w:gz") as tar:
+        if manifest_p:
+            tar.add(str(manifest_p), arcname="manifest.json")
+        if has_files:
+            tar.add(str(files_p), arcname="files.tar.gz")
+        if has_db:
+            tar.add(str(db_p), arcname="database.sql.gz")
+
+    return tmp, filename
 
 
 # ── P3A Tenant Backup endpoints ───────────────────────────────────────────────
@@ -93,53 +164,55 @@ async def download_backup(
     user: dict = Depends(verify_token),
 ):
     """Download a completed backup as a tar.gz bundle.
-    Checks tenant_backups first, falls back to legacy backups table."""
-    from app.services.backup_service import build_download_package
-
-    user_id = int(user["user_id"])
+    Checks tenant_backups first (P3A/P3B), falls back to legacy backups table."""
+    user_id  = int(user["user_id"])
     is_admin = user.get("role") == "admin"
-    loop = asyncio.get_running_loop()
+    loop     = asyncio.get_running_loop()
 
-    # Try tenant_backups first (P3A/P3B), then legacy backups table
     from app.services.tenant_backup_service import get_tenant_backup
-    backup = await loop.run_in_executor(
-        None, lambda: get_tenant_backup(backup_id, user_id=None if is_admin else user_id, admin=is_admin)
+    # Use admin=True so we can distinguish 403 (exists, wrong owner) vs 404 (missing)
+    tenant_backup = await loop.run_in_executor(
+        None, lambda: get_tenant_backup(backup_id, user_id=None, admin=True)
     )
-    if backup:
-        # Normalize tenant_backups fields for build_download_package
-        backup.setdefault("site_name", backup.get("subdomain"))
-        backup.setdefault("created_at", backup.get("started_at"))
-        backup["db_path"] = backup.get("database_path")
+
+    if tenant_backup is not None:
+        # Ownership check: non-admin must own the backup
+        if not is_admin and tenant_backup.get("user_id") != user_id:
+            raise HTTPException(status_code=403, detail="Acceso denegado")
+        if tenant_backup["status"] != "completed":
+            raise HTTPException(status_code=400, detail="Solo se pueden descargar backups completados")
+        tmp_path, filename = await loop.run_in_executor(
+            None, lambda: _build_tenant_bundle(tenant_backup)
+        )
     else:
-        from app.services.backup_service import get_backup
+        # Fall back to legacy backups table
+        from app.services.backup_service import get_backup, build_download_package
         backup = await loop.run_in_executor(None, lambda: get_backup(backup_id, user_id))
+        if not backup:
+            raise HTTPException(status_code=404, detail="Backup no encontrado")
+        if backup["status"] != "completed":
+            raise HTTPException(status_code=400, detail="Solo se pueden descargar backups completados")
+        has_any = (
+            (backup.get("db_path") and Path(backup["db_path"]).exists()) or
+            (backup.get("files_path") and Path(backup["files_path"]).exists())
+        )
+        if not has_any:
+            raise HTTPException(status_code=410, detail="Los archivos de este backup ya no están disponibles")
+        tmp_path, filename = await loop.run_in_executor(
+            None, lambda: build_download_package(backup)
+        )
+        tenant_backup = backup  # for logging below
 
-    if not backup:
-        raise HTTPException(status_code=404, detail="Backup no encontrado")
-    if backup["status"] != "completed":
-        raise HTTPException(status_code=400, detail="Solo se pueden descargar backups completados")
-
-    has_any = (
-        (backup.get("db_path") and Path(backup["db_path"]).exists()) or
-        (backup.get("files_path") and Path(backup["files_path"]).exists())
-    )
-    if not has_any:
-        raise HTTPException(status_code=410, detail="Los archivos de este backup ya no están disponibles")
-
-    tmp_path, filename = await loop.run_in_executor(
-        None, lambda: build_download_package(backup)
-    )
     background_tasks.add_task(lambda: tmp_path.unlink(missing_ok=True))
-
     logger.info(
         "backup downloaded: backup_id=%s hosting_id=%s user_id=%s file=%s",
-        backup_id, backup["hosting_id"], user_id, filename,
+        backup_id, tenant_backup["hosting_id"], user_id, filename,
     )
     try:
         from app.services.activity_service import log_event
         log_event(
             user_id=user_id,
-            hosting_id=backup["hosting_id"],
+            hosting_id=tenant_backup["hosting_id"],
             event_type="backup_downloaded",
             category="backup",
             severity="info",
@@ -160,15 +233,17 @@ async def download_backup(
 @router.delete("/backups/{backup_id}")
 def delete_backup(backup_id: int, user: dict = Depends(verify_token)):
     """Delete a failed or partial backup.
-    Checks tenant_backups first, falls back to legacy backups table."""
-    user_id = int(user["user_id"])
+    Checks tenant_backups first (P3A/P3B), falls back to legacy backups table."""
+    user_id  = int(user["user_id"])
     is_admin = user.get("role") == "admin"
 
-    # Try tenant_backups first (P3A/P3B)
     from app.services.tenant_backup_service import get_tenant_backup, delete_tenant_backup as _del_tenant
-    backup = get_tenant_backup(backup_id, user_id=None if is_admin else user_id, admin=is_admin)
-    if backup:
-        if backup["status"] == "completed":
+    # Admin lookup so we can give 403 (exists, wrong owner) vs 404 (not found)
+    tenant_backup = get_tenant_backup(backup_id, user_id=None, admin=True)
+    if tenant_backup is not None:
+        if not is_admin and tenant_backup.get("user_id") != user_id:
+            raise HTTPException(status_code=403, detail="Acceso denegado")
+        if tenant_backup["status"] == "completed":
             raise HTTPException(
                 status_code=403,
                 detail="No podés eliminar un backup completado. Contactá soporte si es necesario.",
@@ -176,6 +251,7 @@ def delete_backup(backup_id: int, user: dict = Depends(verify_token)):
         result = _del_tenant(backup_id, user_id=None if is_admin else user_id, admin=is_admin)
         if result == "protected":
             raise HTTPException(status_code=403, detail="Este backup está protegido.")
+        backup = tenant_backup
     else:
         from app.services.backup_service import get_backup, delete_backup as _delete
         backup = get_backup(backup_id, user_id)

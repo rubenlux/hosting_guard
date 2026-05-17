@@ -22,7 +22,7 @@ vi.mock('../../../services/api', () => ({
   deleteBackup:      vi.fn(),
 }));
 
-import { getHostingBackups, triggerBackup } from '../../../services/api';
+import { getHostingBackups, triggerBackup, downloadBackup } from '../../../services/api';
 import BackupsSection from './BackupsSection';
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
@@ -137,6 +137,88 @@ describe('BackupsSection', () => {
       expect(screen.getByText('completado')).toBeTruthy();
       // Upsell banner must NOT be shown
       expect(screen.queryByText('Backups no incluidos en tu plan')).toBeNull();
+    });
+  });
+});
+
+// ── Download button tests (8–13) ──────────────────────────────────────────────
+
+describe('BackupsSection — download', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('8 — Descargar button calls downloadBackup with backup_id', async () => {
+    getHostingBackups.mockResolvedValue({ items: [BACKUP_ITEM], total: 1 });
+    downloadBackup.mockResolvedValue(undefined);
+
+    renderSection();
+    await waitFor(() => screen.getByTitle('Descargar backup'));
+
+    fireEvent.click(screen.getByTitle('Descargar backup'));
+    await waitFor(() => {
+      expect(downloadBackup).toHaveBeenCalledWith(5, expect.any(String));
+    });
+  });
+
+  it('9 — downloadBackup receives a filename string, not undefined', async () => {
+    getHostingBackups.mockResolvedValue({ items: [BACKUP_ITEM], total: 1 });
+    downloadBackup.mockResolvedValue(undefined);
+
+    renderSection();
+    await waitFor(() => screen.getByTitle('Descargar backup'));
+
+    fireEvent.click(screen.getByTitle('Descargar backup'));
+    await waitFor(() => {
+      const [, filename] = downloadBackup.mock.calls[0];
+      expect(typeof filename).toBe('string');
+      expect(filename.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('10 — download error shows string message (not [object Object])', async () => {
+    getHostingBackups.mockResolvedValue({ items: [BACKUP_ITEM], total: 1 });
+    downloadBackup.mockRejectedValue({
+      response: { data: { detail: 'backup_file_missing: archivo no disponible' } },
+    });
+
+    renderSection();
+    await waitFor(() => screen.getByTitle('Descargar backup'));
+
+    fireEvent.click(screen.getByTitle('Descargar backup'));
+    await waitFor(() => {
+      expect(screen.getByText('backup_file_missing: archivo no disponible')).toBeTruthy();
+    });
+  });
+
+  it('11 — Descargar button present for status=completed', async () => {
+    getHostingBackups.mockResolvedValue({ items: [BACKUP_ITEM], total: 1 });
+
+    renderSection();
+    await waitFor(() => {
+      expect(screen.getByTitle('Descargar backup')).toBeTruthy();
+    });
+  });
+
+  it('12 — Descargar button absent for status=failed', async () => {
+    getHostingBackups.mockResolvedValue({
+      items: [{ ...BACKUP_ITEM, status: 'failed' }],
+      total: 1,
+    });
+
+    renderSection();
+    await waitFor(() => screen.getByText('fallido'));
+    expect(screen.queryByTitle('Descargar backup')).toBeNull();
+  });
+
+  it('13 — Eliminar button present for status=failed', async () => {
+    getHostingBackups.mockResolvedValue({
+      items: [{ ...BACKUP_ITEM, status: 'failed' }],
+      total: 1,
+    });
+
+    renderSection();
+    await waitFor(() => {
+      expect(screen.getByTitle('Eliminar backup')).toBeTruthy();
     });
   });
 });
