@@ -120,13 +120,25 @@ probe() {
 
   # HTTP (for http-speaking services)
   if [[ "$proto" == "http" ]]; then
-    local code
-    code=$(docker exec "$TENANT_CONTAINER" \
-      sh -c "curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 http://$ip:$port/ 2>/dev/null || echo 000")
-    if [[ "$code" != "000" ]]; then
-      fail "HTTP reachable: $host:$port returned $code"
+    local raw http_code curl_exit
+    # curl -w '%{http_code}' always prints a value — '000' when there is no HTTP
+    # response (DNS fail, connection refused, timeout).  The old '|| echo 000'
+    # inside the sh -c caused double-printing: curl already wrote '000', then the
+    # shell appended another '000', giving '000000'.
+    #
+    # Fixed: use '; printf :%d $?' to append the curl exit code on the same line,
+    # then decide FAIL only when BOTH http_code != 000 AND exit == 0.
+    # That way 403/404 (service IS reachable internally) → FAIL, while
+    # DNS-fail/timeout/refused (exit != 0) → PASS even with code 000.
+    raw=$(docker exec "$TENANT_CONTAINER" \
+      sh -c "curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 http://${ip}:${port}/ 2>/dev/null; printf ':%d' \$?" \
+      2>/dev/null || echo "000:1")
+    http_code="${raw%%:*}"   # everything before the first colon
+    curl_exit="${raw##*:}"   # everything after the last colon
+    if [[ "$http_code" != "000" ]] && [[ "$curl_exit" == "0" ]]; then
+      fail "HTTP reachable: $host:$port returned $http_code"
     else
-      pass "HTTP blocked: $host:$port"
+      pass "HTTP blocked: $host:$port returned $http_code (curl exit=$curl_exit)"
     fi
   fi
 }
