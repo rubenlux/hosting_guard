@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 from fastapi import HTTPException
 
 from app.infra.audit.hosting_repository import HostingRepository
-from app.infra.docker_client import run_docker_command_async
+from app.infra.docker_client import run_docker_command_async, TENANT_NETWORK
 from app.services.build_diagnostics import (
     classify_npm_failure,
     extract_npm_log_path,
@@ -243,7 +243,7 @@ async def run_github_deploy(
             command = [
                 "run", "-d",
                 "--name",    container_name,
-                "--network", "deploy_hosting_network",
+                "--network", TENANT_NETWORK,
                 "--restart", "unless-stopped",
                 "--cpus",    plan["cpu"],
                 "--memory",  plan["memory"],
@@ -260,7 +260,7 @@ async def run_github_deploy(
             command = [
                 "run", "-d",
                 "--name",    container_name,
-                "--network", "deploy_hosting_network",
+                "--network", TENANT_NETWORK,
                 "--restart", "unless-stopped",
                 "--cpus",    plan["cpu"],
                 "--memory",  plan["memory"],
@@ -560,7 +560,7 @@ async def run_github_deploy(
                 command = [
                     "run", "-d",
                     "--name",    container_name,
-                    "--network", "deploy_hosting_network",
+                    "--network", TENANT_NETWORK,
                     "--restart", "unless-stopped",
                     "--cpus",    plan["cpu"],
                     "--memory",  plan["memory"],
@@ -611,7 +611,7 @@ async def run_github_deploy(
                 command = [
                     "run", "-d",
                     "--name",    container_name,
-                    "--network", "deploy_hosting_network",
+                    "--network", TENANT_NETWORK,
                     "--restart", "unless-stopped",
                     "--cpus",    plan["cpu"],
                     "--memory",  plan["memory"],

@@ -36,7 +36,7 @@ from app.core.ai_orchestrator import AIOrchestrator
 from app.core.debug_context_builder import build_debug_context
 from app.core.health_engine import calculate_health_score
 from app.core.alert_engine import check_alerts
-from app.infra.docker_client import run_docker_command_async
+from app.infra.docker_client import run_docker_command_async, TENANT_NETWORK
 from app.infra.container_locks import container_lock
 from app.api.wp_optimize import optimize_wordpress
 from app.services.notification_service import notify
@@ -381,7 +381,7 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
         command = [
             "run", "-d",
             "--name",     container_name,
-            "--network",  "deploy_hosting_network",
+            "--network",  TENANT_NETWORK,
             "--restart",  "unless-stopped",
             # FIX #7: aplicar límites de recursos del plan (antes faltaban en este endpoint)
             "--cpus",     plan["cpu"],
@@ -827,7 +827,7 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
         # FIX #2: convención de nombres clara para poder limpiar el DB container al borrar
         db_container = f"user_{user_id}_db_{project_name}_{uid}"
         wp_container = f"user_{user_id}_wp_{project_name}_{uid}"
-        network      = "deploy_hosting_network"
+        network      = TENANT_NETWORK
 
         # Always use the user's actual account plan — never trust the form-submitted plan.
         # This prevents paid users from creating 'free' containers.
@@ -1117,7 +1117,7 @@ async def redeploy_from_github(hosting_id: int, request: Request, user: dict = D
         command = [
             "run", "-d",
             "--name",    container_name,
-            "--network", "deploy_hosting_network",
+            "--network", TENANT_NETWORK,
             "--restart", "unless-stopped",
             "--cpus",    plan_cfg["cpu"],
             "--memory",  plan_cfg["memory"],
@@ -1252,7 +1252,7 @@ async def github_webhook(hosting_id: int, request: Request):
             command = [
                 "run", "-d",
                 "--name",    container_name,
-                "--network", "deploy_hosting_network",
+                "--network", TENANT_NETWORK,
                 "--restart", "unless-stopped",
                 "--cpus",    plan_cfg["cpu"],
                 "--memory",  plan_cfg["memory"],

@@ -1433,7 +1433,7 @@ def ensure_static_container_mount(hosting_id: int, dry_run: bool = True) -> dict
         }
 
     try:
-        from app.infra.docker_client import run_docker_command
+        from app.infra.docker_client import run_docker_command, TENANT_NETWORK
 
         run_docker_command(["stop", container_name], timeout=15)
         run_docker_command(["rm", container_name], timeout=10)
@@ -1441,7 +1441,7 @@ def ensure_static_container_mount(hosting_id: int, dry_run: bool = True) -> dict
         rc, _, err = run_docker_command([
             "run", "-d",
             "--name", container_name,
-            "--network", "deploy_hosting_network",
+            "--network", TENANT_NETWORK,
             "--restart", "unless-stopped",
             "--cpus", resources["cpu"],
             "--memory", resources["memory"],

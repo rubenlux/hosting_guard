@@ -75,8 +75,9 @@ services:
       # sin socket directo — usa el proxy
 
     networks:
-      - hosting_network
-      - socket_proxy_network
+      - edge_network           # proxies to app/frontend
+      - tenant_edge_network    # proxies to tenant containers
+      - socket_proxy_network   # reads Docker labels via proxy
 
   # ---------------------------------------------------------------------------
   # app — backend FastAPI (stateless, 2 workers, no schedulers)
@@ -120,8 +121,9 @@ services:
       # sin socket directo — DOCKER_HOST apunta al proxy
 
     networks:
-      - hosting_network
-      - socket_proxy_network
+      - edge_network           # Traefik routes api.hostingguard.lat here; ForwardAuth lives here
+      - platform_network       # accesses redis, postgres/pgbouncer, prometheus
+      - socket_proxy_network   # Docker commands via proxy
 
   # ---------------------------------------------------------------------------
   # frontend — React (Nginx)
@@ -132,7 +134,7 @@ services:
     container_name: frontend
     restart: always
     networks:
-      - hosting_network
+      - edge_network
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.frontend.rule=Host(`hostingguard.lat`) || Host(`www.hostingguard.lat`)"
@@ -166,7 +168,7 @@ services:
       - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
       - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
     networks:
-      - hosting_network
+      - platform_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432"]
       interval: 10s
@@ -189,7 +191,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
-      - hosting_network
+      - platform_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 10s
@@ -208,8 +210,8 @@ services:
     volumes:
       - redisdata:/data
     networks:
-      - hosting_network
-    # sin puertos expuestos — solo accesible internamente
+      - platform_network
+    # sin puertos expuestos — solo accesible desde platform_network
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "$${REDIS_PASSWORD}", "ping"]
       interval: 10s
@@ -233,7 +235,7 @@ services:
       - '--path.rootfs=/rootfs'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     networks:
-      - hosting_network
+      - platform_network
 
   # ---------------------------------------------------------------------------
   # alertmanager — enruta alertas de Prometheus a email/slack/webhook
@@ -251,7 +253,7 @@ services:
     ports:
       - "127.0.0.1:9093:9093"   # solo loopback — no expuesto a Internet
     networks:
-      - hosting_network
+      - platform_network
 
   # ---------------------------------------------------------------------------
   # prometheus — métricas internas
@@ -271,7 +273,7 @@ services:
     depends_on:
       - alertmanager
     networks:
-      - hosting_network
+      - platform_network
 
   # ---------------------------------------------------------------------------
   # worker — Arq background job worker (import pipeline)
@@ -301,7 +303,7 @@ services:
       - imports:/tmp/hg_imports
       - /opt/hostingguard-backups:/opt/hostingguard-backups
     networks:
-      - hosting_network
+      - platform_network
       - socket_proxy_network
 
   # ---------------------------------------------------------------------------
@@ -333,7 +335,7 @@ services:
       - ./data:/app/data
       - /opt/hostingguard-backups:/opt/hostingguard-backups
     networks:
-      - hosting_network
+      - platform_network
       - socket_proxy_network
 
   # ---------------------------------------------------------------------------
@@ -355,15 +357,19 @@ services:
       - /usr/bin/docker:/usr/bin/docker:ro
       - ./data:/app/data
     networks:
-      - hosting_network
+      - platform_network
       - socket_proxy_network
 
 networks:
-  hosting_network:
-    driver: bridge
+  edge_network:
+    driver: bridge       # traefik ↔ app ↔ frontend
+  platform_network:
+    driver: bridge       # app ↔ redis ↔ postgres ↔ prometheus ↔ alertmanager ↔ worker ↔ scheduler
+  tenant_edge_network:
+    driver: bridge       # traefik ↔ tenant containers only (no platform services)
   socket_proxy_network:
     driver: bridge
-    internal: true   # sin acceso a Internet
+    internal: true       # docker-socket-proxy ↔ traefik ↔ app ↔ worker ↔ scheduler
 
 volumes:
   pgdata:

@@ -2636,3 +2636,19 @@ Y validar:
 
 
 curl https://api.hostingguard.lat/admin/hostings/metrics  # → 200, array JSON
+
+All 15 tests pass. The implementation is complete and verified:
+
+9 backend tests in tests/test_download_tenant_backup.py — all green (bundle contains files.tar.gz, size check, db_skipped, 404 on missing file, 400 on failed status, 403 non-owner, admin allowed, legacy fallback, path traversal blocked)
+6 backend tests in tests/test_user_backup_list.py — all green (owner sees backups, empty shape, admin list, non-owner 403, unknown hosting 404, response shape stable)
+When you're ready to validate in production:
+
+
+# On the server, after deploying:
+TOKEN=$(cat /opt/deploy/.admin_token)  # or however you obtain it
+curl -L -s -D /tmp/headers.txt \
+  -o /tmp/backup5.tar.gz \
+  "https://api.hostingguard.lat/hosting/backups/5/download" \
+  --cookie "access_token=$TOKEN"
+grep -i content-length /tmp/headers.txt   # should be >> 287
+tar -tzf /tmp/backup5.tar.gz              # should show: manifest.json + files.tar.gz

@@ -28,6 +28,7 @@ from app.api.rate_limit import limiter
 from app.api.security import verify_token
 from app.api.wp_optimize import optimize_wordpress
 from app.infra.audit.hosting_repository import HostingRepository
+from app.infra.docker_client import TENANT_NETWORK
 from app.infra.audit.import_repository import ImportRepository
 from app.services.notification_service import notify
 
@@ -181,7 +182,7 @@ def _get_container_network(container: str) -> str:
     )
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip().split()[0]
-    return "deploy_hosting_network"
+    return TENANT_NETWORK
 
 
 def _wait_for_db(job_id: int, db_container: str, db_password: str, max_wait: int = 60) -> None:

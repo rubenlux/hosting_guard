@@ -4,8 +4,13 @@ Centralizes subprocess invocation so callers don't depend on subprocess directly
 and so the implementation can be swapped (e.g. for tests or SDK migration).
 """
 import asyncio
+import os
 import subprocess
 import logging
+
+# Network name for tenant containers (isolated from platform services).
+# Override via TENANT_NETWORK env var if the compose project name differs.
+TENANT_NETWORK = os.getenv("TENANT_NETWORK", "deploy_tenant_edge_network")
 
 logger = logging.getLogger(__name__)
 
