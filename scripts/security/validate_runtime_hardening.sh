@@ -138,16 +138,28 @@ print('yes' if tenant in nets else 'no')
   fi
 
   # ── WARN: pids limit ─────────────────────────────────────────────────────
-  PIDS=$(echo "$HOST_CFG" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('PidsLimit',0))" 2>/dev/null || echo "0")
-  if [[ "$PIDS" == "0" ]] || [[ "$PIDS" == "null" ]]; then
+  # dict.get('PidsLimit', 0) returns Python None (not 0) when JSON has null.
+  # Normalize: None/null/0/negative → 0 so the bash comparison is always numeric.
+  PIDS=$(echo "$HOST_CFG" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+v=d.get('PidsLimit')
+print(0 if not v or v <= 0 else int(v))
+" 2>/dev/null || echo "0")
+  if [[ "$PIDS" -le 0 ]]; then
     warn "No pids limit — fork-bomb possible (add --pids-limit)"
   else
     pass "pids limit: $PIDS"
   fi
 
   # ── WARN: memory limit ───────────────────────────────────────────────────
-  MEM=$(echo "$HOST_CFG" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('Memory',0))" 2>/dev/null || echo "0")
-  if [[ "$MEM" == "0" ]] || [[ "$MEM" == "null" ]]; then
+  MEM=$(echo "$HOST_CFG" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+v=d.get('Memory')
+print(0 if not v or v <= 0 else int(v))
+" 2>/dev/null || echo "0")
+  if [[ "$MEM" -le 0 ]]; then
     warn "No memory limit (add --memory)"
   else
     MEM_MB=$(( MEM / 1024 / 1024 ))
@@ -155,8 +167,13 @@ print('yes' if tenant in nets else 'no')
   fi
 
   # ── WARN: cpu quota ──────────────────────────────────────────────────────
-  CPU=$(echo "$HOST_CFG" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('NanoCpus',0))" 2>/dev/null || echo "0")
-  if [[ "$CPU" == "0" ]] || [[ "$CPU" == "null" ]]; then
+  CPU=$(echo "$HOST_CFG" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+v=d.get('NanoCpus')
+print(0 if not v or v <= 0 else int(v))
+" 2>/dev/null || echo "0")
+  if [[ "$CPU" -le 0 ]]; then
     warn "No CPU limit (add --cpus)"
   else
     CPU_CORES=$(echo "$CPU" | python3 -c "import sys; v=int(sys.stdin.read().strip()); print(f'{v/1e9:.2f}')" 2>/dev/null || echo "?")
