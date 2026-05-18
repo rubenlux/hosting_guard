@@ -36,7 +36,7 @@ from app.core.ai_orchestrator import AIOrchestrator
 from app.core.debug_context_builder import build_debug_context
 from app.core.health_engine import calculate_health_score
 from app.core.alert_engine import check_alerts
-from app.infra.docker_client import run_docker_command_async, TENANT_NETWORK
+from app.infra.docker_client import run_docker_command_async, TENANT_NETWORK, tenant_hardening_flags
 from app.infra.container_locks import container_lock
 from app.api.wp_optimize import optimize_wordpress
 from app.services.notification_service import notify
@@ -383,11 +383,12 @@ async def create_hosting(data: CreateHostingRequest, request: Request, user: dic
             "--name",     container_name,
             "--network",  TENANT_NETWORK,
             "--restart",  "unless-stopped",
-            # FIX #7: aplicar límites de recursos del plan (antes faltaban en este endpoint)
             "--cpus",     plan["cpu"],
             "--memory",   plan["memory"],
+            *tenant_hardening_flags(),
             "-v", f"{host_site_dir}:/usr/share/nginx/html:ro",
             "-l", "traefik.enable=true",
+            "-l", f"traefik.docker.network={TENANT_NETWORK}",
             "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
             "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
             "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
@@ -868,6 +869,7 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             "-e", f"MYSQL_PASSWORD={db_password}",
             "--cpus",   plan["cpu"],
             "--memory", plan["memory"],
+            *tenant_hardening_flags(),
             "mariadb:10.11"
         ]
         db_code, _, db_err = await run_docker_command_async(db_cmd, timeout=30)
@@ -886,7 +888,9 @@ async def create_wordpress(data: CreateHostingRequest, request: Request, user: d
             "-e", "WORDPRESS_DB_NAME=wordpress",
             "--cpus",   plan["cpu"],
             "--memory", plan["memory"],
+            *tenant_hardening_flags(),
             "-l", "traefik.enable=true",
+            "-l", f"traefik.docker.network={TENANT_NETWORK}",
             "-l", f"traefik.http.routers.{wp_container}.rule=Host(`{subdomain}`)",
             "-l", f"traefik.http.routers.{wp_container}.entrypoints=websecure",
             "-l", f"traefik.http.routers.{wp_container}.tls.certresolver=le",

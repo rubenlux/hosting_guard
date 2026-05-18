@@ -1433,8 +1433,9 @@ def ensure_static_container_mount(hosting_id: int, dry_run: bool = True) -> dict
         }
 
     try:
-        from app.infra.docker_client import run_docker_command, TENANT_NETWORK
+        from app.infra.docker_client import run_docker_command, TENANT_NETWORK, tenant_hardening_flags
 
+        subdomain = (h.get("subdomain") or "").strip()
         run_docker_command(["stop", container_name], timeout=15)
         run_docker_command(["rm", container_name], timeout=10)
 
@@ -1445,7 +1446,15 @@ def ensure_static_container_mount(hosting_id: int, dry_run: bool = True) -> dict
             "--restart", "unless-stopped",
             "--cpus", resources["cpu"],
             "--memory", resources["memory"],
+            *tenant_hardening_flags(),
             "-v", mount_spec,
+            "-l", "traefik.enable=true",
+            "-l", f"traefik.docker.network={TENANT_NETWORK}",
+            "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
+            "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
+            "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
+            "-l", f"traefik.http.routers.{container_name}.middlewares=hg-forwardauth",
+            "-l", f"traefik.http.services.{container_name}.loadbalancer.server.port=80",
             "nginx:alpine",
         ], timeout=30)
 

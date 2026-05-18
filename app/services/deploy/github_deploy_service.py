@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 from fastapi import HTTPException
 
 from app.infra.audit.hosting_repository import HostingRepository
-from app.infra.docker_client import run_docker_command_async, TENANT_NETWORK
+from app.infra.docker_client import run_docker_command_async, TENANT_NETWORK, tenant_hardening_flags
 from app.services.build_diagnostics import (
     classify_npm_failure,
     extract_npm_log_path,
@@ -247,6 +247,7 @@ async def run_github_deploy(
                 "--restart", "unless-stopped",
                 "--cpus",    plan["cpu"],
                 "--memory",  plan["memory"],
+                *tenant_hardening_flags(),
                 *_docker_env_flags(data.env_vars),
                 *_traefik_labels(container_name, subdomain, data.port),
                 image_tag,
@@ -264,6 +265,7 @@ async def run_github_deploy(
                 "--restart", "unless-stopped",
                 "--cpus",    plan["cpu"],
                 "--memory",  plan["memory"],
+                *tenant_hardening_flags(),
                 "-v", f"{work_dir}:/app",
                 "-w", "/app",
                 *_docker_env_flags(data.env_vars),
@@ -564,6 +566,7 @@ async def run_github_deploy(
                     "--restart", "unless-stopped",
                     "--cpus",    plan["cpu"],
                     "--memory",  plan["memory"],
+                    *tenant_hardening_flags(),
                     "-v", f"{serve_root}:/usr/share/nginx/html:ro",
                     *_traefik_labels(container_name, subdomain, data.port),
                     "nginx:alpine",
@@ -615,6 +618,7 @@ async def run_github_deploy(
                     "--restart", "unless-stopped",
                     "--cpus",    plan["cpu"],
                     "--memory",  plan["memory"],
+                    *tenant_hardening_flags(),
                     "-v", f"{serve_root}:/usr/share/nginx/html:ro",
                     *_docker_env_flags(data.env_vars),
                     *_traefik_labels(container_name, subdomain, data.port),

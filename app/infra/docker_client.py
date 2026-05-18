@@ -12,6 +12,22 @@ import logging
 # Override via TENANT_NETWORK env var if the compose project name differs.
 TENANT_NETWORK = os.getenv("TENANT_NETWORK", "deploy_tenant_edge_network")
 
+# Runtime hardening limits applied to every tenant container.
+# pids-limit prevents fork-bomb / runaway process trees inside a tenant.
+# Tune via env var without rebuilding the image.
+TENANT_PIDS_LIMIT = int(os.getenv("TENANT_PIDS_LIMIT", "200"))
+
+
+def tenant_hardening_flags() -> list[str]:
+    """Security and resource-limit flags added to every `docker run` for a tenant container.
+
+    Call as: *tenant_hardening_flags() inside a command list.
+    """
+    return [
+        "--security-opt", "no-new-privileges:true",
+        "--pids-limit",   str(TENANT_PIDS_LIMIT),
+    ]
+
 logger = logging.getLogger(__name__)
 
 

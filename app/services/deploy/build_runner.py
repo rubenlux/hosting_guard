@@ -8,6 +8,8 @@ import re
 import shutil
 from typing import Optional
 
+from app.infra.docker_client import TENANT_NETWORK
+
 # Env var names (case-insensitive suffix match) that must never reach build containers.
 # Build containers are ephemeral and untrusted; credentials injected here can be
 # exfiltrated by a malicious postinstall script in a compromised dependency.
@@ -64,6 +66,8 @@ def _default_install(image: str) -> str:
 def _traefik_labels(container_name: str, subdomain: str, port: int) -> list:
     return [
         "-l", "traefik.enable=true",
+        # Tell Traefik which network to use — required after tenant_edge_network isolation
+        "-l", f"traefik.docker.network={TENANT_NETWORK}",
         "-l", f"traefik.http.routers.{container_name}.rule=Host(`{subdomain}`)",
         "-l", f"traefik.http.routers.{container_name}.entrypoints=websecure",
         "-l", f"traefik.http.routers.{container_name}.tls.certresolver=le",
