@@ -76,7 +76,7 @@ export default function BlogPost() {
           </Link>
           <nav className="flex items-center gap-6 text-sm">
             <Link to="/blog" className="text-white/50 hover:text-white transition">Blog</Link>
-            <Link to="/login" className="text-white/50 hover:text-white transition">Acceder</Link>
+            <Link to="/" className="text-white/50 hover:text-white transition">Acceder</Link>
           </nav>
         </div>
       </header>

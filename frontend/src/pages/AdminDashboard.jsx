@@ -81,6 +81,7 @@ const NAV = [
   { id: 'resources',     label: 'Resources',        icon: Cpu },
   { id: 'finance',       label: 'Finance',          icon: DollarSign },
   { id: 'ai-report',     label: 'AI Report',        icon: Sparkles },
+  { id: 'blog',          label: 'Blog CMS',         icon: BookOpen, path: '/admin/blog' },
   { id: 'notifications', label: 'Notificaciones',   icon: BellRing },
   { id: 'equipo',        label: 'Equipo',           icon: UserCog },
   { id: 'router-health', label: 'Router Health',    icon: Globe },

@@ -86,7 +86,7 @@ export default function BlogList() {
           </Link>
           <nav className="flex items-center gap-6 text-sm">
             <Link to="/" className="text-white/50 hover:text-white transition">Inicio</Link>
-            <Link to="/login" className="text-white/50 hover:text-white transition">Acceder</Link>
+            <Link to="/" className="text-white/50 hover:text-white transition">Acceder</Link>
           </nav>
         </div>
       </header>

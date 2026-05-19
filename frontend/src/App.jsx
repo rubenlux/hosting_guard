@@ -24,6 +24,7 @@ import AdminBlogList from './pages/AdminBlogList';
 import AdminBlogEditor from './pages/AdminBlogEditor';
 import BlogList from './pages/BlogList';
 import BlogPost from './pages/BlogPost';
+import NotFound from './pages/NotFound';
 import { useAuth } from './hooks/useAuth';
 
 const PrivateRoute = ({ children }) => {
@@ -76,6 +77,21 @@ function App() {
     );
   }
 
+  // Blog public routes are self-contained (own Navbar + Footer).
+  // Skip landing Navbar/Footer wrapper to avoid double header and max-width constraint.
+  if (location.pathname.startsWith('/blog')) {
+    return (
+      <>
+        <Toaster position="top-right" toastOptions={{ style: { background: '#111', color: '#fff', border: '1px solid rgba(255,255,255,0.1)' } }} />
+        <Routes>
+          <Route path="/blog"       element={<BlogList />} />
+          <Route path="/blog/:slug" element={<BlogPost />} />
+          <Route path="*"           element={<NotFound />} />
+        </Routes>
+      </>
+    );
+  }
+
   if (loading) return null;
 
   return (
@@ -110,6 +126,10 @@ function App() {
           {/* Fallback staff routes (shouldn't normally be needed but keeps router happy) */}
           <Route path="/staff/login"     element={<StaffLogin />} />
           <Route path="/staff/dashboard" element={<StaffDashboard />} />
+          {/* /login doesn't have its own page — the login flow lives on the landing page (/). */}
+          <Route path="/login"           element={<Navigate to="/" />} />
+          {/* Catch-all — must be last */}
+          <Route path="*"               element={<NotFound />} />
         </Routes>
       </main>
       {!user && <Footer />}
