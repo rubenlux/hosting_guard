@@ -305,19 +305,30 @@ fi
 # ─── 5. Backup check ─────────────────────────────────────────────────────────
 section "Backup files (permissions)"
 
-for backup in /root/.env.production.backup* /opt/backups/.env* 2>/dev/null; do
-  [[ -f "$backup" ]] || continue
+backup_count=0
+while IFS= read -r -d '' backup; do
+  backup_count=$((backup_count + 1))
   perms=$(stat -c "%a" "$backup" 2>/dev/null || stat -f "%OLp" "$backup" 2>/dev/null || echo "000")
-  world_bit="${perms: -1}"
-  group_write="${perms:1:1}"
-  if [[ "$world_bit" != "0" ]]; then
+  owner_digit="${perms:0:1}"
+  group_digit="${perms:1:1}"
+  world_digit="${perms:2:1}"
+  if (( world_digit != 0 )); then
     fail "Backup $backup is world-readable (perms=$perms)"
-  elif [[ "$group_write" -gt 4 ]]; then
+  elif (( group_digit & 2 )); then
     warn "Backup $backup is group-writable (perms=$perms)"
   else
     pass "Backup $backup: perms=$perms (OK)"
   fi
-done
+done < <(
+  {
+    find /root -maxdepth 1 -type f -name ".env.production.backup*" -print0 2>/dev/null || true
+    find /opt/backups -maxdepth 1 -type f -name ".env*" -print0 2>/dev/null || true
+  }
+)
+
+if [[ "$backup_count" -eq 0 ]]; then
+  info "No backup files found to validate"
+fi
 
 # ─── summary ─────────────────────────────────────────────────────────────────
 echo ""
