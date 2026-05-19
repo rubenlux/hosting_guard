@@ -3,7 +3,7 @@
 Documentos de conocimiento operativo para el RAG de HostingGuard. Cada documento mapea
 un síntoma a una causa raíz, fix aplicado y comandos de validación.
 
-**Última actualización**: 2026-05-18
+**Última actualización**: 2026-05-19
 
 ---
 
@@ -13,6 +13,7 @@ un síntoma a una causa raíz, fix aplicado y comandos de validación.
 |---|---|---|---|
 | `critical` | [P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES](incidents/P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES.md) | docker-networking | Los contenedores tenant podían resolver DNS y conectar TCP/HTTP a servicios internos (redis, hosting_guard, prometheus, alertmanager) por estar en una red Docker plana compartida |
 | `medium` | [VALIDATE_TENANT_NETWORK_HTTP_000_FALSE_FAIL](incidents/VALIDATE_TENANT_NETWORK_HTTP_000_FALSE_FAIL.md) | validation-script | `validate_tenant_network_isolation.sh` emitía falsos FAIL con código `000000` para servicios bloqueados; causa: `|| echo 000` duplicaba el output de curl |
+| `critical` | [SECRET_EXPOSURE_RESPONSE](incidents/SECRET_EXPOSURE_RESPONSE.md) | secrets-hygiene | Respuesta a incidente de exposición de credenciales: JWT_SECRET, DATABASE_URL, API keys. Rotación inmediata con `rotate_secrets_p4e.sh --apply` y restart de servicios |
 
 ---
 
@@ -21,6 +22,7 @@ un síntoma a una causa raíz, fix aplicado y comandos de validación.
 | ID | Área | Resumen |
 |---|---|---|
 | [TENANT_NETWORK_ISOLATION](runbooks/TENANT_NETWORK_ISOLATION.md) | docker-networking | Diagnosticar, remediar y revalidar el aislamiento de red de tenants; arquitectura de 4 redes, comandos de migración, auditoría de todos los tenants |
+| [SECRETS_ROTATION](runbooks/SECRETS_ROTATION.md) | secrets-hygiene | Procedimiento operativo para rotar JWT_SECRET y SECRET_KEY; tabla de prioridades, dry-run → apply → restart → validar; rollback desde backup |
 
 ---
 
@@ -29,6 +31,7 @@ un síntoma a una causa raíz, fix aplicado y comandos de validación.
 | Severidad | ID | Área | Resumen |
 |---|---|---|---|
 | `high` | [P4C_TENANT_RUNTIME_HARDENING](security/P4C_TENANT_RUNTIME_HARDENING.md) | tenant-runtime | Aplicación de `no-new-privileges`, `pids-limit 200`, límites de memoria/CPU y mounts `:ro` a todos los tenants existentes; resultado final: 54 passed, 0 warnings, 0 failures |
+| `high` | [P4E_SECRETS_ROTATION](security/P4E_SECRETS_ROTATION.md) | secrets-hygiene | Rotación de JWT_SECRET y SECRET_KEY con backup atómico; secretos generados dentro de Python (nunca en shell vars); fingerprint-only output; rollback automático |
 
 ---
 
@@ -44,6 +47,11 @@ un síntoma a una causa raíz, fix aplicado y comandos de validación.
 | `validate_runtime_hardening.sh` muestra WARN por pids/memory/no-new-privileges | [P4C_TENANT_RUNTIME_HARDENING](security/P4C_TENANT_RUNTIME_HARDENING.md) |
 | Tenant sin `--security-opt no-new-privileges:true` o `--pids-limit` | [P4C_TENANT_RUNTIME_HARDENING](security/P4C_TENANT_RUNTIME_HARDENING.md) |
 | Cómo hardenizar contenedores tenant existentes sin recrear manualmente | [P4C_TENANT_RUNTIME_HARDENING](security/P4C_TENANT_RUNTIME_HARDENING.md) |
+| Un secreto fue impreso en logs / aparece en un commit de git | [SECRET_EXPOSURE_RESPONSE](incidents/SECRET_EXPOSURE_RESPONSE.md) |
+| `validate_secrets_hygiene.sh` reporta FAIL | [SECRET_EXPOSURE_RESPONSE](incidents/SECRET_EXPOSURE_RESPONSE.md) |
+| Cómo rotar JWT_SECRET sin downtime (invalida todas las sesiones) | [SECRETS_ROTATION](runbooks/SECRETS_ROTATION.md) |
+| `.env.production` perms incorrectos (world-readable) | [SECRET_EXPOSURE_RESPONSE](incidents/SECRET_EXPOSURE_RESPONSE.md) |
+| `RuntimeError: JWT_SECRET is required` en logs del app | [SECRET_EXPOSURE_RESPONSE](incidents/SECRET_EXPOSURE_RESPONSE.md) |
 
 ---
 
@@ -56,6 +64,8 @@ un síntoma a una causa raíz, fix aplicado y comandos de validación.
 | `scripts/security/redact_compose_config.sh` | Ejecuta `docker compose config` con secretos redactados para reportes |
 | `scripts/ops/migrate_tenants_to_tenant_edge_network.sh` | Migra tenants de red plana a `deploy_tenant_edge_network` (dry-run por defecto) |
 | `scripts/ops/harden_existing_tenants.sh` | Recrea tenants con hardening flags; preserva config original, rollback automático |
+| `scripts/security/rotate_secrets_p4e.sh` | Rota JWT_SECRET y SECRET_KEY; dry-run por defecto, `--apply` para cambiar; backup 600, fingerprint-only output |
+| `scripts/security/validate_secrets_hygiene.sh` | Verifica permisos de .env.production, patrones de credenciales en docs, longitud de variables, perms de backups |
 
 ---
 

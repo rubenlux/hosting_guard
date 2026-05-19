@@ -1198,3 +1198,88 @@ signatures:
     source: validate_runtime_hardening
     confidence: 0.9
     type: substring
+
+  # ─── SECRET_EXPOSURE_RESPONSE ────────────────────────────────────────────────
+  - id: sig_164
+    pattern: "RuntimeError: JWT_SECRET is required"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_165
+    pattern: "JWT_SECRET is required"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: app_logs
+    confidence: 1.0
+    type: substring
+
+  - id: sig_166
+    pattern: "secret exposed"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: operator_report
+    confidence: 1.0
+    type: substring
+
+  - id: sig_167
+    pattern: "credential leak detected"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: operator_report
+    confidence: 1.0
+    type: substring
+
+  - id: sig_168
+    pattern: "JWT_SECRET in git history"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: operator_report
+    confidence: 1.0
+    type: substring
+
+  - id: sig_169
+    pattern: "hardcoded credential"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: validate_secrets_hygiene
+    confidence: 1.0
+    type: substring
+
+  - id: sig_170
+    pattern: "sk-ant-.*in docs"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: validate_secrets_hygiene
+    confidence: 1.0
+    type: regex
+
+  - id: sig_171
+    pattern: "ghp_.*committed"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: validate_secrets_hygiene
+    confidence: 1.0
+    type: regex
+
+  - id: sig_172
+    pattern: "validate_secrets_hygiene.*FAIL"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: validate_secrets_hygiene
+    confidence: 0.95
+    type: regex
+
+  - id: sig_173
+    pattern: "secrets hygiene check failed"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: validate_secrets_hygiene
+    confidence: 1.0
+    type: substring
+
+  - id: sig_174
+    pattern: "env file is world-readable"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: validate_secrets_hygiene
+    confidence: 1.0
+    type: substring
+
+  - id: sig_175
+    pattern: ".env.production world-readable"
+    incident_id: SECRET_EXPOSURE_RESPONSE
+    source: operator_report
+    confidence: 1.0
+    type: substring

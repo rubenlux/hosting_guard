@@ -182,3 +182,20 @@ safe_actions:
     description: "Run harden_existing_tenants.sh (APPLY=true) to recreate existing containers with security flags; script has automatic rollback"
     requires_dry_run_first: true
     requires_human_approval: true
+
+  # ── P4E Secrets Rotation safe actions ────────────────────────────────────────
+
+  - id: run_secrets_hygiene_validation
+    description: "Run validate_secrets_hygiene.sh to check file permissions, credential patterns in docs, variable existence and length, and backup permissions"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: rotate_jwt_secret
+    description: "Run rotate_secrets_p4e.sh --apply to rotate JWT_SECRET (and optionally SECRET_KEY); creates backup, writes atomically, shows fingerprints only"
+    requires_dry_run_first: true
+    requires_human_approval: true
+
+  - id: rotate_secret_key
+    description: "Rotate SECRET_KEY in .env.production using rotate_secrets_p4e.sh with ROTATE_SK=true (no session impact — does not require Redis flush)"
+    requires_dry_run_first: true
+    requires_human_approval: true

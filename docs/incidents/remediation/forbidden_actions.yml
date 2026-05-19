@@ -131,3 +131,20 @@ forbidden_actions:
 
   - id: mount_docker_sock_in_tenant_container
     reason: "Docker socket access inside a tenant container allows full Docker daemon control, equivalent to root on the host"
+
+  # ── P4E Secrets Rotation forbidden actions ────────────────────────────────────
+
+  - id: log_secret_value
+    reason: "Printing JWT_SECRET, DATABASE_URL, REDIS_URL or any credential value to logs or terminal exposes it in log storage and shell history"
+
+  - id: print_env_file_content
+    reason: "Printing .env.production content exposes all credentials at once — use fingerprints (len + sha256 prefix) instead"
+
+  - id: rotate_postgres_password_without_plan
+    reason: "POSTGRES_PASSWORD rotation requires coordinated PgBouncer + pg_hba update — doing it uncoordinated causes immediate DB connection failure for all tenants"
+
+  - id: commit_env_file_to_git
+    reason: ".env.production must never be committed — it contains production credentials for all services"
+
+  - id: pass_secret_as_cli_argument
+    reason: "CLI arguments appear in ps aux and /proc/PID/cmdline — secrets passed this way are readable by any process on the host"
