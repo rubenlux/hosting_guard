@@ -128,7 +128,12 @@ export default function AdminBlogEditor() {
     setUploadError(null);
     setUploadingCover(true);
     try {
-      const result = await adminUploadBlogMedia(file);
+      const result = await adminUploadBlogMedia(file, {
+        postSlug:  form.slug  || undefined,
+        postTitle: form.title || undefined,
+        imageRole: 'cover',
+        imageAlt:  form.seo_title || form.title || undefined,
+      });
       setForm((prev) => ({ ...prev, cover_image_url: result.url }));
     } catch (err) {
       const msg = err?.response?.data?.detail;
@@ -145,8 +150,15 @@ export default function AdminBlogEditor() {
     setUploadError(null);
     setUploadingContent(true);
     try {
-      const result = await adminUploadBlogMedia(file);
-      const img = `<figure>\n  <img src="${result.url}" alt="" loading="lazy" decoding="async" />\n  <figcaption>Descripción de la imagen</figcaption>\n</figure>`;
+      const result = await adminUploadBlogMedia(file, {
+        postSlug:  form.slug  || undefined,
+        postTitle: form.title || undefined,
+        imageRole: 'inline',
+        imageAlt:  form.title || undefined,
+        imageName: 'imagen',
+      });
+      const altText = form.title || '';
+      const img = `<figure>\n  <img src="${result.url}" alt="${altText}" loading="lazy" decoding="async" />\n  <figcaption>Descripción de la imagen</figcaption>\n</figure>`;
       const ta = contentTextareaRef.current;
       if (ta) {
         const start = ta.selectionStart ?? ta.value.length;

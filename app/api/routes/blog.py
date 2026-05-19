@@ -1,9 +1,11 @@
 import os
+import re
+import unicodedata
 import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from app.api.security import require_role
@@ -46,7 +48,42 @@ class PostUpdate(BaseModel):
     seo_description: Optional[str] = None
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _media_slug(text: str, max_len: int = 90) -> str:
+    """Convert arbitrary text to a safe, lowercase, ASCII slug for filenames."""
+    text = unicodedata.normalize("NFKD", text or "")
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = text.lower().strip()
+    text = re.sub(r"[^a-z0-9\s-]", "", text)
+    text = re.sub(r"[\s_]+", "-", text)
+    text = re.sub(r"-+", "-", text)
+    text = text.strip("-")
+    return text[:max_len] or "blog-image"
+
+
+def _build_media_filename(
+    content_type: str,
+    post_slug: Optional[str],
+    post_title: Optional[str],
+    image_role: Optional[str],
+    image_alt: Optional[str],
+    image_name: Optional[str],
+) -> str:
+    ext = _CT_TO_EXT[content_type]
+    short_hash = _uuid.uuid4().hex[:8]
+
+    base_slug = _media_slug(post_slug or post_title or "blog-image")
+
+    if image_role == "cover":
+        filename_base = f"{base_slug}-portada"
+    else:
+        label = _media_slug(image_name or image_alt or "imagen")
+        filename_base = f"{base_slug}-{label}" if label else f"{base_slug}-imagen"
+
+    filename_base = filename_base[:90].rstrip("-")
+    return f"{filename_base}-{short_hash}{ext}"
+
 
 def _unique_slug(base: str, exclude_id: Optional[int] = None) -> str:
     candidate = base
@@ -145,8 +182,13 @@ def admin_archive_post(post_id: int, user: dict = Depends(require_role("admin"))
 
 @router.post("/admin/blog/media/upload")
 async def admin_upload_media(
-    file: UploadFile = File(...),
-    user: dict = Depends(require_role("admin")),
+    file:       UploadFile      = File(...),
+    post_slug:  Optional[str]   = Form(None),
+    post_title: Optional[str]   = Form(None),
+    image_role: Optional[str]   = Form(None),   # "cover" | "inline"
+    image_alt:  Optional[str]   = Form(None),
+    image_name: Optional[str]   = Form(None),
+    user:       dict            = Depends(require_role("admin")),
 ):
     if file.content_type not in _ALLOWED_TYPES:
         raise HTTPException(
@@ -161,9 +203,15 @@ async def admin_upload_media(
             detail=f"Archivo muy grande. Máximo {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
         )
 
-    ext      = _CT_TO_EXT[file.content_type]
     subdir   = datetime.now(timezone.utc).strftime("%Y/%m")
-    filename = f"{_uuid.uuid4().hex}{ext}"
+    filename = _build_media_filename(
+        content_type=file.content_type,
+        post_slug=post_slug,
+        post_title=post_title,
+        image_role=image_role,
+        image_alt=image_alt,
+        image_name=image_name,
+    )
     rel_path = f"{subdir}/{filename}"
 
     dest_dir = os.path.join(_BLOG_MEDIA_DIR, subdir)

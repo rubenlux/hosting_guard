@@ -1219,9 +1219,14 @@ export const getBlogPost = async (slug) => {
   return response.data;
 };
 
-export const adminUploadBlogMedia = async (file) => {
+export const adminUploadBlogMedia = async (file, { postSlug, postTitle, imageRole, imageAlt, imageName } = {}) => {
   const formData = new FormData();
   formData.append('file', file);
+  if (postSlug)  formData.append('post_slug',  postSlug);
+  if (postTitle) formData.append('post_title', postTitle);
+  if (imageRole) formData.append('image_role', imageRole);
+  if (imageAlt)  formData.append('image_alt',  imageAlt);
+  if (imageName) formData.append('image_name', imageName);
   const response = await api.post('/admin/blog/media/upload', formData);
   return response.data;
 };
