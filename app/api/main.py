@@ -1264,6 +1264,11 @@ app.include_router(admin_backup_router)
 from app.api.routes.blog import router as blog_router
 app.include_router(blog_router)
 
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+_BLOG_MEDIA_SERVE_DIR = os.getenv("BLOG_MEDIA_DIR", "/app/media/blog")
+os.makedirs(_BLOG_MEDIA_SERVE_DIR, exist_ok=True)
+app.mount("/media/blog", _StaticFiles(directory=_BLOG_MEDIA_SERVE_DIR), name="blog-media")
+
 # ── Support Chat (aditivo) ────────────────────────────────────────────────
 from app.api.routes.support_chat import router as support_chat_router
 from app.api.websocket.support_ws import support_ws_handler

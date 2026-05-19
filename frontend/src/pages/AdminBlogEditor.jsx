@@ -1,12 +1,13 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Globe, EyeOff, RefreshCw, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Save, Globe, EyeOff, RefreshCw, AlertCircle, Upload, ImageIcon } from 'lucide-react';
 import {
   adminGetBlogPost,
   adminCreateBlogPost,
   adminUpdateBlogPost,
   adminPublishBlogPost,
   adminUnpublishBlogPost,
+  adminUploadBlogMedia,
 } from '../services/api';
 
 function slugify(text) {
@@ -43,15 +44,16 @@ function Input({ className = '', ...props }) {
   );
 }
 
-function Textarea({ className = '', ...props }) {
+const Textarea = React.forwardRef(function Textarea({ className = '', ...props }, ref) {
   return (
     <textarea
+      ref={ref}
       className={`bg-[#0d0d0f] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20
         focus:outline-none focus:border-white/30 transition resize-none ${className}`}
       {...props}
     />
   );
-}
+});
 
 export default function AdminBlogEditor() {
   const { id } = useParams();
@@ -63,12 +65,20 @@ export default function AdminBlogEditor() {
     cover_image_url: '', category: '', tags: '',
     seo_title: '', seo_description: '',
   });
-  const [status, setStatus] = useState('draft');
+  const [status, setStatus]         = useState('draft');
   const [slugManual, setSlugManual] = useState(false);
-  const [loading, setLoading]     = useState(isEdit);
-  const [saving, setSaving]       = useState(false);
+  const [loading, setLoading]       = useState(isEdit);
+  const [saving, setSaving]         = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [error, setError]         = useState(null);
+  const [error, setError]           = useState(null);
+
+  const [uploadingCover,   setUploadingCover]   = useState(false);
+  const [uploadingContent, setUploadingContent] = useState(false);
+  const [uploadError,      setUploadError]      = useState(null);
+
+  const coverInputRef   = useRef(null);
+  const contentInputRef = useRef(null);
+  const contentTextareaRef = useRef(null);
 
   const load = useCallback(async () => {
     if (!isEdit) return;
@@ -110,6 +120,57 @@ export default function AdminBlogEditor() {
   const handleSlugChange = (e) => {
     setSlugManual(true);
     setForm((prev) => ({ ...prev, slug: e.target.value }));
+  };
+
+  const handleUploadCover = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadError(null);
+    setUploadingCover(true);
+    try {
+      const result = await adminUploadBlogMedia(file);
+      setForm((prev) => ({ ...prev, cover_image_url: result.url }));
+    } catch (err) {
+      const msg = err?.response?.data?.detail;
+      setUploadError(typeof msg === 'string' ? msg : 'Error al subir la imagen.');
+    } finally {
+      setUploadingCover(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleUploadContent = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadError(null);
+    setUploadingContent(true);
+    try {
+      const result = await adminUploadBlogMedia(file);
+      const img = `<figure>\n  <img src="${result.url}" alt="" loading="lazy" decoding="async" />\n  <figcaption>Descripción de la imagen</figcaption>\n</figure>`;
+      const ta = contentTextareaRef.current;
+      if (ta) {
+        const start = ta.selectionStart ?? ta.value.length;
+        const end   = ta.selectionEnd   ?? ta.value.length;
+        const before = ta.value.slice(0, start);
+        const after  = ta.value.slice(end);
+        const newVal = before + (before && !before.endsWith('\n') ? '\n' : '') + img + '\n' + after;
+        setForm((prev) => ({ ...prev, content: newVal }));
+        // Restore cursor after the inserted block
+        requestAnimationFrame(() => {
+          const pos = (before.length + (before && !before.endsWith('\n') ? 1 : 0) + img.length + 1);
+          ta.setSelectionRange(pos, pos);
+          ta.focus();
+        });
+      } else {
+        setForm((prev) => ({ ...prev, content: prev.content + '\n' + img + '\n' }));
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.detail;
+      setUploadError(typeof msg === 'string' ? msg : 'Error al subir la imagen.');
+    } finally {
+      setUploadingContent(false);
+      e.target.value = '';
+    }
   };
 
   const handleSave = async (publish = false) => {
@@ -248,6 +309,13 @@ export default function AdminBlogEditor() {
             </div>
           )}
 
+          {uploadError && (
+            <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              {uploadError}
+            </div>
+          )}
+
           <Field label="Título" required>
             <Input
               value={form.title}
@@ -277,7 +345,29 @@ export default function AdminBlogEditor() {
           </Field>
 
           <Field label="Contenido" required hint="HTML permitido. Scripts, iframes y handlers on* son eliminados automáticamente.">
+            <div className="flex items-center gap-2 mb-1.5">
+              <button
+                type="button"
+                onClick={() => contentInputRef.current?.click()}
+                disabled={uploadingContent}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/5 border border-white/10 text-[11px] text-white/50 hover:text-white hover:bg-white/10 transition disabled:opacity-40"
+              >
+                {uploadingContent
+                  ? <RefreshCw size={11} className="animate-spin" />
+                  : <ImageIcon size={11} />
+                }
+                Insertar imagen
+              </button>
+              <input
+                ref={contentInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={handleUploadContent}
+              />
+            </div>
             <Textarea
+              ref={contentTextareaRef}
               value={form.content}
               onChange={set('content')}
               placeholder="<h2>Introducción</h2>&#10;<p>Escribe el contenido en HTML...</p>"
@@ -309,12 +399,34 @@ export default function AdminBlogEditor() {
               />
             </Field>
 
-            <Field label="URL de imagen de portada">
-              <Input
-                value={form.cover_image_url}
-                onChange={set('cover_image_url')}
-                placeholder="https://..."
-              />
+            <Field label="Imagen de portada">
+              <div className="flex gap-2">
+                <Input
+                  value={form.cover_image_url}
+                  onChange={set('cover_image_url')}
+                  placeholder="https://..."
+                  className="flex-1 min-w-0"
+                />
+                <button
+                  type="button"
+                  onClick={() => coverInputRef.current?.click()}
+                  disabled={uploadingCover}
+                  title="Subir imagen"
+                  className="shrink-0 flex items-center gap-1 px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition disabled:opacity-40"
+                >
+                  {uploadingCover
+                    ? <RefreshCw size={13} className="animate-spin" />
+                    : <Upload size={13} />
+                  }
+                </button>
+                <input
+                  ref={coverInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={handleUploadCover}
+                />
+              </div>
             </Field>
 
             {form.cover_image_url && (

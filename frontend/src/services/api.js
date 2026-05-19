@@ -1218,3 +1218,10 @@ export const getBlogPost = async (slug) => {
   const response = await api.get(`/blog/posts/${slug}`);
   return response.data;
 };
+
+export const adminUploadBlogMedia = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await api.post('/admin/blog/media/upload', formData);
+  return response.data;
+};

@@ -1,9 +1,19 @@
+import os
+import uuid as _uuid
+from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from app.api.security import require_role
 from app.infra.audit.blog_repository import BlogRepository, slugify
+
+_BLOG_MEDIA_DIR      = os.getenv("BLOG_MEDIA_DIR",      "/app/media/blog")
+_BLOG_MEDIA_URL_BASE = os.getenv("BLOG_MEDIA_URL_BASE", "https://api.hostingguard.lat/media/blog")
+_MAX_UPLOAD_BYTES    = 5 * 1024 * 1024                        # 5 MB hard cap
+_ALLOWED_TYPES       = {"image/jpeg", "image/png", "image/webp"}
+_CT_TO_EXT           = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 
 router = APIRouter(tags=["blog"])
 
@@ -131,6 +141,45 @@ def admin_archive_post(post_id: int, user: dict = Depends(require_role("admin"))
     if not post:
         raise HTTPException(status_code=404, detail="Post no encontrado")
     return {"status": "archived", "post_id": post_id}
+
+
+@router.post("/admin/blog/media/upload")
+async def admin_upload_media(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_role("admin")),
+):
+    if file.content_type not in _ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Formato no permitido: {file.content_type}. Usa JPEG, PNG o WebP.",
+        )
+
+    data = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Archivo muy grande. Máximo {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+        )
+
+    ext      = _CT_TO_EXT[file.content_type]
+    subdir   = datetime.now(timezone.utc).strftime("%Y/%m")
+    filename = f"{_uuid.uuid4().hex}{ext}"
+    rel_path = f"{subdir}/{filename}"
+
+    dest_dir = os.path.join(_BLOG_MEDIA_DIR, subdir)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, filename)
+    with open(dest, "wb") as fh:
+        fh.write(data)
+    os.chmod(dest, 0o644)
+
+    return {
+        "url":          f"{_BLOG_MEDIA_URL_BASE}/{rel_path}",
+        "path":         f"/media/blog/{rel_path}",
+        "filename":     filename,
+        "content_type": file.content_type,
+        "size":         len(data),
+    }
 
 
 # ── Public endpoints ──────────────────────────────────────────────────────────

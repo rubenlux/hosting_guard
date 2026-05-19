@@ -126,4 +126,7 @@
   padding: 0.6rem 0.75rem; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.12);
 }
 .prose-blog td { padding: 0.6rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.prose-blog figure { margin: 1.5rem 0; }
+.prose-blog figure img { margin: 0; }
+.prose-blog figcaption { text-align: center; font-size: 0.8rem; color: rgba(255,255,255,0.35); margin-top: 0.5rem; font-style: italic; }
 

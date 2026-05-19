@@ -17,6 +17,13 @@ _DANGEROUS_OPEN = re.compile(
     re.IGNORECASE,
 )
 _ON_ATTRS = re.compile(r'\s+on\w+\s*=\s*(?:"[^"]*"|\'[^\']*\')', re.IGNORECASE)
+# Strip style attributes (potential CSS injection vector in HTML content)
+_STYLE_ATTR = re.compile(r'\s+style\s*=\s*(?:"[^"]*"|\'[^\']*\')', re.IGNORECASE)
+# Strip src/href attributes with dangerous protocols
+_DANGEROUS_PROTO = re.compile(
+    r'''\s+(?:src|href)\s*=\s*(?:"(?:javascript|data|vbscript)[^"]*"|'(?:javascript|data|vbscript)[^']*')''',
+    re.IGNORECASE,
+)
 
 
 def slugify(text: str) -> str:
@@ -34,6 +41,8 @@ def _sanitize(content: str) -> str:
     content = _DANGEROUS.sub('', content)
     content = _DANGEROUS_OPEN.sub('', content)
     content = _ON_ATTRS.sub('', content)
+    content = _STYLE_ATTR.sub('', content)
+    content = _DANGEROUS_PROTO.sub('', content)
     return content
 
 
