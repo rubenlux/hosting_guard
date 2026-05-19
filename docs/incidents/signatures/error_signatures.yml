@@ -1083,3 +1083,118 @@ signatures:
     source: app_logs
     confidence: 0.9
     type: substring
+
+  # ─── P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES ────────────────────────
+  - id: sig_148
+    pattern: "tenant can reach redis"
+    incident_id: P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES
+    source: operator_report
+    confidence: 1.0
+    type: substring
+
+  - id: sig_149
+    pattern: "tenant can reach hosting_guard"
+    incident_id: P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES
+    source: operator_report
+    confidence: 1.0
+    type: substring
+
+  - id: sig_150
+    pattern: "redis:6379 open"
+    incident_id: P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES
+    source: validate_tenant_network_isolation
+    confidence: 1.0
+    type: substring
+
+  - id: sig_151
+    pattern: "tcp open: redis:6379"
+    incident_id: P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES
+    source: validate_tenant_network_isolation
+    confidence: 1.0
+    type: substring
+
+  - id: sig_152
+    pattern: "tenant can reach platform services"
+    incident_id: P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES
+    source: operator_report
+    confidence: 1.0
+    type: substring
+
+  - id: sig_153
+    pattern: "deploy_hosting_network"
+    incident_id: P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES
+    source: docker_inspect
+    confidence: 0.9
+    type: substring
+
+  - id: sig_154
+    pattern: "platform service isolation"
+    incident_id: P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES
+    source: operator_report
+    confidence: 0.85
+    type: substring
+
+  # ─── VALIDATE_TENANT_NETWORK_HTTP_000_FALSE_FAIL ────────────────────────────
+  - id: sig_155
+    pattern: "returned 000000"
+    incident_id: VALIDATE_TENANT_NETWORK_HTTP_000_FALSE_FAIL
+    source: validate_tenant_network_isolation
+    confidence: 1.0
+    type: substring
+
+  - id: sig_156
+    pattern: "HTTP reachable returned 000000"
+    incident_id: VALIDATE_TENANT_NETWORK_HTTP_000_FALSE_FAIL
+    source: validate_tenant_network_isolation
+    confidence: 1.0
+    type: substring
+
+  - id: sig_157
+    pattern: "false positive HTTP reachable"
+    incident_id: VALIDATE_TENANT_NETWORK_HTTP_000_FALSE_FAIL
+    source: operator_report
+    confidence: 1.0
+    type: substring
+
+  # ─── P4C_TENANT_RUNTIME_HARDENING ───────────────────────────────────────────
+  - id: sig_158
+    pattern: "tenant container has no pids limit"
+    incident_id: P4C_TENANT_RUNTIME_HARDENING
+    source: operator_report
+    confidence: 1.0
+    type: substring
+
+  - id: sig_159
+    pattern: "no no-new-privileges"
+    incident_id: P4C_TENANT_RUNTIME_HARDENING
+    source: operator_report
+    confidence: 1.0
+    type: substring
+
+  - id: sig_160
+    pattern: "fork-bomb possible"
+    incident_id: P4C_TENANT_RUNTIME_HARDENING
+    source: validate_runtime_hardening
+    confidence: 1.0
+    type: substring
+
+  - id: sig_161
+    pattern: "pids limit: None"
+    incident_id: P4C_TENANT_RUNTIME_HARDENING
+    source: validate_runtime_hardening
+    confidence: 1.0
+    type: substring
+
+  - id: sig_162
+    pattern: "no-new-privileges not set"
+    incident_id: P4C_TENANT_RUNTIME_HARDENING
+    source: validate_runtime_hardening
+    confidence: 1.0
+    type: substring
+
+  - id: sig_163
+    pattern: "No pids limit"
+    incident_id: P4C_TENANT_RUNTIME_HARDENING
+    source: validate_runtime_hardening
+    confidence: 0.9
+    type: substring

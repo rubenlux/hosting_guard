@@ -120,3 +120,14 @@ forbidden_actions:
 
   - id: run_daily_backups_without_entitlement
     reason: "Backups are a paid feature — running them for non-entitled plans breaks the commercial model"
+
+  # ── P4B/P4C Network isolation and runtime hardening forbidden actions ────────
+
+  - id: add_tenant_to_platform_network
+    reason: "Connecting a tenant container to deploy_platform_network gives it direct DNS/TCP access to redis, prometheus, alertmanager, and the internal API"
+
+  - id: run_tenant_container_as_privileged
+    reason: "Privileged containers have unrestricted access to the host kernel — never allowed for untrusted tenant workloads"
+
+  - id: mount_docker_sock_in_tenant_container
+    reason: "Docker socket access inside a tenant container allows full Docker daemon control, equivalent to root on the host"

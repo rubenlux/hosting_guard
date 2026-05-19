@@ -2652,3 +2652,15 @@ curl -L -s -D /tmp/headers.txt \
   --cookie "access_token=$TOKEN"
 grep -i content-length /tmp/headers.txt   # should be >> 287
 tar -tzf /tmp/backup5.tar.gz              # should show: manifest.json + files.tar.gz
+
+Los 5 archivos están en su lugar. Resumen de lo creado:
+
+docs/knowledge/INDEX.md — Índice central con lookup rápido por síntoma y tabla de scripts de validación/operaciones. Apunta a los 4 documentos y a los docs existentes.
+
+docs/knowledge/incidents/P4B_TENANT_CAN_REACH_PLATFORM_INTERNAL_SERVICES.md — Incidente CRITICAL. Documenta la evidencia real (12 FAILs pre-fix, 25 PASSes post-fix), la arquitectura plana original vs. la topología de 4 redes resultante, y todos los paths de código modificados. Sin secretos.
+
+docs/knowledge/runbooks/TENANT_NETWORK_ISOLATION.md — Runbook operativo. Incluye diagnóstico rápido, auditoría de todos los tenants en un loop, interpretación del output del script de validación, remediación manual, restricciones de uso, y señales de alarma con acciones.
+
+docs/knowledge/security/P4C_TENANT_RUNTIME_HARDENING.md — Hardening doc. Cubre el bug Python None → "None" en la comparación bash, la función tenant_hardening_flags(), el script de hardening de tenants existentes, y el checklist completo con niveles FAIL/WARN por cada check.
+
+docs/knowledge/incidents/VALIDATE_TENANT_NETWORK_HTTP_000_FALSE_FAIL.md — Bug doc. Explica exactamente por qué 000000 aparecía, la semántica de curl exit codes, la tabla de decisiones antes/después, y el commit que lo resuelve (6749177). Incluye la guía RAG para distinguir falso positivo de brecha real.

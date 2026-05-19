@@ -160,3 +160,25 @@ safe_actions:
     description: "Identify and delete oldest manual backups via DELETE /hosting/hostings/{id}/backups/{bid}"
     requires_dry_run_first: true
     requires_human_approval: true
+
+  # ── P4B/P4C Network isolation and runtime hardening safe actions ─────────────
+
+  - id: validate_tenant_network_isolation
+    description: "Run validate_tenant_network_isolation.sh to probe DNS/TCP/HTTP reachability of platform services from a tenant container"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: migrate_tenant_to_isolated_network
+    description: "Run migrate_tenants_to_tenant_edge_network.sh (dry-run by default) to move tenant to deploy_tenant_edge_network"
+    requires_dry_run_first: true
+    requires_human_approval: true
+
+  - id: validate_tenant_runtime_hardening
+    description: "Run validate_runtime_hardening.sh to check per-container runtime posture (privileged, pids-limit, memory, no-new-privileges)"
+    requires_dry_run_first: false
+    requires_human_approval: false
+
+  - id: harden_existing_tenant_containers
+    description: "Run harden_existing_tenants.sh (APPLY=true) to recreate existing containers with security flags; script has automatic rollback"
+    requires_dry_run_first: true
+    requires_human_approval: true
