@@ -1170,3 +1170,51 @@ export const getAdminBackupList = async (hostingId, limit = 20) => {
   const response = await api.get(`/admin/hostings/${hostingId}/backups`, { params: { limit } });
   return response.data;
 };
+
+
+// ── Blog CMS ──────────────────────────────────────────────────────────────────
+
+export const adminListBlogPosts = async (params = {}) => {
+  const response = await api.get('/admin/blog/posts', { params });
+  return response.data;
+};
+
+export const adminGetBlogPost = async (postId) => {
+  const response = await api.get(`/admin/blog/posts/${postId}`);
+  return response.data;
+};
+
+export const adminCreateBlogPost = async (data) => {
+  const response = await api.post('/admin/blog/posts', data);
+  return response.data;
+};
+
+export const adminUpdateBlogPost = async (postId, data) => {
+  const response = await api.put(`/admin/blog/posts/${postId}`, data);
+  return response.data;
+};
+
+export const adminPublishBlogPost = async (postId) => {
+  const response = await api.post(`/admin/blog/posts/${postId}/publish`);
+  return response.data;
+};
+
+export const adminUnpublishBlogPost = async (postId) => {
+  const response = await api.post(`/admin/blog/posts/${postId}/unpublish`);
+  return response.data;
+};
+
+export const adminArchiveBlogPost = async (postId) => {
+  const response = await api.delete(`/admin/blog/posts/${postId}`);
+  return response.data;
+};
+
+export const listBlogPosts = async (params = {}) => {
+  const response = await api.get('/blog/posts', { params });
+  return response.data;
+};
+
+export const getBlogPost = async (slug) => {
+  const response = await api.get(`/blog/posts/${slug}`);
+  return response.data;
+};

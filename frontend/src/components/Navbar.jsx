@@ -23,6 +23,7 @@ const Navbar = () => {
               <a href="#funcionamiento" className="text-gray-300 hover:text-primary transition-colors font-medium">Cómo funciona</a>
               <a href="#beneficios" className="text-gray-300 hover:text-primary transition-colors font-medium">Beneficios</a>
               <a href="#pricing" className="text-gray-300 hover:text-primary transition-colors font-medium">Precios</a>
+              <Link to="/blog" className="text-gray-300 hover:text-primary transition-colors font-medium">Blog</Link>
               <AuthButton />
             </div>
           </div>
@@ -47,6 +48,7 @@ const Navbar = () => {
               <a href="#funcionamiento" className="block px-3 py-2 text-gray-300 hover:text-primary">Cómo funciona</a>
               <a href="#beneficios" className="block px-3 py-2 text-gray-300 hover:text-primary">Beneficios</a>
               <a href="#pricing" className="block px-3 py-2 text-gray-300 hover:text-primary">Precios</a>
+              <Link to="/blog" className="block px-3 py-2 text-gray-300 hover:text-primary">Blog</Link>
               <div className="mt-4 px-3">
                 <AuthButton />
               </div>

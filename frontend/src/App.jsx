@@ -20,6 +20,10 @@ import ApiDocs from './pages/ApiDocs';
 import VerifyEmail from './pages/VerifyEmail';
 import ResetPassword from './pages/ResetPassword';
 import Notifications from './pages/Notifications';
+import AdminBlogList from './pages/AdminBlogList';
+import AdminBlogEditor from './pages/AdminBlogEditor';
+import BlogList from './pages/BlogList';
+import BlogPost from './pages/BlogPost';
 import { useAuth } from './hooks/useAuth';
 
 const PrivateRoute = ({ children }) => {
@@ -90,6 +94,13 @@ function App() {
           <Route path="/admin/users/:id"              element={<AdminRoute><AdminUserDetail /></AdminRoute>} />
           <Route path="/admin/pixel-users"            element={<AdminRoute><AdminPixelUsers /></AdminRoute>} />
           <Route path="/admin/pixel-users/:user_id"   element={<AdminRoute><AdminPixelUserDetail /></AdminRoute>} />
+          {/* Blog admin — admin only */}
+          <Route path="/admin/blog"              element={<AdminRoute><AdminBlogList /></AdminRoute>} />
+          <Route path="/admin/blog/new"          element={<AdminRoute><AdminBlogEditor /></AdminRoute>} />
+          <Route path="/admin/blog/:id/edit"     element={<AdminRoute><AdminBlogEditor /></AdminRoute>} />
+          {/* Blog public */}
+          <Route path="/blog"           element={<BlogList />} />
+          <Route path="/blog/:slug"     element={<BlogPost />} />
           {/* Legal & public pages — accessible without authentication */}
           <Route path="/privacy"        element={<PrivacyPolicy />} />
           <Route path="/terminos"       element={<TermsConditions />} />

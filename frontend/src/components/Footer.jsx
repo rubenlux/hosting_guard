@@ -10,6 +10,7 @@ const Footer = () => (
           <span className="text-xl font-bold tracking-tight text-white">Hosting<span className="text-primary">Guard</span></span>
         </div>
         <div className="flex gap-8 text-gray-500 text-sm">
+          <Link to="/blog"     className="hover:text-white transition-colors">Blog</Link>
           <Link to="/privacy"  className="hover:text-white transition-colors">Privacidad</Link>
           <Link to="/terminos" className="hover:text-white transition-colors">Términos</Link>
           <Link to="/api-docs" className="hover:text-white transition-colors">API Docs</Link>

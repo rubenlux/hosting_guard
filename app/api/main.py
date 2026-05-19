@@ -1261,6 +1261,9 @@ app.include_router(router_health_router)
 app.include_router(knowledge_router)
 app.include_router(admin_backup_router)
 
+from app.api.routes.blog import router as blog_router
+app.include_router(blog_router)
+
 # ── Support Chat (aditivo) ────────────────────────────────────────────────
 from app.api.routes.support_chat import router as support_chat_router
 from app.api.websocket.support_ws import support_ws_handler

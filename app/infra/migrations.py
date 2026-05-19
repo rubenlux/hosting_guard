@@ -1119,6 +1119,29 @@ _INDEXES = [
         created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS idx_tbph_hosting ON tenant_backup_policy_history(hosting_id, created_at DESC)",
+
+    # ── Blog CMS ──────────────────────────────────────────────────────────────
+    """CREATE TABLE IF NOT EXISTS blog_posts (
+        post_id         BIGSERIAL PRIMARY KEY,
+        author_id       INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+        title           TEXT NOT NULL,
+        slug            TEXT NOT NULL UNIQUE,
+        excerpt         TEXT,
+        content         TEXT NOT NULL DEFAULT '',
+        cover_image_url TEXT,
+        category        TEXT,
+        tags            TEXT,
+        status          TEXT NOT NULL DEFAULT 'draft',
+        seo_title       TEXT,
+        seo_description TEXT,
+        published_at    TIMESTAMPTZ,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        deleted_at      TIMESTAMPTZ
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_blog_posts_status     ON blog_posts(status, published_at DESC) WHERE deleted_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_blog_posts_author     ON blog_posts(author_id)",
+    "CREATE INDEX IF NOT EXISTS idx_blog_posts_created    ON blog_posts(created_at DESC)",
 ]
 
 def ensure_monthly_partitions(cursor):
