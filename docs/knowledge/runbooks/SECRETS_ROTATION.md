@@ -74,7 +74,7 @@ sudo ./scripts/security/rotate_secrets_p4e.sh --apply
 
 # 3. Reiniciar servicios afectados
 cd /opt/deploy
-docker compose restart hosting_guard hg_worker hg_scheduler
+docker compose restart app worker scheduler
 
 # 4. Validar
 docker compose ps
@@ -123,7 +123,7 @@ sudo cp /root/.env.production.backup_p4e_<TIMESTAMP> /opt/deploy/.env.production
 
 # 3. Reiniciar
 cd /opt/deploy
-docker compose restart hosting_guard hg_worker hg_scheduler
+docker compose restart app worker scheduler
 
 # 4. Verificar
 docker compose ps

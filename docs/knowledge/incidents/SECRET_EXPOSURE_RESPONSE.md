@@ -49,7 +49,7 @@ Cualquiera de los siguientes:
 cd /opt/hosting_guard && git pull
 sudo ./scripts/security/rotate_secrets_p4e.sh --apply
 cd /opt/deploy
-docker compose restart hosting_guard hg_worker hg_scheduler
+docker compose restart app worker scheduler
 ```
 
 ### 2. Verificar que el app levantó correctamente

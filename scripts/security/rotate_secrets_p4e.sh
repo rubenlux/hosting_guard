@@ -9,6 +9,7 @@
 #   sudo ./scripts/security/rotate_secrets_p4e.sh               (dry-run)
 #   sudo ./scripts/security/rotate_secrets_p4e.sh --apply        (rotate)
 #   sudo ROTATE_SK=false ./scripts/security/rotate_secrets_p4e.sh --apply  (skip SECRET_KEY)
+#   sudo ./scripts/security/rotate_secrets_p4e.sh --self-test    (run .env format fixture tests)
 #
 # Environment overrides:
 #   ENV_FILE   — path to .env.production (default: /opt/deploy/.env.production)
@@ -21,6 +22,7 @@
 #   - Secrets generated and written entirely inside Python (never in shell vars)
 #   - Only fingerprints (len + sha256 prefix) printed to terminal
 #   - Rollback if post-write verification fails
+#   - Supports: KEY=val, export KEY=val, leading whitespace, KEY = val, CRLF
 
 set -euo pipefail
 
@@ -28,12 +30,14 @@ ENV_FILE="${ENV_FILE:-/opt/deploy/.env.production}"
 BACKUP_DIR="${BACKUP_DIR:-/root}"
 ROTATE_SK="${ROTATE_SK:-true}"
 APPLY=false
+SELF_TEST=false
 
 # ── parse args ────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --apply)    APPLY=true;  shift ;;
-    --dry-run)  APPLY=false; shift ;;
+    --apply)     APPLY=true;      shift ;;
+    --dry-run)   APPLY=false;     shift ;;
+    --self-test) SELF_TEST=true;  shift ;;
     *) echo "Unknown flag: $1"; exit 1 ;;
   esac
 done
@@ -45,6 +49,104 @@ fail()  { echo -e "  ${RED}[FAIL]${RESET} $*"; }
 info()  { echo -e "${CYAN}[INFO]${RESET} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${RESET} $*"; }
 section(){ echo ""; echo -e "${YELLOW}── $* ──${RESET}"; }
+
+# ── self-test ─────────────────────────────────────────────────────────────────
+if [[ "$SELF_TEST" == "true" ]]; then
+  echo ""
+  echo "══════════════════════════════════════════════════════════"
+  echo "  rotate_secrets_p4e.sh — .env format fixture self-test"
+  echo "══════════════════════════════════════════════════════════"
+  python3 <<'PYEOF'
+import re, hashlib, sys
+
+def parse_value(content, key):
+    m = re.search(
+        rf'^\s*(?:export\s+)?{re.escape(key)}\s*=\s*([^\r\n]*)',
+        content, re.MULTILINE
+    )
+    if not m:
+        return None
+    return m.group(1).strip().strip('"').strip("'")
+
+def rotate_key(content, key, new_val):
+    new_content, count = re.subn(
+        rf'^(\s*(?:export\s+)?{re.escape(key)}\s*=\s*)[^\r\n]*(\r?)$',
+        rf'\g<1>{new_val}\g<2>',
+        content, flags=re.MULTILINE
+    )
+    if count == 0:
+        raise RuntimeError(f"{key} not found")
+    return new_content
+
+PARSE_FIXTURES = [
+    ("KEY=value",             "JWT_SECRET=abc123\n",                  "JWT_SECRET", "abc123"),
+    ("export KEY=value",      "export JWT_SECRET=abc123\n",           "JWT_SECRET", "abc123"),
+    ("leading spaces",        "  JWT_SECRET=abc123\n",                "JWT_SECRET", "abc123"),
+    ("KEY = value",           "JWT_SECRET = abc123\n",                "JWT_SECRET", "abc123"),
+    ("export + spaces",       "export JWT_SECRET = abc123\n",         "JWT_SECRET", "abc123"),
+    ("quoted double",         'JWT_SECRET="abc123"\n',                "JWT_SECRET", "abc123"),
+    ("quoted single",         "JWT_SECRET='abc123'\n",                "JWT_SECRET", "abc123"),
+    ("CRLF ending",           "JWT_SECRET=abc123\r\nOTHER=x\r\n",    "JWT_SECRET", "abc123"),
+    ("comment before",        "# comment\nJWT_SECRET=abc123\n",      "JWT_SECRET", "abc123"),
+    ("empty line before",     "\nJWT_SECRET=abc123\n",                "JWT_SECRET", "abc123"),
+    ("multiple keys",         "X=1\nJWT_SECRET=abc123\nY=2\n",       "JWT_SECRET", "abc123"),
+]
+
+ROTATE_FIXTURES = [
+    ("KEY=value preserves",        "JWT_SECRET=old\n",              "JWT_SECRET", "NEW", "JWT_SECRET="),
+    ("export KEY preserves",       "export JWT_SECRET=old\n",       "JWT_SECRET", "NEW", "export JWT_SECRET="),
+    ("leading space preserves",    "  JWT_SECRET=old\n",            "JWT_SECRET", "NEW", "  JWT_SECRET="),
+    ("KEY = value preserves",      "JWT_SECRET = old\n",            "JWT_SECRET", "NEW", "JWT_SECRET = "),
+    ("CRLF preserved",             "JWT_SECRET=old\r\nX=1\r\n",    "JWT_SECRET", "NEW", "JWT_SECRET="),
+    ("other keys untouched",       "X=1\nJWT_SECRET=old\nY=2\n",   "JWT_SECRET", "NEW", None),
+]
+
+failures = 0
+
+print("\n  Parse fixtures:")
+for desc, content, key, expected in PARSE_FIXTURES:
+    val = parse_value(content, key)
+    if val == expected:
+        print(f"    [PASS] {desc}")
+    else:
+        print(f"    [FAIL] {desc}: got={repr(val)} expected={repr(expected)}")
+        failures += 1
+
+print("\n  Rotation fixtures:")
+for desc, content, key, new_val, prefix_check in ROTATE_FIXTURES:
+    try:
+        rotated = rotate_key(content, key, new_val)
+        val = parse_value(rotated, key)
+        if val != new_val:
+            print(f"    [FAIL] {desc}: value not rotated, got={repr(val)}")
+            failures += 1
+            continue
+        if prefix_check is not None:
+            line = next((l for l in rotated.splitlines()
+                         if re.search(rf'^\s*(?:export\s+)?{re.escape(key)}\s*=', l)), "")
+            if not line.startswith(prefix_check):
+                print(f"    [FAIL] {desc}: prefix not preserved, line={repr(line)}")
+                failures += 1
+                continue
+        if "other keys" in desc:
+            if "X=1" not in rotated or "Y=2" not in rotated:
+                print(f"    [FAIL] {desc}: other keys were modified")
+                failures += 1
+                continue
+        print(f"    [PASS] {desc}")
+    except Exception as e:
+        print(f"    [FAIL] {desc}: exception: {e}")
+        failures += 1
+
+print()
+if failures:
+    print(f"  FAILED — {failures} fixture(s) failed.")
+    sys.exit(1)
+else:
+    print("  All fixture tests passed.")
+PYEOF
+  exit $?
+fi
 
 echo ""
 echo "══════════════════════════════════════════════════════════"
@@ -103,7 +205,10 @@ with open(env_file, 'r') as f:
     content = f.read()
 
 for key in ["JWT_SECRET", "SECRET_KEY"]:
-    m = re.search(rf'^{key}=(.+)$', content, re.MULTILINE)
+    m = re.search(
+        rf'^\s*(?:export\s+)?{re.escape(key)}\s*=\s*([^\r\n]*)',
+        content, re.MULTILINE
+    )
     if m:
         val = m.group(1).strip().strip('"').strip("'")
         print(f"  {key}: {fingerprint(val)}")
@@ -124,7 +229,10 @@ with open(env_file, 'r') as f:
     content = f.read()
 
 for key, min_len in [("JWT_SECRET", 32), ("SECRET_KEY", 16)]:
-    m = re.search(rf'^{key}=(.+)$', content, re.MULTILINE)
+    m = re.search(
+        rf'^\s*(?:export\s+)?{re.escape(key)}\s*=\s*([^\r\n]*)',
+        content, re.MULTILINE
+    )
     if not m:
         print(f"  [WARN] {key}: not found — will skip rotation for this key")
         continue
@@ -169,7 +277,7 @@ chown root:root "$BACKUP_FILE" 2>/dev/null || true
 
 pass "Backup created: $BACKUP_FILE"
 pass "Backup permissions: 600 (owner root)"
-info "To restore: sudo cp \"$BACKUP_FILE\" \"$ENV_FILE\" && sudo docker compose -f /opt/deploy/docker-compose.yml restart hosting_guard hg_worker hg_scheduler"
+info "To restore: sudo cp \"$BACKUP_FILE\" \"$ENV_FILE\" && cd /opt/deploy && sudo docker compose restart app worker scheduler"
 
 # ── rotate secrets ─────────────────────────────────────────────────────────────
 section "Rotate secrets"
@@ -198,13 +306,14 @@ def fingerprint(val):
     return f"len={len(val)}  sha256={sha}..."
 
 def rotate_key(content, key, new_val):
-    new_content = re.sub(
-        rf'^({key}=).*$',
-        rf'\g<1>{new_val}',
-        content,
-        flags=re.MULTILINE
+    """Replace the value of key, preserving leading whitespace, export prefix,
+    and spaces around =. Preserves CRLF line endings."""
+    new_content, count = re.subn(
+        rf'^(\s*(?:export\s+)?{re.escape(key)}\s*=\s*)[^\r\n]*(\r?)$',
+        rf'\g<1>{new_val}\g<2>',
+        content, flags=re.MULTILINE
     )
-    if new_content == content:
+    if count == 0:
         raise RuntimeError(f"{key} not found in env file — rotation aborted")
     return new_content
 
@@ -218,7 +327,7 @@ original_content = content
 rotated = []
 try:
     # Rotate JWT_SECRET
-    if re.search(r'^JWT_SECRET=.+', content, re.MULTILINE):
+    if re.search(r'^\s*(?:export\s+)?JWT_SECRET\s*=', content, re.MULTILINE):
         new_jwt = gen_secret()
         assert len(new_jwt) == 128, f"Unexpected JWT secret length: {len(new_jwt)}"
         content = rotate_key(content, "JWT_SECRET", new_jwt)
@@ -228,7 +337,7 @@ try:
         print("  [SKIP] JWT_SECRET: not found in env file")
 
     # Rotate SECRET_KEY if requested and present
-    if rotate_sk and re.search(r'^SECRET_KEY=.+', content, re.MULTILINE):
+    if rotate_sk and re.search(r'^\s*(?:export\s+)?SECRET_KEY\s*=', content, re.MULTILINE):
         new_sk = gen_secret()
         assert len(new_sk) == 128
         content = rotate_key(content, "SECRET_KEY", new_sk)
@@ -278,7 +387,10 @@ with open(env_file, 'r') as f:
 
 all_ok = True
 for key, min_len in [("JWT_SECRET", 64), ("SECRET_KEY", 16)]:
-    m = re.search(rf'^{key}=(.+)$', content, re.MULTILINE)
+    m = re.search(
+        rf'^\s*(?:export\s+)?{re.escape(key)}\s*=\s*([^\r\n]*)',
+        content, re.MULTILINE
+    )
     if m:
         val = m.group(1).strip().strip('"').strip("'")
         if len(val) < min_len:
@@ -301,7 +413,7 @@ echo ""
 echo "  Next steps:"
 echo "  1. Restart services:"
 echo "     cd /opt/deploy"
-echo "     docker compose restart hosting_guard hg_worker hg_scheduler"
+echo "     docker compose restart app worker scheduler"
 echo ""
 echo "  2. Verify health:"
 echo "     docker compose ps"

@@ -43,7 +43,7 @@ Si `JWT_SECRET` fue expuesto:
 cd /opt/hosting_guard && git pull
 sudo ./scripts/security/rotate_secrets_p4e.sh --apply
 cd /opt/deploy
-docker compose restart hosting_guard hg_worker hg_scheduler
+docker compose restart app worker scheduler
 sudo ./scripts/security/validate_secrets_hygiene.sh
 ```
 

@@ -10,7 +10,8 @@
 #
 # Usage:
 #   sudo ./scripts/security/validate_secrets_hygiene.sh [--env-file /path/to/.env]
-#   sudo ./scripts/security/validate_secrets_hygiene.sh --strict  (fail on WARN too)
+#   sudo ./scripts/security/validate_secrets_hygiene.sh --strict     (fail on WARN too)
+#   sudo ./scripts/security/validate_secrets_hygiene.sh --self-test  (run .env format fixture tests)
 #
 # Environment overrides:
 #   ENV_FILE      — default /opt/deploy/.env.production
@@ -26,6 +27,7 @@ set -euo pipefail
 ENV_FILE="${ENV_FILE:-/opt/deploy/.env.production}"
 COMPOSE_FILE="${COMPOSE_FILE:-/opt/deploy/docker-compose.yml}"
 STRICT=false
+SELF_TEST=false
 PASS=0; WARN_COUNT=0; FAIL_COUNT=0
 
 # Detect repo root (works both on server and dev machine)
@@ -36,8 +38,9 @@ DOCS_DIR="${DOCS_DIR:-$REPO_ROOT}"
 # ── parse args ────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --env-file) ENV_FILE="$2"; shift 2 ;;
-    --strict)   STRICT=true; shift ;;
+    --env-file)  ENV_FILE="$2"; shift 2 ;;
+    --strict)    STRICT=true;   shift ;;
+    --self-test) SELF_TEST=true; shift ;;
     *) echo "Unknown flag: $1"; exit 1 ;;
   esac
 done
@@ -49,6 +52,53 @@ fail()  { echo -e "  ${RED}[FAIL]${RESET} $*"; FAIL_COUNT=$((FAIL_COUNT+1)); }
 warn()  { echo -e "  ${YELLOW}[WARN]${RESET} $*"; WARN_COUNT=$((WARN_COUNT+1)); }
 info()  { echo -e "${CYAN}[INFO]${RESET} $*"; }
 section(){ echo ""; echo -e "${YELLOW}── $* ──${RESET}"; }
+
+# ── self-test ─────────────────────────────────────────────────────────────────
+if [[ "$SELF_TEST" == "true" ]]; then
+  echo ""
+  echo "══════════════════════════════════════════════════════════"
+  echo "  validate_secrets_hygiene.sh — .env format fixture self-test"
+  echo "══════════════════════════════════════════════════════════"
+  python3 <<'PYEOF'
+import re, sys
+
+def parse_value(content, key):
+    m = re.search(
+        rf'^\s*(?:export\s+)?{re.escape(key)}\s*=\s*([^\r\n]*)',
+        content, re.MULTILINE
+    )
+    if not m:
+        return None
+    return m.group(1).strip().strip('"').strip("'")
+
+KEYS = ["JWT_SECRET", "DATABASE_URL", "REDIS_URL"]
+
+FIXTURES = [
+    ("KEY=value",        "JWT_SECRET=x\nDATABASE_URL=postgres://x\nREDIS_URL=redis://x\n"),
+    ("export KEY=value", "export JWT_SECRET=x\nexport DATABASE_URL=postgres://x\nexport REDIS_URL=redis://x\n"),
+    ("leading spaces",   "  JWT_SECRET=x\n  DATABASE_URL=postgres://x\n  REDIS_URL=redis://x\n"),
+    ("KEY = value",      "JWT_SECRET = x\nDATABASE_URL = postgres://x\nREDIS_URL = redis://x\n"),
+    ("CRLF",             "JWT_SECRET=x\r\nDATABASE_URL=postgres://x\r\nREDIS_URL=redis://x\r\n"),
+]
+
+failures = 0
+for desc, content in FIXTURES:
+    missing = [k for k in KEYS if parse_value(content, k) is None]
+    if missing:
+        print(f"  [FAIL] {desc}: NOT FOUND: {missing}")
+        failures += 1
+    else:
+        print(f"  [PASS] {desc}")
+
+print()
+if failures:
+    print(f"  FAILED — {failures} fixture(s) failed.")
+    sys.exit(1)
+else:
+    print("  All fixture tests passed.")
+PYEOF
+  exit $?
+fi
 
 echo ""
 echo "══════════════════════════════════════════════════════════"
@@ -104,7 +154,10 @@ with open(env_file, 'r') as f:
 
 failures = 0
 for key, min_len, required in CHECKS:
-    m = re.search(rf'^{key}=(.+)$', content, re.MULTILINE)
+    m = re.search(
+        rf'^\s*(?:export\s+)?{re.escape(key)}\s*=\s*([^\r\n]*)',
+        content, re.MULTILINE
+    )
     if not m:
         if required:
             print(f"  [FAIL] {key}: not found in env file")

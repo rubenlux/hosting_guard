@@ -87,7 +87,7 @@ El script:
 
 ```bash
 cd /opt/deploy
-docker compose restart hosting_guard hg_worker hg_scheduler
+docker compose restart app worker scheduler
 ```
 
 ### Paso 4 — Validar
@@ -154,7 +154,7 @@ sudo cp /root/.env.production.backup_p4e_<TIMESTAMP> /opt/deploy/.env.production
 
 # 2. Reiniciar
 cd /opt/deploy
-docker compose restart hosting_guard hg_worker hg_scheduler
+docker compose restart app worker scheduler
 
 # 3. Verificar
 docker compose ps
