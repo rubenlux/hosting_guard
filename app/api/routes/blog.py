@@ -5,7 +5,7 @@ import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel
 
 from app.api.security import require_role
@@ -231,6 +231,46 @@ async def admin_upload_media(
 
 
 # ── Public endpoints ──────────────────────────────────────────────────────────
+
+_SITE_BASE = "https://hostingguard.lat"
+_MAX_SITEMAP_POSTS = 10_000
+
+
+@router.get("/sitemap-blog.xml", response_class=Response)
+def blog_sitemap():
+    """Dynamic XML sitemap for all published blog posts."""
+    try:
+        posts = _repo.list_published(limit=_MAX_SITEMAP_POSTS, offset=0)
+    except Exception:
+        posts = []
+
+    url_tags: list[str] = []
+    for post in posts:
+        slug = (post.get("slug") or "").strip()
+        if not slug:
+            continue
+        raw_date = post.get("published_at") or post.get("created_at")
+        if raw_date:
+            lastmod = raw_date.strftime("%Y-%m-%d") if hasattr(raw_date, "strftime") else str(raw_date)[:10]
+            lastmod_tag = f"\n    <lastmod>{lastmod}</lastmod>"
+        else:
+            lastmod_tag = ""
+        url_tags.append(
+            f"  <url>\n"
+            f"    <loc>{_SITE_BASE}/blog/{slug}</loc>{lastmod_tag}\n"
+            f"    <changefreq>weekly</changefreq>\n"
+            f"    <priority>0.7</priority>\n"
+            f"  </url>"
+        )
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "\n".join(url_tags)
+        + "\n</urlset>"
+    )
+    return Response(content=xml, media_type="application/xml")
+
 
 @router.get("/blog/posts")
 def public_list_posts(

@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://hostingguard.lat/sitemap.xml
+Sitemap: https://api.hostingguard.lat/sitemap-blog.xml
