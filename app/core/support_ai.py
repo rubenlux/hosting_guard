@@ -320,10 +320,10 @@ async def generate_support_response(
     ai_prompt_hint: str = "",
     hosting_data: Optional[Dict] = None,
     message_history: Optional[List[Dict]] = None,
-) -> Tuple[str, Optional[int]]:
+) -> Tuple[str, Optional[int], str]:
     """
     Generate AI response for a support ticket.
-    Returns (message, cache_id).
+    Returns (message, cache_id, source) where source is "cache", "claude", or "fallback".
     """
     history = message_history or []
     is_followup = bool(history)
@@ -338,7 +338,7 @@ async def generate_support_response(
             if not hosting_data or cached.get("hosting_status_when_cached") == hosting_data.get("status"):
                 logger.info("support_ai: cache HIT category=%s intent=%s", category, sub_intent)
                 _support_cache_repo.increment_use(cached["cache_id"])
-                return cached["ai_response"], cached["cache_id"]
+                return cached["ai_response"], cached["cache_id"], "cache"
 
     # ── 2. Fetch live hosting context ─────────────────────────────────────────
     context_block = ""
@@ -354,14 +354,16 @@ async def generate_support_response(
     messages = _build_messages(description, history, context_block)
 
     # ── 4. Call Claude ────────────────────────────────────────────────────────
+    source = "claude"
     try:
         response = await _call_claude(system, messages)
     except Exception as exc:
         logger.error("support_ai: Claude call failed: %s", exc, exc_info=True)
         response = _fallback_response(category, hosting_data)
+        source = "fallback"
 
-    # ── 5. Cache first responses ──────────────────────────────────────────────
-    if not is_followup and response != _fallback_response(category, hosting_data):
+    # ── 5. Cache first responses (only real Claude replies) ───────────────────
+    if source == "claude" and not is_followup:
         try:
             sub_intent = _get_sub_intent(description)
             hosting_id = hosting_data.get("hosting_id") if hosting_data else None
@@ -379,7 +381,7 @@ async def generate_support_response(
         except Exception as exc:
             logger.debug("support_ai: cache save failed (non-critical): %s", exc)
 
-    return response, cache_id
+    return response, cache_id, source
 
 
 def _fallback_response(category: str, hosting_data: Optional[Dict] = None) -> str:

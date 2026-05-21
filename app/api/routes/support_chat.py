@@ -151,6 +151,10 @@ async def create_ticket(
     # Título por defecto
     title = body.title or f"{body.category}: {body.description[:60]}"
 
+    # Verificar cuota IA antes de crear el ticket — evita tickets fantasma
+    _user_plan = _get_user_plan(user_id)
+    check_ai_quota(user_id, "support_chat", _user_plan)
+
     # Crear ticket
     ticket_id = _ticket_repo.create_ticket(
         user_id=user_id,
@@ -175,18 +179,15 @@ async def create_ticket(
         content="🤖 La IA está analizando tu consulta...",
     )
 
-    # Verificar cuota IA antes de llamar al LLM
-    _user_plan = _get_user_plan(user_id)
-    check_ai_quota(user_id, "support_chat", _user_plan)
-
     # Generar respuesta IA
-    ai_response, cache_id = await generate_support_response(
+    ai_response, cache_id, _ai_source = await generate_support_response(
         category=body.category,
         description=body.description,
         ai_prompt_hint=ai_prompt_hint,
         hosting_data=hosting_data,
     )
-    record_ai_usage(user_id, "support_chat", _user_plan)
+    if _ai_source == "claude":
+        record_ai_usage(user_id, "support_chat", _user_plan)
 
     # Guardar respuesta IA y actualizar status
     _ticket_repo.add_message(
@@ -354,18 +355,23 @@ async def _ai_followup_reply(ticket_id: int, ticket: dict) -> None:
         try:
             check_ai_quota(_followup_user_id, "support_chat", _followup_plan)
         except Exception:
-            # Quota exceeded — skip AI reply silently; human agent can respond
-            logger.info("AI quota exceeded for user_id=%s in followup reply, skipping", _followup_user_id)
+            logger.info("AI quota exceeded for user_id=%s in followup reply", _followup_user_id)
+            _ticket_repo.add_message(
+                ticket_id=ticket_id,
+                sender_type="system",
+                content="Alcanzaste el límite de consultas IA de tu plan. Un colaborador podrá continuar la conversación.",
+            )
             return
 
-        ai_response, _ = await generate_support_response(
+        ai_response, _, _ai_source = await generate_support_response(
             category=ticket.get("category", "Ayuda técnica"),
             description=last_user_msg["content"],
             ai_prompt_hint=ai_prompt_hint,
             hosting_data=hosting_data,
             message_history=history[:-1],  # history without the last user message
         )
-        record_ai_usage(_followup_user_id, "support_chat", _followup_plan)
+        if _ai_source == "claude":
+            record_ai_usage(_followup_user_id, "support_chat", _followup_plan)
 
         _ticket_repo.add_message(
             ticket_id=ticket_id,
