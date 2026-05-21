@@ -15,6 +15,7 @@ import os
 from app.api.rate_limit import limiter
 from app.api.security import require_role
 from app.infra.audit.user_repository import UserRepository
+from app.services.ai_quota_service import get_ai_usage_summary
 from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.pixel_repository import PixelRepository
 from app.infra.audit.metrics_repository import MetricsRepository
@@ -3197,3 +3198,29 @@ def rollback_remediation_endpoint(
         raise HTTPException(status_code=500, detail=str(exc))
     finally:
         release_connection(conn)
+
+
+# ── AI usage quotas ───────────────────────────────────────────────────────────
+
+@router.get("/ai-usage")
+def admin_ai_usage(
+    user_id: Optional[int] = None,
+    feature: Optional[str] = None,
+    plan: Optional[str] = None,
+    days: int = 30,
+    limit: int = 100,
+    offset: int = 0,
+    _admin: dict = Depends(require_role("admin")),
+):
+    """
+    Aggregated AI usage by user/plan/feature.
+    Useful for monitoring free-trial quota exhaustion and per-plan consumption.
+    """
+    return get_ai_usage_summary(
+        user_id=user_id,
+        feature=feature,
+        plan=plan,
+        days=days,
+        limit=limit,
+        offset=offset,
+    )

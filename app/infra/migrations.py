@@ -1142,6 +1142,20 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_blog_posts_status     ON blog_posts(status, published_at DESC) WHERE deleted_at IS NULL",
     "CREATE INDEX IF NOT EXISTS idx_blog_posts_author     ON blog_posts(author_id)",
     "CREATE INDEX IF NOT EXISTS idx_blog_posts_created    ON blog_posts(created_at DESC)",
+
+    # ── AI usage quota tracking ───────────────────────────────────────────────
+    """CREATE TABLE IF NOT EXISTS ai_usage_events (
+        id         BIGSERIAL PRIMARY KEY,
+        user_id    INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        plan       TEXT NOT NULL,
+        feature    TEXT NOT NULL,
+        units      INTEGER NOT NULL DEFAULT 1,
+        metadata   JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_ai_usage_user_feature ON ai_usage_events(user_id, feature, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_ai_usage_user_created ON ai_usage_events(user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_ai_usage_plan_feature  ON ai_usage_events(plan, feature, created_at DESC)",
 ]
 
 def ensure_monthly_partitions(cursor):

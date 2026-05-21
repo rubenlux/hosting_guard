@@ -25,6 +25,8 @@ from app.infra.audit.hosting_repository import HostingRepository
 from app.infra.audit.staff_repository import StaffRepository
 from app.infra.audit.ticket_repository import TicketRepository
 from app.infra.audit.support_cache_repository import SupportCacheRepository
+from app.infra.db import get_connection, release_connection
+from app.services.ai_quota_service import check_ai_quota, record_ai_usage
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,17 @@ def _get_ip(request: Request) -> str:
 
 def _is_staff_token(request: Request) -> bool:
     return "staff_token" in request.cookies
+
+
+def _get_user_plan(user_id: int) -> str:
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT plan FROM users WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        return (row or {}).get("plan") or "free"
+    finally:
+        release_connection(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +175,10 @@ async def create_ticket(
         content="🤖 La IA está analizando tu consulta...",
     )
 
+    # Verificar cuota IA antes de llamar al LLM
+    _user_plan = _get_user_plan(user_id)
+    check_ai_quota(user_id, "support_chat", _user_plan)
+
     # Generar respuesta IA
     ai_response, cache_id = await generate_support_response(
         category=body.category,
@@ -169,6 +186,7 @@ async def create_ticket(
         ai_prompt_hint=ai_prompt_hint,
         hosting_data=hosting_data,
     )
+    record_ai_usage(user_id, "support_chat", _user_plan)
 
     # Guardar respuesta IA y actualizar status
     _ticket_repo.add_message(
@@ -331,6 +349,15 @@ async def _ai_followup_reply(ticket_id: int, ticket: dict) -> None:
         cat_info = _ticket_repo.get_category_by_name(ticket.get("category", ""))
         ai_prompt_hint = cat_info.get("ai_prompt_hint", "") if cat_info else ""
 
+        _followup_user_id = ticket["user_id"]
+        _followup_plan = _get_user_plan(_followup_user_id)
+        try:
+            check_ai_quota(_followup_user_id, "support_chat", _followup_plan)
+        except Exception:
+            # Quota exceeded — skip AI reply silently; human agent can respond
+            logger.info("AI quota exceeded for user_id=%s in followup reply, skipping", _followup_user_id)
+            return
+
         ai_response, _ = await generate_support_response(
             category=ticket.get("category", "Ayuda técnica"),
             description=last_user_msg["content"],
@@ -338,6 +365,7 @@ async def _ai_followup_reply(ticket_id: int, ticket: dict) -> None:
             hosting_data=hosting_data,
             message_history=history[:-1],  # history without the last user message
         )
+        record_ai_usage(_followup_user_id, "support_chat", _followup_plan)
 
         _ticket_repo.add_message(
             ticket_id=ticket_id,
