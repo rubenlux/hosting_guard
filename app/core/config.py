@@ -1,48 +1,37 @@
 import os as _os
 
+
 class Settings:
     DOMAIN = "hostingguard.lat"
     BASE_PATH = "/opt/clients/"
 
 
-def _ls_env(test_key: str, prod_key: str) -> str:
-    """Return test env var if set, else prod env var. Allows dual test/prod config."""
-    return _os.getenv(test_key) or _os.getenv(prod_key, "")
+class MercadoPagoSettings:
+    """Configuración del proveedor de pagos MercadoPago.
 
+    Variables de entorno requeridas en producción:
+        MERCADOPAGO_ACCESS_TOKEN   — credencial privada para la API de MP
+        MERCADOPAGO_PUBLIC_KEY     — clave pública para el SDK de frontend (no exponer al backend)
+        MERCADOPAGO_WEBHOOK_SECRET — secreto para verificar firmas de webhooks
 
-class LemonSqueezySettings:
-    # Keys — test vars take priority over prod vars so test mode is the default.
-    # Switch to prod by unsetting the _TEST vars and setting the plain ones.
-    API_KEY        = _ls_env("LEMONSQUEEZY_API_KEY_TEST",        "LEMONSQUEEZY_API_KEY")
-    WEBHOOK_SECRET = _ls_env("LEMONSQUEEZY_WEBHOOK_SECRET_TEST", "LEMONSQUEEZY_WEBHOOK_SECRET")
-    STORE_ID       = _ls_env("LEMONSQUEEZY_STORE_ID_TEST",       "LEMONSQUEEZY_STORE_ID")
+    Variables opcionales:
+        MERCADOPAGO_SANDBOX        — "true" para usar sandbox_init_point (default: "false")
+        MERCADOPAGO_WEBHOOK_BASE_URL — base para construir notification_url
+                                       (default: https://api.hostingguard.lat)
+        MERCADOPAGO_FRONTEND_URL   — base para back_urls (default: https://hostingguard.lat)
+    """
 
-    # Annual variant IDs — one per paid plan
-    VARIANT_PERSONAL          = _ls_env("LS_VARIANT_PERSONAL_YEARLY_TEST",          "LS_VARIANT_PERSONAL_YEARLY")
-    VARIANT_NEGOCIO           = _ls_env("LS_VARIANT_NEGOCIO_YEARLY_TEST",           "LS_VARIANT_NEGOCIO_YEARLY")
-    VARIANT_AGENCIA           = _ls_env("LS_VARIANT_AGENCIA_YEARLY_TEST",           "LS_VARIANT_AGENCIA_YEARLY")
-    VARIANT_AGENCIA_PRO       = _ls_env("LS_VARIANT_AGENCIA_PRO_YEARLY_TEST",       "LS_VARIANT_AGENCIA_PRO_YEARLY")
-    VARIANT_ENTERPRISE_ANNUAL = _ls_env("LS_VARIANT_ENTERPRISE_ANNUAL_TEST",        "LS_VARIANT_ENTERPRISE_ANNUAL")
-    VARIANT_ENTERPRISE_MONTHLY = _ls_env("LS_VARIANT_ENTERPRISE_MONTHLY_TEST",      "LS_VARIANT_ENTERPRISE_MONTHLY")
+    ACCESS_TOKEN    = _os.getenv("MERCADOPAGO_ACCESS_TOKEN", "")
+    PUBLIC_KEY      = _os.getenv("MERCADOPAGO_PUBLIC_KEY", "")
+    WEBHOOK_SECRET  = _os.getenv("MERCADOPAGO_WEBHOOK_SECRET", "")
 
-    @classmethod
-    def variant_map(cls) -> dict:
-        """plan_slug → variant_id"""
-        return {
-            "personal":          cls.VARIANT_PERSONAL,
-            "negocio":           cls.VARIANT_NEGOCIO,
-            "agencia":           cls.VARIANT_AGENCIA,
-            "agencia_pro":       cls.VARIANT_AGENCIA_PRO,
-            "enterprise_annual": cls.VARIANT_ENTERPRISE_ANNUAL,
-            "enterprise_monthly": cls.VARIANT_ENTERPRISE_MONTHLY,
-        }
+    SANDBOX_MODE    = _os.getenv("MERCADOPAGO_SANDBOX", "false").lower() == "true"
 
-    @classmethod
-    def plan_from_variant(cls, variant_id: str) -> str | None:
-        """variant_id → plan_slug (enterprise_annual / enterprise_monthly)"""
-        return {v: k for k, v in cls.variant_map().items() if v}.get(str(variant_id))
-
-    @classmethod
-    def billing_interval_from_plan(cls, plan: str) -> str:
-        """Return 'monthly' for enterprise_monthly, 'yearly' for all annual plans."""
-        return "monthly" if plan == "enterprise_monthly" else "yearly"
+    WEBHOOK_BASE_URL = _os.getenv(
+        "MERCADOPAGO_WEBHOOK_BASE_URL",
+        "https://api.hostingguard.lat",
+    )
+    FRONTEND_URL = _os.getenv(
+        "MERCADOPAGO_FRONTEND_URL",
+        "https://hostingguard.lat",
+    )

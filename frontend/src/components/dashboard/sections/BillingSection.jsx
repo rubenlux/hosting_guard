@@ -75,7 +75,7 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
   const subStatus       = user.subscription_status || 'none';
   const statusInfo      = STATUS_LABELS[subStatus] || STATUS_LABELS.none;
   const periodEnd       = user.current_period_end ? fmt(user.current_period_end) : null;
-  const portalUrl       = user.ls_customer_portal_url;
+  const portalUrl       = user.billing_portal_url;
   const isPaid          = currentPlanSlug !== 'free';
   const currentIdx      = PLAN_ORDER.indexOf(currentPlanSlug);
 
@@ -430,7 +430,7 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
       {/* ── Card brands footer ────────────────────────────────────────────── */}
       <div style={{ marginTop: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
         <CreditCard size={14} color="#333" />
-        <span style={{ fontSize: 11, color: '#333' }}>Pago seguro procesado por Lemon Squeezy · Visa · Mastercard · Amex</span>
+        <span style={{ fontSize: 11, color: '#333' }}>Pago seguro procesado por MercadoPago · Visa · Mastercard · Amex</span>
       </div>
     </div>
   );

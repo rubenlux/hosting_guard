@@ -1,52 +1,53 @@
-import hashlib
-import hmac
+"""Billing routes — MercadoPago.
+
+Flujo de pago:
+  1.  POST /billing/checkout      → genera preferencia en MP y retorna payment_url
+  2.  Usuario completa el pago en MercadoPago
+  3.  MP envía webhook a POST /billing/webhooks/mercadopago
+  4.  El sistema valida firma, consulta el pago y activa el plan del usuario
+
+El proveedor de pagos se inyecta mediante la factory — el resto de la lógica
+de negocio nunca importa MercadoPago directamente.
+"""
+
 import json
 import logging
 from datetime import datetime, timezone
 
-import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.api.security import verify_token
-from app.core.config import LemonSqueezySettings as _LS
 from app.infra.audit.user_repository import UserRepository
-from app.services.notification_service import notify as _notify
+from app.services.billing import get_payment_provider
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 _user_repo = UserRepository()
 logger = logging.getLogger(__name__)
 
-_LS_API_BASE = "https://api.lemonsqueezy.com/v1"
 
+# ── Helpers de auditoría ──────────────────────────────────────────────────────
 
-def _log_billing(user_id: int, event_type: str, title: str,
-                 plan: str | None = None, severity: str = "info") -> None:
+def _log_billing(
+    user_id: int,
+    event_type: str,
+    title: str,
+    plan: str | None = None,
+    severity: str = "info",
+) -> None:
     try:
         from app.services.activity_service import log_event
-        log_event(user_id=user_id, event_type=event_type, category="billing",
-                  severity=severity, title=title, source="webhook",
-                  metadata={"plan": plan} if plan else {})
+        log_event(
+            user_id=user_id,
+            event_type=event_type,
+            category="billing",
+            severity=severity,
+            title=title,
+            source="webhook",
+            metadata={"plan": plan} if plan else {},
+        )
     except Exception:
         pass
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _verify_signature(body: bytes, signature: str) -> bool:
-    secret = _LS.WEBHOOK_SECRET
-    if not secret:
-        return True  # Skip in unconfigured local dev
-    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature)
-
-
-def _ls_headers() -> dict:
-    return {
-        "Authorization": f"Bearer {_LS.API_KEY}",
-        "Accept": "application/vnd.api+json",
-        "Content-Type": "application/vnd.api+json",
-    }
 
 
 # ── Checkout ──────────────────────────────────────────────────────────────────
@@ -56,237 +57,208 @@ class CheckoutRequest(BaseModel):
 
 
 @router.post("/checkout")
-async def create_checkout(body: CheckoutRequest, current_user: dict = Depends(verify_token)):
-    variant_map = _LS.variant_map()
-    variant_id = variant_map.get(body.plan)
+async def create_checkout(
+    body: CheckoutRequest,
+    current_user: dict = Depends(verify_token),
+):
+    """Genera un link de pago en MercadoPago para el plan seleccionado.
 
-    _valid = "personal, negocio, agencia, agencia_pro, enterprise_annual, enterprise_monthly"
-    if not variant_id:
-        raise HTTPException(status_code=400, detail=f"Plan no válido: {body.plan}. Opciones: {_valid}")
-    if not _LS.API_KEY or not _LS.STORE_ID:
+    Retorna: ``{ "url": "https://www.mercadopago.com/..." }``
+    """
+    provider = get_payment_provider()
+
+    if not provider.is_configured():
         raise HTTPException(status_code=503, detail="Billing no configurado en el servidor")
 
-    payload = {
-        "data": {
-            "type": "checkouts",
-            "attributes": {
-                "checkout_options": {
-                    "embed": False,
-                    "media": True,
-                    "logo": True,
-                    "skip_trial": True,
-                },
-                "checkout_data": {
-                    "email": current_user["email"],
-                    "custom": {"user_id": str(current_user["user_id"])},
-                },
-                "product_options": {
-                    "redirect_url": "https://hostingguard.lat/dashboard?billing=success",
-                    "receipt_button_text": "Ir al dashboard",
-                    "receipt_link_url": "https://hostingguard.lat/dashboard",
-                    "receipt_thank_you_note": "Gracias por confiar en HostingGuard. Tu plan ya está activo.",
-                },
-            },
-            "relationships": {
-                "store":   {"data": {"type": "stores",   "id": str(_LS.STORE_ID)}},
-                "variant": {"data": {"type": "variants", "id": str(variant_id)}},
-            },
-        }
-    }
+    try:
+        result = await provider.create_payment_link(plan=body.plan, user=current_user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        logger.error("MP checkout error: %s", exc)
+        raise HTTPException(status_code=502, detail="Error al crear el checkout en MercadoPago")
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(
-            f"{_LS_API_BASE}/checkouts",
-            json=payload,
-            headers=_ls_headers(),
-        )
-
-    if resp.status_code not in (200, 201):
-        logger.error("LS checkout error %s: %s", resp.status_code, resp.text[:500])
-        raise HTTPException(status_code=502, detail="Error al crear el checkout en Lemon Squeezy")
-
-    url: str = resp.json()["data"]["attributes"]["url"]
     try:
         from app.services.activity_service import log_event
-        log_event(user_id=current_user["user_id"],
-                  event_type="checkout_started", category="billing", severity="info",
-                  title=f"Checkout iniciado: plan {body.plan}",
-                  source="dashboard",
-                  metadata={"plan": body.plan, "variant_id": str(variant_id)})
+        log_event(
+            user_id=current_user["user_id"],
+            event_type="checkout_started",
+            category="billing",
+            severity="info",
+            title=f"Checkout iniciado: plan {body.plan}",
+            source="dashboard",
+            metadata={"plan": body.plan, "preference_id": result.preference_id},
+        )
     except Exception:
         pass
-    return {"url": url}
+
+    return {"url": result.payment_url}
 
 
-# ── Webhook: background processor ─────────────────────────────────────────────
+# ── Webhook background processor ──────────────────────────────────────────────
 
-async def _process_webhook(event_name: str, meta: dict, data: dict) -> None:
-    attrs = data.get("attributes", {})
-    subscription_id = str(data.get("id", ""))
+async def _process_webhook(payload: dict) -> None:
+    """Resuelve el pago via API de MP y actualiza el estado del usuario."""
+    provider = get_payment_provider()
 
-    # Resolve user: custom_data.user_id → ls_customer_id → email
-    custom = meta.get("custom_data") or {}
-    user: dict | None = None
-
-    raw_uid = custom.get("user_id")
-    if raw_uid:
-        try:
-            user = _user_repo.get_user_by_id(int(raw_uid))
-        except (ValueError, TypeError):
-            pass
-
-    if not user:
-        ls_cid = str(attrs.get("customer_id", ""))
-        if ls_cid:
-            user = _user_repo.get_user_by_ls_customer_id(ls_cid)
-
-    if not user:
-        email = attrs.get("user_email", "")
-        if email:
-            user = _user_repo.get_user_by_email(email)
-
-    if not user:
-        logger.error("Webhook %s: user not found — custom=%s", event_name, custom)
+    try:
+        from app.services.billing.mercadopago_provider import MercadoPagoProvider
+        if not isinstance(provider, MercadoPagoProvider):
+            logger.warning("Webhook: proveedor inesperado %s", type(provider).__name__)
+            return
+        event = await provider.resolve_payment_event(payload)
+    except Exception as exc:
+        logger.error("Webhook: error resolviendo pago: %s", exc)
         return
 
-    uid: int = user["user_id"]
-    variant_id = str(attrs.get("variant_id", ""))
-    ls_cid = str(attrs.get("customer_id", ""))
-    status = attrs.get("status", "")
-    period_end = attrs.get("renews_at") or attrs.get("ends_at")
-    period_start = attrs.get("created_at")
-    portal_url = (attrs.get("urls") or {}).get("customer_portal")
+    if not event.valid:
+        return
 
-    # base never includes subscription_status — each branch sets it explicitly
-    # to avoid "multiple values for keyword argument" when overriding.
+    event_type = event.event_type
+    uid = event.user_id
+    plan = event.plan
+
+    # Si no tenemos user_id en external_reference, intentar por email/customer_id
+    if not uid and event.provider_customer_id:
+        user = _user_repo.get_user_by_payment_customer_id(event.provider_customer_id)
+        if user:
+            uid = user["user_id"]
+
+    if not uid:
+        logger.error("Webhook %s: user_id no resuelto — payload=%s", event_type, str(payload)[:200])
+        return
+
     base: dict = {
-        "ls_customer_id": ls_cid,
-        "ls_subscription_id": subscription_id,
-        "ls_variant_id": variant_id,
-        "current_period_end": period_end,
-        "ls_customer_portal_url": portal_url,
+        "mp_customer_id": event.provider_customer_id or "",
+        "mp_payment_id": event.provider_payment_id or "",
+        "mp_preference_id": event.provider_preference_id or "",
+        "current_period_end": event.period_end,
     }
 
-    # For events that assign a plan, variant_id must map to a known plan.
-    # order_created has a different payload structure (no variant_id in attributes)
-    # and is redundant — subscription_created always fires for subscriptions.
-    plan_from_variant: str | None = _LS.plan_from_variant(variant_id) if variant_id else None
-    _plan_events = {"subscription_created", "subscription_updated", "subscription_resumed"}
-    if event_name in _plan_events and not plan_from_variant:
-        logger.error(
-            "Webhook %s: variant_id=%s not mapped to any allowed plan — aborting. user=%s",
-            event_name, variant_id, uid,
-        )
-        return
+    if event_type == "payment_approved":
+        if not plan:
+            logger.error("Webhook payment_approved: plan no resuelto para user=%s", uid)
+            return
 
-    if event_name == "subscription_created":
-        _user_repo.update_billing_subscription(uid,
-            plan=plan_from_variant,
+        # Calcular interval de facturación
+        billing_interval = "monthly" if plan == "enterprise_monthly" else "yearly"
+
+        _user_repo.update_billing_subscription(
+            uid,
+            plan=plan,
             plan_started_at=datetime.now(timezone.utc).isoformat(),
-            current_period_start=period_start,
-            billing_interval=_LS.billing_interval_from_plan(plan_from_variant),
+            current_period_start=datetime.now(timezone.utc).isoformat(),
+            billing_interval=billing_interval,
             subscription_status="active",
-            **base)
-        logger.info("User %s → plan=%s sub=%s", uid, plan_from_variant, subscription_id)
-        _log_billing(uid, "subscription_created", f"Suscripción creada: plan {plan_from_variant}", plan_from_variant)
+            **base,
+        )
+        logger.info("User %s → plan=%s payment=%s", uid, plan, event.provider_payment_id)
+        _log_billing(uid, "subscription_created", f"Plan activado: {plan}", plan)
 
-    elif event_name in ("subscription_updated", "subscription_resumed"):
-        _user_repo.update_billing_subscription(uid,
-            plan=plan_from_variant,
-            subscription_status=status,
-            **base)
-        _log_billing(uid, "subscription_updated", f"Suscripción actualizada: plan {plan_from_variant}", plan_from_variant)
+        # Notificar al usuario
+        try:
+            from app.services.notification_service import notify as _notify
+            _notify(
+                user_id=uid,
+                title="¡Tu plan está activo!",
+                message=f"Tu pago fue confirmado y el plan {plan} ya está activado en tu cuenta.",
+                category="billing",
+                severity="info",
+                action_url="https://hostingguard.lat/dashboard",
+            )
+        except Exception:
+            pass
 
-    elif event_name == "subscription_cancelled":
-        # Service remains active until current_period_end — do NOT downgrade plan yet
-        _user_repo.update_billing_subscription(uid,
-            subscription_status="cancelled",
-            ls_customer_id=ls_cid,
-            ls_subscription_id=subscription_id,
-            current_period_end=period_end,
-            ls_customer_portal_url=portal_url)
-        logger.info("User %s cancelled; active until %s", uid, period_end)
-        _log_billing(uid, "subscription_cancelled", f"Suscripción cancelada; activa hasta {period_end}", severity="warning")
-
-    elif event_name == "subscription_expired":
-        # Period truly ended — downgrade to free
-        _user_repo.update_billing_subscription(uid, plan="free",
-            subscription_status="expired", **base)
-        logger.info("User %s subscription expired → free", uid)
-        _log_billing(uid, "subscription_cancelled", "Suscripción expirada — downgrade a free", severity="warning")
-
-    elif event_name == "subscription_payment_failed":
-        _user_repo.update_billing_subscription(uid, subscription_status="past_due", **base)
-        _notify(
-            user_id=uid,
-            title="Problema con tu pago",
-            message="No pudimos procesar el pago de tu suscripción. Actualizá tu método de pago para evitar la suspensión del servicio.",
-            category="billing",
-            severity="critical",
-            action_url=portal_url or "https://hostingguard.lat/dashboard",
-            _user_email=user.get("email"),
+    elif event_type == "payment_failed":
+        _user_repo.update_billing_subscription(
+            uid,
+            subscription_status="past_due",
+            mp_payment_id=event.provider_payment_id or "",
+            mp_customer_id=event.provider_customer_id or "",
         )
         logger.warning("User %s payment failed — past_due", uid)
         _log_billing(uid, "payment_failed", "Pago fallido — estado: past_due", severity="critical")
 
-    elif event_name == "subscription_payment_success":
-        _user_repo.update_billing_subscription(uid, subscription_status="active", **base)
-        logger.info("User %s payment success, renewed until %s", uid, period_end)
-        _log_billing(uid, "payment_success", f"Pago exitoso — renovado hasta {period_end}")
+        try:
+            from app.services.notification_service import notify as _notify
+            _notify(
+                user_id=uid,
+                title="Problema con tu pago",
+                message="No pudimos procesar el pago. Revisá tu método de pago para evitar la suspensión del servicio.",
+                category="billing",
+                severity="critical",
+                action_url="https://hostingguard.lat/dashboard?tab=billing",
+            )
+        except Exception:
+            pass
 
-    elif event_name == "order_created":
-        # order_created fires alongside subscription_created for new subscriptions.
-        # subscription_created is the authoritative event — ignore order_created.
-        logger.debug("order_created ignored (subscription_created is authoritative)")
+    elif event_type == "payment_pending":
+        _user_repo.update_billing_subscription(
+            uid,
+            subscription_status="pending",
+            mp_payment_id=event.provider_payment_id or "",
+        )
+        logger.info("User %s payment pending", uid)
+        _log_billing(uid, "payment_pending", "Pago pendiente de confirmación")
 
     else:
-        logger.debug("Webhook %s ignored (unhandled)", event_name)
+        logger.debug("Webhook event_type=%s ignorado", event_type)
 
 
 # ── Webhook endpoint ──────────────────────────────────────────────────────────
 
-@router.post("/webhook")
-async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
+@router.post("/webhooks/mercadopago")
+async def handle_mercadopago_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    """Endpoint de notificaciones de MercadoPago.
+
+    - Valida firma HMAC-SHA256 (x-signature header).
+    - Aplica idempotencia por payment_id.
+    - Delega el procesamiento a un background task.
+    """
     body = await request.body()
-    signature = request.headers.get("X-Signature", "")
 
-    if not _verify_signature(body, signature):
-        logger.warning("Webhook: invalid signature from %s", request.client)
-        try:
-            from app.services.security_event_service import log_security_event
-            log_security_event(
-                severity="warning", category="webhook",
-                event_type="invalid_webhook_signature",
-                title="Webhook con firma inválida rechazado",
-                ip=request.client.host if request.client else None,
-                source="billing",
-                metadata={"path": "/webhook"},
-            )
-        except Exception:
-            pass
-        raise HTTPException(status_code=401, detail="Invalid signature")
-
+    # Parsear JSON antes de validar para poder extraer el payment_id del manifest
     try:
         payload = json.loads(body)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    meta = payload.get("meta", {})
-    event_name = meta.get("event_name", "")
-    data = payload.get("data", {})
+    provider = get_payment_provider()
+    headers_lower = {k.lower(): v for k, v in request.headers.items()}
+    validation = provider.validate_webhook(body, headers_lower, payload)
 
-    # Idempotency: prefer LS webhook_id (unique UUID per delivery), then signature,
-    # then a composite fallback. This handles LS retry storms correctly.
-    event_key = (
-        meta.get("webhook_id")
-        or signature
-        or f"{event_name}:{data.get('id', '')}"
-    )
+    if not validation.valid:
+        logger.warning(
+            "Webhook MP: firma inválida desde %s",
+            request.client.host if request.client else "unknown",
+        )
+        try:
+            from app.services.security_event_service import log_security_event
+            log_security_event(
+                severity="warning",
+                category="webhook",
+                event_type="invalid_webhook_signature",
+                title="Webhook MercadoPago con firma inválida rechazado",
+                ip=request.client.host if request.client else None,
+                source="billing",
+                metadata={"path": "/billing/webhooks/mercadopago"},
+            )
+        except Exception:
+            pass
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    # Idempotencia: payment_id es único por evento en MP
+    payment_id = validation.provider_payment_id or ""
+    action = payload.get("action", "")
+    event_key = f"{action}:{payment_id}" if payment_id else str(payload)[:100]
 
     if _user_repo.is_webhook_processed(event_key):
-        logger.info("Webhook already processed: %s", event_key[:40])
+        logger.info("Webhook MP ya procesado: %s", event_key[:60])
         return {"ok": True}
 
-    _user_repo.mark_webhook_processed(event_key, event_name)
-    background_tasks.add_task(_process_webhook, event_name, meta, data)
+    _user_repo.mark_webhook_processed(event_key, action or "payment.notification")
+    background_tasks.add_task(_process_webhook, payload)
     return {"ok": True}

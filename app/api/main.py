@@ -808,12 +808,12 @@ def get_me(user: dict = Depends(verify_token)):
         "company": user_db.get("company"),
         "avatar_url": user_db.get("avatar_url"),
         "notification_prefs": user_db.get("notification_prefs"),
-        # Billing fields (Lemon Squeezy)
+        # Billing fields
         "subscription_status": user_db.get("subscription_status", "none"),
         "current_period_end": user_db.get("current_period_end"),
         "plan_started_at": user_db.get("plan_started_at"),
         "billing_interval": user_db.get("billing_interval", "yearly"),
-        "ls_customer_portal_url": user_db.get("ls_customer_portal_url"),
+        "billing_portal_url": user_db.get("billing_portal_url"),
     }
     # Expose support metadata so the frontend can render the SupportBanner
     if user.get("is_support_session"):

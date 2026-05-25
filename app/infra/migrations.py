@@ -1156,6 +1156,74 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ai_usage_user_feature ON ai_usage_events(user_id, feature, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_ai_usage_user_created ON ai_usage_events(user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_ai_usage_plan_feature  ON ai_usage_events(plan, feature, created_at DESC)",
+
+    # ── Billing migration: Lemon Squeezy → MercadoPago ────────────────────────
+    # Renombra columnas de usuarios y la tabla de idempotencia de webhooks.
+    # Todas las operaciones son idempotentes — usan DO $$ IF EXISTS $$ para que
+    # no fallen si la migración ya se aplicó en un despliegue anterior.
+    #
+    # ls_customer_id         → mp_customer_id    (ID de cliente en MP)
+    # ls_subscription_id     → mp_payment_id     (ID del último pago MP)
+    # ls_variant_id          → mp_preference_id  (ID de preferencia MP)
+    # ls_customer_portal_url → billing_portal_url (URL genérica de gestión de billing)
+    # ls_webhook_events      → billing_webhook_events (tabla de idempotencia)
+    """
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'ls_customer_id'
+      ) THEN
+        ALTER TABLE users RENAME COLUMN ls_customer_id TO mp_customer_id;
+      END IF;
+    END $$
+    """,
+    """
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'ls_subscription_id'
+      ) THEN
+        ALTER TABLE users RENAME COLUMN ls_subscription_id TO mp_payment_id;
+      END IF;
+    END $$
+    """,
+    """
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'ls_variant_id'
+      ) THEN
+        ALTER TABLE users RENAME COLUMN ls_variant_id TO mp_preference_id;
+      END IF;
+    END $$
+    """,
+    """
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'ls_customer_portal_url'
+      ) THEN
+        ALTER TABLE users RENAME COLUMN ls_customer_portal_url TO billing_portal_url;
+      END IF;
+    END $$
+    """,
+    """
+    DO $$ BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'ls_webhook_events'
+      ) THEN
+        ALTER TABLE ls_webhook_events RENAME TO billing_webhook_events;
+      END IF;
+    END $$
+    """,
+    # Garantizar que la tabla billing_webhook_events exista en instalaciones nuevas
+    # (en bases de datos limpias la tabla nunca tuvo el nombre ls_webhook_events)
+    """CREATE TABLE IF NOT EXISTS billing_webhook_events (
+        event_id     TEXT PRIMARY KEY,
+        event_name   TEXT NOT NULL,
+        processed_at TEXT NOT NULL
+    )""",
 ]
 
 def ensure_monthly_partitions(cursor):

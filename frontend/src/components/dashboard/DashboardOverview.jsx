@@ -543,7 +543,7 @@ export default function DashboardOverview({
             const statusLabel = { active: 'Activa', cancelled: 'Cancelada', past_due: 'Pago pendiente', expired: 'Expirada', none: 'Gratis' }[subStatus] ?? subStatus;
             const periodEnd = user?.current_period_end;
             const periodLabel = periodEnd ? new Date(periodEnd).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
-            const portalUrl = user?.ls_customer_portal_url;
+            const portalUrl = user?.billing_portal_url;
             return (
               <Card
                 title="Tu Cuenta"

@@ -834,7 +834,7 @@ export const adminDeleteBackup = async (backupId) => {
 };
 
 // ---------------------------------------------------------------------------
-// Billing — Lemon Squeezy
+// Billing — MercadoPago
 // ---------------------------------------------------------------------------
 
 export const createBillingCheckout = async (plan) => {

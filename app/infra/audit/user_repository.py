@@ -103,9 +103,9 @@ class UserRepository:
                 "SELECT user_id, email, role, plan, plan_expires_at, first_name, last_name, phone, "
                 "balance, has_payment_method, autoscale_enabled, created_at, "
                 "timezone, company, avatar_url, notification_prefs, "
-                "ls_customer_id, ls_subscription_id, ls_variant_id, subscription_status, "
+                "mp_customer_id, mp_payment_id, mp_preference_id, subscription_status, "
                 "current_period_start, current_period_end, trial_ends_at, "
-                "plan_started_at, billing_interval, ls_customer_portal_url "
+                "plan_started_at, billing_interval, billing_portal_url "
                 "FROM users WHERE user_id = %s",
                 (user_id,)
             )
@@ -271,12 +271,12 @@ class UserRepository:
         finally:
             release_connection(conn)
 
-    # ── Lemon Squeezy billing ─────────────────────────────────────────────────
+    # ── Billing (MercadoPago) ─────────────────────────────────────────────────
 
     _BILLING_FIELDS = frozenset({
-        "ls_customer_id", "ls_subscription_id", "ls_variant_id", "subscription_status",
+        "mp_customer_id", "mp_payment_id", "mp_preference_id", "subscription_status",
         "current_period_start", "current_period_end", "trial_ends_at",
-        "plan_started_at", "billing_interval", "ls_customer_portal_url", "plan",
+        "plan_started_at", "billing_interval", "billing_portal_url", "plan",
     })
 
     def update_billing_subscription(self, user_id: int, **fields) -> None:
@@ -296,13 +296,14 @@ class UserRepository:
         finally:
             release_connection(conn)
 
-    def get_user_by_ls_customer_id(self, customer_id: str) -> Optional[Dict]:
+    def get_user_by_payment_customer_id(self, customer_id: str) -> Optional[Dict]:
+        """Busca un usuario por el ID de cliente del proveedor de pagos (mp_customer_id)."""
         conn = get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT user_id, email, role, plan, ls_customer_id, ls_subscription_id "
-                "FROM users WHERE ls_customer_id = %s",
+                "SELECT user_id, email, role, plan, mp_customer_id, mp_payment_id "
+                "FROM users WHERE mp_customer_id = %s",
                 (customer_id,)
             )
             row = cursor.fetchone()
@@ -315,7 +316,7 @@ class UserRepository:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT 1 FROM ls_webhook_events WHERE event_id = %s",
+                "SELECT 1 FROM billing_webhook_events WHERE event_id = %s",
                 (event_id,)
             )
             return cursor.fetchone() is not None
@@ -327,7 +328,7 @@ class UserRepository:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO ls_webhook_events (event_id, event_name, processed_at) "
+                "INSERT INTO billing_webhook_events (event_id, event_name, processed_at) "
                 "VALUES (%s, %s, %s) ON CONFLICT (event_id) DO NOTHING",
                 (event_id, event_name, datetime.now(timezone.utc).isoformat()),
             )
