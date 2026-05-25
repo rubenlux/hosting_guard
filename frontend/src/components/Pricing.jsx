@@ -5,9 +5,11 @@ const PLANS = [
   {
     id: 'free',
     name: 'Prueba Gratis',
-    price: '$0',
+    priceAnnual: '$0',
+    priceMonthly: '$0',
     period: '14 días',
-    annual: null,
+    annualNote: null,
+    monthlyNote: null,
     desc: 'Sin tarjeta. Probá todo sin compromiso.',
     highlight: false,
     badge: '14 DÍAS GRATIS',
@@ -25,9 +27,11 @@ const PLANS = [
   {
     id: 'personal',
     name: 'Personal',
-    price: '$9',
+    priceAnnual: '$9',
+    priceMonthly: '$12',
     period: '/mes',
-    annual: 'Facturado anual: $108/año',
+    annualNote: 'Facturado anual: $108/año',
+    monthlyNote: 'Pago mensual automático',
     desc: 'Ideal para blogs, portfolios y landing pages.',
     highlight: false,
     badge: null,
@@ -47,9 +51,11 @@ const PLANS = [
   {
     id: 'negocio',
     name: 'Negocio',
-    price: '$19',
+    priceAnnual: '$19',
+    priceMonthly: '$25',
     period: '/mes',
-    annual: 'Facturado anual: $228/año',
+    annualNote: 'Facturado anual: $228/año',
+    monthlyNote: 'Pago mensual automático',
     desc: 'Para tiendas online y empresas en crecimiento.',
     highlight: true,
     badge: 'MÁS POPULAR',
@@ -70,9 +76,11 @@ const PLANS = [
   {
     id: 'agencia',
     name: 'Agencia',
-    price: '$39',
+    priceAnnual: '$39',
+    priceMonthly: '$50',
     period: '/mes',
-    annual: 'Facturado anual: $468/año',
+    annualNote: 'Facturado anual: $468/año',
+    monthlyNote: 'Pago mensual automático',
     desc: 'Para agencias y desarrolladores con múltiples clientes.',
     highlight: false,
     badge: null,
@@ -94,9 +102,11 @@ const PLANS = [
   {
     id: 'agencia_pro',
     name: 'Agencia Pro',
-    price: '$59',
+    priceAnnual: '$59',
+    priceMonthly: '$75',
     period: '/mes',
-    annual: 'Facturado anual: $708/año',
+    annualNote: 'Facturado anual: $708/año',
+    monthlyNote: 'Pago mensual automático',
     desc: 'Máximo rendimiento para agencias en escala.',
     highlight: false,
     badge: null,
@@ -149,79 +159,122 @@ const ENTERPRISE_FEATURES = [
 ];
 
 const Pricing = ({ onSelectPlan }) => {
-  const [enterpriseBilling, setEnterpriseBilling] = useState('annual');
-  const eb = ENTERPRISE_BILLING[enterpriseBilling];
+  const [billing, setBilling] = useState('annual');
+  const isMonthly = billing === 'monthly';
+  const eb = ENTERPRISE_BILLING[billing];
+
+  const getPlanId = (plan) => {
+    if (plan.id === 'free') return 'free';
+    return isMonthly ? `${plan.id}_monthly` : plan.id;
+  };
 
   return (
     <section className="py-24 px-4" id="pricing">
       <div className="max-w-7xl mx-auto">
-        <div className="text-center mb-16">
+        <div className="text-center mb-10">
           <h2 className="text-4xl md:text-5xl font-black mb-4">
             Planes simples y transparentes
           </h2>
-          <p className="text-gray-400 text-lg">
+          <p className="text-gray-400 text-lg mb-8">
             Sin cargos ocultos ni sorpresas en tu factura.
           </p>
+
+          {/* ── Global billing toggle ── */}
+          <div className="flex items-center justify-center gap-3">
+            <div className="flex rounded-xl overflow-hidden border border-white/10 text-sm">
+              <button
+                onClick={() => setBilling('annual')}
+                className={`px-6 py-2.5 font-bold transition-all ${
+                  billing === 'annual'
+                    ? 'bg-primary text-background'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                Anual
+              </button>
+              <button
+                onClick={() => setBilling('monthly')}
+                className={`px-6 py-2.5 font-bold transition-all ${
+                  billing === 'monthly'
+                    ? 'bg-primary text-background'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                Mensual
+              </button>
+            </div>
+            {billing === 'annual' && (
+              <span className="text-xs font-bold text-green-400 bg-green-400/10 border border-green-400/20 px-3 py-1.5 rounded-full">
+                Ahorrá ~25%
+              </span>
+            )}
+          </div>
         </div>
 
         {/* ── Standard plans ── */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5 mb-6">
-          {PLANS.map((plan) => (
-            <div
-              key={plan.id}
-              className={`relative rounded-3xl border p-6 flex flex-col gap-4 transition-all ${
-                plan.highlight
-                  ? 'border-primary bg-primary/5 shadow-2xl shadow-primary/10 scale-[1.02]'
-                  : 'border-white/10 bg-surface hover:border-white/20'
-              }`}
-            >
-              {plan.badge && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap">
-                  <span className="bg-primary text-background text-[10px] font-black px-3 py-1 rounded-full tracking-wider whitespace-nowrap">
-                    {plan.badge}
-                  </span>
-                </div>
-              )}
+          {PLANS.map((plan) => {
+            const displayPrice = isMonthly ? plan.priceMonthly : plan.priceAnnual;
+            const displayNote  = isMonthly ? plan.monthlyNote  : plan.annualNote;
+            const planId       = getPlanId(plan);
 
-              <div>
-                <h3 className="text-lg font-black mb-1">{plan.name}</h3>
-                <div className="flex items-baseline gap-1 mb-1">
-                  <span className="text-3xl font-black text-primary">{plan.price}</span>
-                  <span className="text-gray-500 text-sm">{plan.period}</span>
-                </div>
-                {plan.annual && (
-                  <p className="text-[11px] text-gray-600">{plan.annual}</p>
-                )}
-                <p className="text-gray-500 text-xs leading-relaxed mt-2">{plan.desc}</p>
-              </div>
-
-              <ul className="flex flex-col gap-2 flex-1">
-                {plan.features.map((f) => (
-                  <li key={f} className="flex items-start gap-2 text-xs text-gray-300">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-primary flex-shrink-0 mt-0.5" />
-                    {f}
-                  </li>
-                ))}
-                {plan.missing.map((f) => (
-                  <li key={f} className="flex items-start gap-2 text-xs text-gray-600 line-through">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-gray-700 flex-shrink-0 mt-0.5" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-
-              <button
-                onClick={() => onSelectPlan && onSelectPlan(plan.id)}
-                className={`w-full py-3 rounded-2xl font-black text-sm transition-all ${
+            return (
+              <div
+                key={plan.id}
+                className={`relative rounded-3xl border p-6 flex flex-col gap-4 transition-all ${
                   plan.highlight
-                    ? 'bg-primary text-background hover:scale-[1.02] shadow-lg shadow-primary/30'
-                    : 'bg-white/5 border border-white/10 text-white hover:bg-white/10'
+                    ? 'border-primary bg-primary/5 shadow-2xl shadow-primary/10 scale-[1.02]'
+                    : 'border-white/10 bg-surface hover:border-white/20'
                 }`}
               >
-                {plan.cta}
-              </button>
-            </div>
-          ))}
+                {plan.badge && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                    <span className="bg-primary text-background text-[10px] font-black px-3 py-1 rounded-full tracking-wider whitespace-nowrap">
+                      {plan.badge}
+                    </span>
+                  </div>
+                )}
+
+                <div>
+                  <h3 className="text-lg font-black mb-1">{plan.name}</h3>
+                  <div className="flex items-baseline gap-1 mb-1">
+                    <span className="text-3xl font-black text-primary">{displayPrice}</span>
+                    <span className="text-gray-500 text-sm">{plan.period}</span>
+                  </div>
+                  {displayNote && (
+                    <p className="text-[11px] text-gray-600">{displayNote}</p>
+                  )}
+                  <p className="text-gray-500 text-xs leading-relaxed mt-2">{plan.desc}</p>
+                </div>
+
+                <ul className="flex flex-col gap-2 flex-1">
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex items-start gap-2 text-xs text-gray-300">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-primary flex-shrink-0 mt-0.5" />
+                      {f}
+                    </li>
+                  ))}
+                  {plan.missing.map((f) => (
+                    <li key={f} className="flex items-start gap-2 text-xs text-gray-600 line-through">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-gray-700 flex-shrink-0 mt-0.5" />
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+
+                <button
+                  onClick={() => onSelectPlan && onSelectPlan(planId)}
+                  className={`w-full py-3 rounded-2xl font-black text-sm transition-all ${
+                    plan.highlight
+                      ? 'bg-primary text-background hover:scale-[1.02] shadow-lg shadow-primary/30'
+                      : 'bg-white/5 border border-white/10 text-white hover:bg-white/10'
+                  }`}
+                >
+                  {plan.cta}
+                </button>
+              </div>
+            );
+          })}
         </div>
 
         {/* ── Enterprise card ── */}
@@ -245,30 +298,6 @@ const Pricing = ({ onSelectPlan }) => {
           </div>
 
           <div className="flex flex-col gap-3 md:w-56 shrink-0">
-            {/* Annual / Monthly toggle */}
-            <div className="flex rounded-xl overflow-hidden border border-white/10 text-sm">
-              <button
-                onClick={() => setEnterpriseBilling('annual')}
-                className={`flex-1 py-2 font-bold transition-all ${
-                  enterpriseBilling === 'annual'
-                    ? 'bg-primary text-background'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                Anual
-              </button>
-              <button
-                onClick={() => setEnterpriseBilling('monthly')}
-                className={`flex-1 py-2 font-bold transition-all ${
-                  enterpriseBilling === 'monthly'
-                    ? 'bg-primary text-background'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                Mensual
-              </button>
-            </div>
-
             <div className="text-center py-2">
               <div className="flex items-baseline justify-center gap-1">
                 <span className="text-4xl font-black text-primary">{eb.price}</span>

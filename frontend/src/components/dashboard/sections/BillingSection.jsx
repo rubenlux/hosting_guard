@@ -8,23 +8,23 @@ import { createBillingCheckout } from '../../../services/api';
 // ── Plan catalog ──────────────────────────────────────────────────────────────
 const PLANS = {
   free: {
-    label: 'Prueba Gratis', color: '#666', priceMonthly: 0,
+    label: 'Prueba Gratis', color: '#666', priceAnnual: 0, priceMonthly: 0,
     features: ['1 sitio web', 'Subdominio incluido', 'WordPress one-click', 'SSL automático', 'IA Advisory básico (10 consultas/mes)', 'Soporte por email'],
   },
   personal: {
-    label: 'Personal', color: '#60a5fa', priceMonthly: 9,
+    label: 'Personal', color: '#60a5fa', priceAnnual: 9, priceMonthly: 12,
     features: ['1 sitio web', 'Subdominio incluido', 'WordPress one-click', 'SSL automático', 'IA Advisory básico (20 consultas/mes)', 'Backups semanales (2 GB)', 'Soporte por email', 'Uso justo incluido'],
   },
   negocio: {
-    label: 'Negocio', color: '#a78bfa', priceMonthly: 19,
+    label: 'Negocio', color: '#a78bfa', priceAnnual: 19, priceMonthly: 25,
     features: ['3 sitios web', 'Subdominio incluido', 'Dominio propio (opcional)', 'WordPress one-click', 'SSL automático', 'IA Advisory avanzado (100 consultas/mes)', 'Backups diarios (10 GB)', 'Soporte prioritario', 'Uso justo incluido'],
   },
   agencia: {
-    label: 'Agencia', color: '#f59e0b', priceMonthly: 39,
+    label: 'Agencia', color: '#f59e0b', priceAnnual: 39, priceMonthly: 50,
     features: ['Hasta 10 sitios web', 'Subdominios incluidos', 'Dominios propios (opcional)', 'WordPress one-click', 'SSL automático', 'IA Advisory premium (300 consultas/mes)', 'Backups diarios (30 GB)', 'Soporte prioritario', 'API access', 'Uso justo incluido'],
   },
   agencia_pro: {
-    label: 'Agencia Pro', color: '#f97316', priceMonthly: 59,
+    label: 'Agencia Pro', color: '#f97316', priceAnnual: 59, priceMonthly: 75,
     features: ['Hasta 25 sitios web', 'Subdominios incluidos', 'Dominios propios (opcional)', 'WordPress one-click', 'SSL automático', 'IA Advisory premium ampliado (700 consultas/mes)', 'Backups diarios con mayor retención (75 GB)', 'Soporte prioritario avanzado', 'API access', 'Monitoreo avanzado', 'Reportes de salud', 'Uso justo incluido'],
   },
   // Legacy aliases
@@ -32,8 +32,8 @@ const PLANS = {
 };
 
 const ENTERPRISE = {
-  annual:  { id: 'enterprise_annual',  price: '$99',  yearlyLabel: '$1.188/año', cta: 'Elegir Enterprise Anual' },
-  monthly: { id: 'enterprise_monthly', price: '$129', yearlyLabel: null,         cta: 'Elegir Enterprise Mensual' },
+  annual:  { id: 'enterprise_annual',  price: '$99',  note: '$1.188/año', cta: 'Elegir Enterprise Anual' },
+  monthly: { id: 'enterprise_monthly', price: '$129', note: null,         cta: 'Elegir Enterprise Mensual' },
 };
 
 const ENTERPRISE_FEATURES = [
@@ -43,32 +43,41 @@ const ENTERPRISE_FEATURES = [
   'Plan personalizado disponible', 'Uso justo incluido',
 ];
 
-// Normalize legacy plan names
+// Normalize legacy / monthly plan names → base slug
 const normalizePlan = (plan) => {
+  if (!plan) return 'free';
   if (plan === 'basic')    return 'personal';
   if (plan === 'pro')      return 'negocio';
   if (plan === 'business') return 'agencia';
-  return plan || 'free';
+  // Strip _monthly suffix so PLANS lookup always works
+  if (plan.endsWith('_monthly')) return plan.replace('_monthly', '');
+  return plan;
 };
 
 const PLAN_ORDER = ['free', 'personal', 'negocio', 'agencia', 'agencia_pro', 'enterprise'];
 
 const STATUS_LABELS = {
-  active:       { label: 'Activa',          color: '#10b981' },
-  cancelled:    { label: 'Cancelada',       color: '#f59e0b' },
-  past_due:     { label: 'Pago pendiente',  color: '#ef4444' },
-  expired:      { label: 'Expirada',        color: '#ef4444' },
-  paused:       { label: 'Pausada',         color: '#888'    },
-  none:         { label: 'Sin suscripción', color: '#555'    },
+  active:    { label: 'Activa',          color: '#10b981' },
+  cancelled: { label: 'Cancelada',       color: '#f59e0b' },
+  past_due:  { label: 'Pago pendiente',  color: '#ef4444' },
+  expired:   { label: 'Expirada',        color: '#ef4444' },
+  paused:    { label: 'Pausada',         color: '#888'    },
+  none:      { label: 'Sin suscripción', color: '#555'    },
 };
 
-const fmt = (iso) => iso ? new Date(iso).toLocaleDateString('es', { day: '2-digit', month: 'short', year: 'numeric' }) : null;
+const fmt = (iso) =>
+  iso ? new Date(iso).toLocaleDateString('es', { day: '2-digit', month: 'short', year: 'numeric' }) : null;
 
 // ── BillingSection ────────────────────────────────────────────────────────────
 
 const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoading }) => {
-  const [upgrading, setUpgrading]           = useState(null);
-  const [enterpriseBilling, setEnterpriseBilling] = useState('annual');
+  // Pre-select interval based on user's current billing_interval
+  const [upgrading,       setUpgrading]       = useState(null);
+  const [billingInterval, setBillingInterval] = useState(
+    () => user?.billing_interval === 'monthly' ? 'monthly' : 'annual'
+  );
+
+  const isMonthly = billingInterval === 'monthly';
 
   const currentPlanSlug = normalizePlan(user.plan);
   const currentPlan     = PLANS[currentPlanSlug] || PLANS.free;
@@ -78,6 +87,8 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
   const portalUrl       = user.billing_portal_url;
   const isPaid          = currentPlanSlug !== 'free';
   const currentIdx      = PLAN_ORDER.indexOf(currentPlanSlug);
+
+  const eb = ENTERPRISE[billingInterval];
 
   const handleUpgrade = async (plan) => {
     try {
@@ -95,7 +106,7 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
       {/* Header */}
       <div style={{ marginBottom: 28 }}>
         <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 4 }}>Facturación</div>
-        <div style={{ fontSize: 13, color: '#555' }}>Planes anuales · Sin cargos ocultos · Cancela cuando quieras</div>
+        <div style={{ fontSize: 13, color: '#555' }}>Sin cargos ocultos · Cancela cuando quieras</div>
       </div>
 
       {/* Current plan banner */}
@@ -115,7 +126,6 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
               <div style={{ fontSize: 11, color: '#555', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>Plan actual</div>
               <div style={{ fontSize: 24, fontWeight: 900, color: currentPlan.color }}>{currentPlan.label}</div>
             </div>
-            {/* Subscription status badge */}
             {subStatus !== 'none' && (
               <span style={{
                 fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 20,
@@ -128,7 +138,6 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* Period end */}
             {periodEnd && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <CalendarCheck size={13} color="#555" />
@@ -137,8 +146,6 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
                 </span>
               </div>
             )}
-
-            {/* Customer portal */}
             {portalUrl && isPaid && (
               <a
                 href={portalUrl}
@@ -149,7 +156,7 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
                   fontSize: 12, fontWeight: 600, color: '#888',
                   padding: '7px 12px', borderRadius: 8,
                   background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-                  textDecoration: 'none', transition: 'color 0.15s',
+                  textDecoration: 'none',
                 }}
               >
                 <ExternalLink size={12} /> Administrar suscripción
@@ -158,7 +165,6 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
           </div>
         </div>
 
-        {/* Feature list */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px', marginTop: 14 }}>
           {currentPlan.features.map(f => (
             <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -182,7 +188,7 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
             <Clock size={14} color="#f59e0b" />
             <span style={{ fontSize: 12, color: '#d97706' }}>
               Tu prueba gratuita {daysLeft <= 0 ? 'ha vencido' : `vence en ${daysLeft} día${daysLeft !== 1 ? 's' : ''}`}.
-              Elige un plan anual para continuar sin interrupciones.
+              Elegí un plan para continuar sin interrupciones.
             </span>
           </div>
         );
@@ -197,108 +203,135 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
         }}>
           <AlertTriangle size={14} color="#ef4444" />
           <span style={{ fontSize: 12, color: '#ef4444' }}>
-            Hay un problema con tu pago. Actualiza tu método de pago para evitar la suspensión.
+            Hay un problema con tu pago. Actualizá tu método de pago para evitar la suspensión.
             {portalUrl && <a href={portalUrl} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 6, color: '#ef4444', fontWeight: 700 }}>Actualizar →</a>}
           </span>
         </div>
       )}
 
+      {/* ── Global billing interval toggle ────────────────────────────────── */}
+      <div style={{ marginTop: 24, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#444', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+          Facturación
+        </span>
+        <div style={{
+          display: 'flex', borderRadius: 8, overflow: 'hidden',
+          border: '1px solid rgba(255,255,255,0.1)', fontSize: 12,
+        }}>
+          {[['annual', 'Anual'], ['monthly', 'Mensual']].map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setBillingInterval(k)}
+              style={{
+                padding: '6px 18px', fontWeight: 700, cursor: 'pointer', border: 'none',
+                background: billingInterval === k ? '#60a5fa' : 'transparent',
+                color: billingInterval === k ? '#000' : '#555',
+                transition: 'all 0.15s',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {!isMonthly && (
+          <span style={{ fontSize: 11, color: '#10b981', fontWeight: 700 }}>Ahorrá ~25%</span>
+        )}
+      </div>
+
       {/* ── Upgrade plans grid ────────────────────────────────────────────── */}
-      <div style={{ marginTop: 24, marginBottom: 8 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#444', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 14 }}>
-          Planes anuales — Facturación anual · Ahorra vs. mensual
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12 }}>
-          {['personal', 'negocio', 'agencia', 'agencia_pro'].map((slug) => {
-            const plan     = PLANS[slug];
-            const planIdx  = PLAN_ORDER.indexOf(slug);
-            const isCurrent  = slug === currentPlanSlug;
-            const isDowngrade = planIdx < currentIdx;
-            const yearlyPrice = plan.priceMonthly * 12;
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12 }}>
+        {['personal', 'negocio', 'agencia', 'agencia_pro'].map((slug) => {
+          const plan         = PLANS[slug];
+          const planIdx      = PLAN_ORDER.indexOf(slug);
+          const checkoutSlug = isMonthly ? `${slug}_monthly` : slug;
+          const isCurrent    = slug === currentPlanSlug;
+          const isDowngrade  = planIdx < currentIdx;
+          const displayPrice = isMonthly ? plan.priceMonthly : plan.priceAnnual;
+          const billingNote  = isMonthly
+            ? 'Pago mensual automático'
+            : `$${plan.priceAnnual * 12} USD facturado anualmente`;
 
-            return (
-              <div key={slug} style={{
-                background: isCurrent ? `${plan.color}08` : '#0e0e0e',
-                border: `1px solid ${isCurrent ? plan.color + '35' : 'rgba(255,255,255,0.07)'}`,
-                borderRadius: 14, padding: '20px', position: 'relative', overflow: 'hidden',
-                transition: 'border-color 0.2s',
-              }}>
-                {slug === 'negocio' && (
-                  <div style={{
-                    position: 'absolute', top: 10, right: 10,
-                    fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 20,
-                    background: `${plan.color}20`, color: plan.color, border: `1px solid ${plan.color}40`,
-                    letterSpacing: '0.05em',
-                  }}>
-                    MÁS POPULAR
-                  </div>
-                )}
-
-                <div style={{ fontSize: 14, fontWeight: 800, color: plan.color, marginBottom: 4 }}>{plan.label}</div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 2 }}>
-                  <span style={{ fontSize: 26, fontWeight: 900, color: '#fff' }}>${plan.priceMonthly}</span>
-                  <span style={{ fontSize: 11, color: '#555' }}>/mes</span>
+          return (
+            <div key={slug} style={{
+              background: isCurrent ? `${plan.color}08` : '#0e0e0e',
+              border: `1px solid ${isCurrent ? plan.color + '35' : 'rgba(255,255,255,0.07)'}`,
+              borderRadius: 14, padding: '20px', position: 'relative', overflow: 'hidden',
+              transition: 'border-color 0.2s',
+            }}>
+              {slug === 'negocio' && (
+                <div style={{
+                  position: 'absolute', top: 10, right: 10,
+                  fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 20,
+                  background: `${plan.color}20`, color: plan.color, border: `1px solid ${plan.color}40`,
+                  letterSpacing: '0.05em',
+                }}>
+                  MÁS POPULAR
                 </div>
-                <div style={{ fontSize: 11, color: '#444', marginBottom: 14 }}>
-                  ${yearlyPrice} USD facturado anualmente
-                </div>
+              )}
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 16 }}>
-                  {plan.features.slice(0, 5).map(f => (
-                    <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                      <Check size={11} color={isCurrent ? plan.color : '#444'} />
-                      <span style={{ fontSize: 11, color: isCurrent ? '#aaa' : '#555' }}>{f}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {isCurrent ? (
-                  <div style={{
-                    width: '100%', padding: '8px', borderRadius: 8, textAlign: 'center',
-                    background: `${plan.color}10`, border: `1px solid ${plan.color}30`,
-                    color: plan.color, fontSize: 12, fontWeight: 700,
-                  }}>
-                    Plan actual
-                  </div>
-                ) : isDowngrade ? (
-                  <div style={{
-                    width: '100%', padding: '8px', borderRadius: 8, textAlign: 'center',
-                    background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
-                    color: '#444', fontSize: 12, fontWeight: 600, cursor: 'default',
-                  }}>
-                    Plan inferior
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => handleUpgrade(slug)}
-                    disabled={upgrading !== null}
-                    style={{
-                      width: '100%', padding: '9px', borderRadius: 8, cursor: upgrading ? 'wait' : 'pointer',
-                      background: slug === 'negocio' ? plan.color : `${plan.color}18`,
-                      border: `1px solid ${plan.color}${slug === 'negocio' ? '' : '40'}`,
-                      color: slug === 'negocio' ? '#000' : plan.color,
-                      fontSize: 12, fontWeight: 700,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                      opacity: upgrading && upgrading !== slug ? 0.5 : 1,
-                      transition: 'opacity 0.15s',
-                    }}
-                  >
-                    {upgrading === slug
-                      ? <><Loader2 size={12} className="animate-spin" /> Abriendo checkout…</>
-                      : <>Elegir {plan.label} <ChevronRight size={12} /></>
-                    }
-                  </button>
-                )}
+              <div style={{ fontSize: 14, fontWeight: 800, color: plan.color, marginBottom: 4 }}>{plan.label}</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 2 }}>
+                <span style={{ fontSize: 26, fontWeight: 900, color: '#fff' }}>${displayPrice}</span>
+                <span style={{ fontSize: 11, color: '#555' }}>/mes</span>
               </div>
-            );
-          })}
-        </div>
+              <div style={{ fontSize: 11, color: '#444', marginBottom: 14 }}>
+                {billingNote}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 16 }}>
+                {plan.features.slice(0, 5).map(f => (
+                  <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <Check size={11} color={isCurrent ? plan.color : '#444'} />
+                    <span style={{ fontSize: 11, color: isCurrent ? '#aaa' : '#555' }}>{f}</span>
+                  </div>
+                ))}
+              </div>
+
+              {isCurrent ? (
+                <div style={{
+                  width: '100%', padding: '8px', borderRadius: 8, textAlign: 'center',
+                  background: `${plan.color}10`, border: `1px solid ${plan.color}30`,
+                  color: plan.color, fontSize: 12, fontWeight: 700,
+                }}>
+                  Plan actual
+                </div>
+              ) : isDowngrade ? (
+                <div style={{
+                  width: '100%', padding: '8px', borderRadius: 8, textAlign: 'center',
+                  background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+                  color: '#444', fontSize: 12, fontWeight: 600, cursor: 'default',
+                }}>
+                  Plan inferior
+                </div>
+              ) : (
+                <button
+                  onClick={() => handleUpgrade(checkoutSlug)}
+                  disabled={upgrading !== null}
+                  style={{
+                    width: '100%', padding: '9px', borderRadius: 8, cursor: upgrading ? 'wait' : 'pointer',
+                    background: slug === 'negocio' ? plan.color : `${plan.color}18`,
+                    border: `1px solid ${plan.color}${slug === 'negocio' ? '' : '40'}`,
+                    color: slug === 'negocio' ? '#000' : plan.color,
+                    fontSize: 12, fontWeight: 700,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    opacity: upgrading && upgrading !== checkoutSlug ? 0.5 : 1,
+                    transition: 'opacity 0.15s',
+                  }}
+                >
+                  {upgrading === checkoutSlug
+                    ? <><Loader2 size={12} className="animate-spin" /> Abriendo checkout…</>
+                    : <>Elegir {plan.label} <ChevronRight size={12} /></>
+                  }
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* ── Enterprise block ───────────────────────────────────────────────── */}
       {(() => {
-        const isEnterp   = currentPlanSlug === 'enterprise';
-        const eb         = ENTERPRISE[enterpriseBilling];
+        const isEnterp = currentPlanSlug === 'enterprise';
         return (
           <div style={{
             marginTop: 12,
@@ -326,29 +359,13 @@ const BillingSection = ({ user = {}, onTopup, onToggleAutoscale, userActionLoadi
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 12, minWidth: 180 }}>
-              {/* Anual / Mensual toggle */}
-              {!isEnterp && (
-                <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', fontSize: 12 }}>
-                  {['annual', 'monthly'].map(k => (
-                    <button key={k} onClick={() => setEnterpriseBilling(k)} style={{
-                      padding: '6px 14px', fontWeight: 700, cursor: 'pointer', border: 'none',
-                      background: enterpriseBilling === k ? '#00ff88' : 'transparent',
-                      color: enterpriseBilling === k ? '#000' : '#555',
-                      transition: 'all 0.15s',
-                    }}>
-                      {k === 'annual' ? 'Anual' : 'Mensual'}
-                    </button>
-                  ))}
-                </div>
-              )}
-
               <div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
                   <span style={{ fontSize: 28, fontWeight: 900, color: '#fff' }}>{eb.price}</span>
                   <span style={{ fontSize: 11, color: '#555' }}>/mes</span>
                 </div>
-                {eb.yearlyLabel && (
-                  <div style={{ fontSize: 11, color: '#444', textAlign: 'right' }}>{eb.yearlyLabel}</div>
+                {eb.note && (
+                  <div style={{ fontSize: 11, color: '#444', textAlign: 'right' }}>{eb.note}</div>
                 )}
               </div>
 
