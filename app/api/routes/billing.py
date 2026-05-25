@@ -98,17 +98,13 @@ async def create_checkout(
 # ── Webhook background processor ──────────────────────────────────────────────
 
 async def _process_webhook(payload: dict) -> None:
-    """Resuelve el pago via API de MP y actualiza el estado del usuario."""
+    """Resuelve el pago vía el proveedor activo y actualiza el estado del usuario."""
     provider = get_payment_provider()
 
     try:
-        from app.services.billing.mercadopago_provider import MercadoPagoProvider
-        if not isinstance(provider, MercadoPagoProvider):
-            logger.warning("Webhook: proveedor inesperado %s", type(provider).__name__)
-            return
-        event = await provider.resolve_payment_event(payload)
+        event = await provider.process_webhook_payload(payload)
     except Exception as exc:
-        logger.error("Webhook: error resolviendo pago: %s", exc)
+        logger.error("Webhook: error procesando pago: %s", exc)
         return
 
     if not event.valid:

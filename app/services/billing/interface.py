@@ -19,9 +19,15 @@ class CheckoutResult:
 
 @dataclass
 class WebhookValidationResult:
-    """Resultado de validar + parsear un webhook de pago."""
+    """Resultado de validar + parsear un webhook de pago.
+
+    ``valid``       — False indica firma inválida; el endpoint debe retornar 401.
+    ``event_type``  — "payment_approved" | "payment_failed" | "payment_pending" | "unknown"
+    ``user_id``     — ID del usuario resuelto desde el payload (puede ser None si el proveedor
+                      no pudo identificarlo; el caller debe fallback a provider_customer_id).
+    """
     valid: bool
-    event_type: str         # "payment_approved" | "payment_failed" | "payment_pending" | "unknown"
+    event_type: str
     user_id: int | None
     plan: str | None
     provider_payment_id: str | None
@@ -32,7 +38,10 @@ class WebhookValidationResult:
 
 
 class PaymentProvider(ABC):
-    """Interfaz que todo proveedor de pagos debe implementar."""
+    """Interfaz que todo proveedor de pagos debe implementar.
+
+    El route layer importa únicamente esta interfaz — nunca una clase concreta.
+    """
 
     # ── Checkout ──────────────────────────────────────────────────────────────
 
@@ -41,19 +50,19 @@ class PaymentProvider(ABC):
         """Genera un link de pago para el plan solicitado.
 
         Args:
-            plan:  slug del plan (personal, negocio, agencia, agencia_pro,
-                   enterprise_annual, enterprise_monthly)
+            plan:  slug del plan (personal | negocio | agencia | agencia_pro |
+                   enterprise_annual | enterprise_monthly)
             user:  dict con al menos ``user_id`` y ``email``
 
         Returns:
             CheckoutResult con la URL de pago y el ID de preferencia.
 
         Raises:
-            ValueError: si el plan no es válido.
+            ValueError:   si el plan no es válido.
             RuntimeError: si el proveedor no está configurado.
         """
 
-    # ── Webhooks ──────────────────────────────────────────────────────────────
+    # ── Webhooks ─────────────────────────────────────────────────────────────
 
     @abstractmethod
     def validate_webhook(
@@ -62,16 +71,32 @@ class PaymentProvider(ABC):
         headers: dict[str, str],
         payload: dict,
     ) -> WebhookValidationResult:
-        """Valida la firma del webhook y extrae la info del pago.
+        """Valida la firma del webhook *de forma síncrona* (sin I/O).
 
         Args:
-            body:     cuerpo raw de la petición (bytes) para verificar HMAC.
-            headers:  cabeceras HTTP del request.
-            payload:  JSON parseado del body.
+            body:    cuerpo raw de la petición (para HMAC sobre body, si aplica).
+            headers: cabeceras HTTP del request (claves en minúscula).
+            payload: JSON ya parseado del body.
 
         Returns:
-            WebhookValidationResult.  Si ``valid=False``, el endpoint debe
-            retornar 401.
+            WebhookValidationResult con ``valid=False`` si la firma no es válida.
+            El endpoint debe retornar 401 inmediatamente en ese caso.
+        """
+
+    @abstractmethod
+    async def process_webhook_payload(self, payload: dict) -> WebhookValidationResult:
+        """Resuelve el detalle completo del evento de pago (puede hacer I/O).
+
+        Se llama desde un background task *después* de que ``validate_webhook``
+        haya confirmado la autenticidad. Implementaciones típicas:
+        - Consultan la API del proveedor para obtener estado del pago.
+        - Mapean ese estado al event_type interno del sistema.
+
+        Args:
+            payload: JSON parseado del webhook (mismo que se pasó a validate_webhook).
+
+        Returns:
+            WebhookValidationResult completo con user_id, plan y event_type resueltos.
         """
 
     # ── Helpers ───────────────────────────────────────────────────────────────

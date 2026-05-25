@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -254,10 +253,10 @@ class MercadoPagoProvider(PaymentProvider):
             raw_payload=payload,
         )
 
-    async def resolve_payment_event(self, payload: dict) -> WebhookValidationResult:
-        """Consulta el detalle del pago y construye el WebhookValidationResult completo.
+    async def process_webhook_payload(self, payload: dict) -> WebhookValidationResult:
+        """Implementa PaymentProvider.process_webhook_payload.
 
-        Se llama desde el background task — puede hacer I/O.
+        Consulta GET /v1/payments/{id} en la API de MP y resuelve el evento.
         """
         action = payload.get("action", "")
         topic = payload.get("type", "")

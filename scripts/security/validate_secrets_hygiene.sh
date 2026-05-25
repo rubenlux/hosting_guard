@@ -229,10 +229,19 @@ _scan_credential_patterns() {
     found=1
   fi
 
-  # LemonSqueezy keys
+  # Stale credential patterns — LS keys (legacy, should never appear in docs)
+  # Pattern: ls_live_xxxx / ls_test_xxxx  (LemonSqueezy format, no longer used)
   if grep -rn --include="*.md" --include="*.yml" \
        -E "ls_[a-z]+_[a-zA-Z0-9]{40,}" "$dir" 2>/dev/null; then
-    fail "LemonSqueezy API key pattern found in docs"
+    fail "Stale LemonSqueezy API key pattern found in docs — remove it"
+    found=1
+  fi
+
+  # MercadoPago access tokens (APP_USR-xxxx or TEST-xxxx followed by long alphanumeric string)
+  if grep -rn --include="*.md" --include="*.yml" \
+       -E "(APP_USR|TEST)-[0-9]+-[A-Za-z0-9_-]{20,}" "$dir" 2>/dev/null | \
+     grep -v "REDACTED\|example\|placeholder\|xxxx\|your-" 2>/dev/null; then
+    fail "MercadoPago access token pattern found in docs — use placeholder instead"
     found=1
   fi
 
