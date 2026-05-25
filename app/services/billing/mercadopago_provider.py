@@ -50,7 +50,7 @@ _PLAN_CATALOG: dict[str, dict] = {
     "agencia_pro":          {"title": "Plan Agencia Pro",          "unit_price": 708.00,  "billing_interval": "yearly"},
     "enterprise_annual":    {"title": "Plan Enterprise Anual",     "unit_price": 1188.00, "billing_interval": "yearly"},
     # Mensuales — precios ligeramente más altos que la tarifa anual equivalente
-    "personal_monthly":     {"title": "Plan Personal Mensual",     "unit_price": 12.00,   "billing_interval": "monthly"},
+    "personal_monthly":     {"title": "Plan Personal Mensual",     "unit_price": 15.00,   "billing_interval": "monthly"},
     "negocio_monthly":      {"title": "Plan Negocio Mensual",      "unit_price": 25.00,   "billing_interval": "monthly"},
     "agencia_monthly":      {"title": "Plan Agencia Mensual",      "unit_price": 50.00,   "billing_interval": "monthly"},
     "agencia_pro_monthly":  {"title": "Plan Agencia Pro Mensual",  "unit_price": 75.00,   "billing_interval": "monthly"},

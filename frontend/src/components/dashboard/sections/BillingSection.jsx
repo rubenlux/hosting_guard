@@ -12,7 +12,7 @@ const PLANS = {
     features: ['1 sitio web', 'Subdominio incluido', 'WordPress one-click', 'SSL automático', 'IA Advisory básico (10 consultas/mes)', 'Soporte por email'],
   },
   personal: {
-    label: 'Personal', color: '#60a5fa', priceAnnual: 9, priceMonthly: 12,
+    label: 'Personal', color: '#60a5fa', priceAnnual: 9, priceMonthly: 15,
     features: ['1 sitio web', 'Subdominio incluido', 'WordPress one-click', 'SSL automático', 'IA Advisory básico (20 consultas/mes)', 'Backups semanales (2 GB)', 'Soporte por email', 'Uso justo incluido'],
   },
   negocio: {

@@ -28,7 +28,7 @@ const PLANS = [
     id: 'personal',
     name: 'Personal',
     priceAnnual: '$9',
-    priceMonthly: '$12',
+    priceMonthly: '$15',
     period: '/mes',
     annualNote: 'Facturado anual: $108/año',
     monthlyNote: 'Pago mensual automático',
