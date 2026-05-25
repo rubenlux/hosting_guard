@@ -1224,6 +1224,10 @@ _INDEXES = [
         event_name   TEXT NOT NULL,
         processed_at TEXT NOT NULL
     )""",
+
+    # Suscripciones mensuales MercadoPago (Preapproval API)
+    # mp_subscription_id: ID de la suscripción recurrente en MP (/preapproval)
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS mp_subscription_id TEXT",
 ]
 
 def ensure_monthly_partitions(cursor):

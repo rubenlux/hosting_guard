@@ -125,10 +125,11 @@ async def _process_webhook(payload: dict) -> None:
         return
 
     base: dict = {
-        "mp_customer_id": event.provider_customer_id or "",
-        "mp_payment_id": event.provider_payment_id or "",
-        "mp_preference_id": event.provider_preference_id or "",
-        "current_period_end": event.period_end,
+        "mp_customer_id":      event.provider_customer_id or "",
+        "mp_payment_id":       event.provider_payment_id or "",
+        "mp_preference_id":    event.provider_preference_id or "",
+        "mp_subscription_id":  event.provider_subscription_id or "",
+        "current_period_end":  event.period_end,
     }
 
     if event_type == "payment_approved":

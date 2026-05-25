@@ -21,10 +21,10 @@ class CheckoutResult:
 class WebhookValidationResult:
     """Resultado de validar + parsear un webhook de pago.
 
-    ``valid``       — False indica firma inválida; el endpoint debe retornar 401.
-    ``event_type``  — "payment_approved" | "payment_failed" | "payment_pending" | "unknown"
-    ``user_id``     — ID del usuario resuelto desde el payload (puede ser None si el proveedor
-                      no pudo identificarlo; el caller debe fallback a provider_customer_id).
+    ``valid``                  — False indica firma inválida; el endpoint debe retornar 401.
+    ``event_type``             — "payment_approved" | "payment_failed" | "payment_pending" | "unknown"
+    ``user_id``                — ID del usuario resuelto desde el payload.
+    ``provider_subscription_id`` — ID de suscripción (planes mensuales); None para pagos únicos.
     """
     valid: bool
     event_type: str
@@ -33,6 +33,7 @@ class WebhookValidationResult:
     provider_payment_id: str | None
     provider_customer_id: str | None
     provider_preference_id: str | None
+    provider_subscription_id: str | None  # ID de suscripción recurrente (preapproval)
     period_end: str | None
     raw_payload: dict
 

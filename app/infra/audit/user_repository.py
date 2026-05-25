@@ -274,9 +274,9 @@ class UserRepository:
     # ── Billing (MercadoPago) ─────────────────────────────────────────────────
 
     _BILLING_FIELDS = frozenset({
-        "mp_customer_id", "mp_payment_id", "mp_preference_id", "subscription_status",
-        "current_period_start", "current_period_end", "trial_ends_at",
-        "plan_started_at", "billing_interval", "billing_portal_url", "plan",
+        "mp_customer_id", "mp_payment_id", "mp_preference_id", "mp_subscription_id",
+        "subscription_status", "current_period_start", "current_period_end",
+        "trial_ends_at", "plan_started_at", "billing_interval", "billing_portal_url", "plan",
     })
 
     def update_billing_subscription(self, user_id: int, **fields) -> None:
